@@ -1,0 +1,9 @@
+qdrant-client>=1.9.0
+langchain-qdrant
+langchain-openai
+langchain-community
+sentence-transformers
+huggingface-hub
+fastapi
+uvicorn
+cachetools==5.3.3
