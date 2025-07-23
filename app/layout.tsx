@@ -1,8 +1,9 @@
 import type React from "react"
 import type { Metadata } from "next"
-import { ClerkProvider } from "@clerk/nextjs"                 
+import { ClerkProvider } from "@clerk/nextjs"
 import { Cormorant_Garamond, Plus_Jakarta_Sans } from "next/font/google"
 import "./globals.css"
+import { ThemeProvider } from "next-themes"
 
 const cormorant = Cormorant_Garamond({
   subsets: ["latin"],
@@ -25,8 +26,12 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <ClerkProvider>
-      <html lang="en" className={`${cormorant.variable} ${jakarta.variable}`}>
-        <body className="font-sans antialiased">{children}</body>
+      <html lang="en" className={`${cormorant.variable} ${jakarta.variable}`} suppressHydrationWarning>
+        <body className="font-sans antialiased">
+          <ThemeProvider attribute="class" defaultTheme="light">
+            {children}
+          </ThemeProvider>
+        </body>
       </html>
     </ClerkProvider>
   )

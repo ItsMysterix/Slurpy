@@ -104,68 +104,68 @@ export default function ProfilePage() {
   }
 
   return (
-    <div className="min-h-screen bg-sand-50 flex justify-center py-12 px-4">
+    <div className="min-h-screen bg-gradient-to-br from-sand-50 via-sage-25 to-clay-50 dark:from-gray-950 dark:via-gray-900 dark:to-gray-950 transition-all duration-500 flex justify-center py-12 px-4">
       {/* Success Toast */}
       {showSuccess && (
         <motion.div
           initial={{ opacity: 0, y: -50 }}
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: -50 }}
-          className="fixed top-4 right-4 z-50 bg-sage-500 text-white px-4 py-2 rounded-xl shadow-lg flex items-center gap-2"
+          className="fixed top-4 right-4 z-50 bg-gradient-to-r from-sage-500 via-clay-500 to-sand-500 dark:from-sage-600 dark:via-clay-600 dark:to-sand-600 text-white px-4 py-2 rounded-xl shadow-lg flex items-center gap-2 backdrop-blur-sm"
         >
           <CheckCircle className="w-4 h-4" />
           <span className="font-sans text-sm">Success!</span>
         </motion.div>
       )}
 
-      <div className="max-w-xl w-full space-y-10 bg-white/60 backdrop-blur-lg rounded-3xl shadow-[0_8px_24px_rgba(0,0,0,0.05)] p-8 sm:p-10">
+      <div className="max-w-xl w-full space-y-10 bg-gradient-to-r from-white/70 via-sage-50/50 to-sand-50/70 dark:from-gray-900/70 dark:via-gray-800/50 dark:to-gray-900/70 backdrop-blur-lg rounded-3xl shadow-[0_8px_24px_rgba(0,0,0,0.05)] dark:shadow-[0_8px_24px_rgba(0,0,0,0.3)] border border-sage-100/30 dark:border-gray-700/30 p-8 sm:p-10">
         {/* Header */}
         <div className="flex items-center gap-4">
           <Link href="/chat">
-            <Button variant="ghost" size="sm" className="text-sage-500 hover:text-sage-600">
+            <Button variant="ghost" size="sm" className="text-clay-500 hover:text-clay-600 dark:text-sand-400 dark:hover:text-sand-300 transition-colors">
               <ArrowLeft className="w-4 h-4" />
             </Button>
           </Link>
-          <h1 className="font-display text-sage-600 text-2xl">Profile</h1>
+          <h1 className="font-display text-clay-700 dark:text-sand-200 text-2xl">Profile</h1>
         </div>
 
         {/* Profile Details */}
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6 }}>
-          <Card className="bg-transparent border-sage-200/50">
+          <Card className="bg-gradient-to-br from-white/50 via-sage-50/30 to-sand-50/50 dark:from-gray-800/50 dark:via-gray-700/30 dark:to-gray-800/50 border-sage-200/50 dark:border-gray-600/50 backdrop-blur-sm">
             <CardContent className="p-6">
               <div className="flex items-center gap-4 mb-6">
-                <div className="w-16 h-16 rounded-full bg-gradient-to-br from-sage-400 to-sage-500 flex items-center justify-center">
+                <div className="w-16 h-16 rounded-full bg-gradient-to-br from-sage-400 via-clay-400 to-sand-400 dark:from-sage-500 dark:via-clay-500 dark:to-sand-500 flex items-center justify-center shadow-lg">
                   <User className="w-8 h-8 text-white" />
                 </div>
                 <div>
-                  <h3 className="font-display text-sage-600 text-lg">Your Profile</h3>
-                  <p className="text-sage-400 text-sm font-sans">Manage your account settings</p>
+                  <h3 className="font-display text-clay-700 dark:text-sand-200 text-lg">Your Profile</h3>
+                  <p className="text-clay-500 dark:text-sand-400 text-sm font-sans">Manage your account settings</p>
                 </div>
               </div>
 
               <div className="space-y-4">
                 <div>
-                  <Label htmlFor="name" className="text-sage-600 font-sans text-sm font-medium">
+                  <Label htmlFor="name" className="text-clay-600 dark:text-sand-300 font-sans text-sm font-medium">
                     Full Name
                   </Label>
                   <Input
                     id="name"
                     value={name}
                     onChange={(e) => setName(e.target.value)}
-                    className="mt-1 rounded-xl border-sage-200 bg-white/50 focus:border-sage-300 font-sans"
+                    className="mt-1 rounded-xl border-sage-200 dark:border-gray-600 bg-white/60 dark:bg-gray-700/60 focus:border-sage-300 dark:focus:border-sand-400 font-sans text-clay-700 dark:text-sand-100 backdrop-blur-sm"
                     placeholder="Enter your full name"
                   />
                 </div>
 
                 <div>
-                  <Label htmlFor="email" className="text-sage-600 font-sans text-sm font-medium">
+                  <Label htmlFor="email" className="text-clay-600 dark:text-sand-300 font-sans text-sm font-medium">
                     Email Address
                   </Label>
                   <Input
                     id="email"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
-                    className="mt-1 rounded-xl border-sage-200 bg-white/50 focus:border-sage-300 font-sans"
+                    className="mt-1 rounded-xl border-sage-200 dark:border-gray-600 bg-white/60 dark:bg-gray-700/60 focus:border-sage-300 dark:focus:border-sand-400 font-sans text-clay-700 dark:text-sand-100 backdrop-blur-sm"
                     placeholder="Enter your email address"
                     type="email"
                   />
@@ -174,7 +174,7 @@ export default function ProfilePage() {
                 <Button
                   onClick={save}
                   disabled={isLoading || !name.trim() || !email.trim()}
-                  className="w-full bg-sage-500 hover:bg-sage-400 text-white rounded-xl py-2 font-sans font-medium transition-all duration-200 disabled:opacity-50"
+                  className="w-full bg-gradient-to-r from-sage-500 via-clay-500 to-sand-500 hover:from-sage-600 hover:via-clay-600 hover:to-sand-600 dark:from-sage-600 dark:via-clay-600 dark:to-sand-600 dark:hover:from-sage-700 dark:hover:via-clay-700 dark:hover:to-sand-700 text-white rounded-xl py-2 font-sans font-medium transition-all duration-200 disabled:opacity-50 shadow-md"
                 >
                   {isLoading ? "Saving..." : "Save Changes"}
                 </Button>
@@ -189,21 +189,21 @@ export default function ProfilePage() {
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.6, delay: 0.2 }}
         >
-          <h2 className="font-display text-sage-600 text-xl mb-4">Security</h2>
-          <Card className="bg-transparent border-sage-200/50">
+          <h2 className="font-display text-clay-700 dark:text-sand-200 text-xl mb-4">Security</h2>
+          <Card className="bg-gradient-to-br from-white/50 via-sage-50/30 to-sand-50/50 dark:from-gray-800/50 dark:via-gray-700/30 dark:to-gray-800/50 border-sage-200/50 dark:border-gray-600/50 backdrop-blur-sm">
             <CardContent className="p-6">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
-                  <Lock className="w-5 h-5 text-sage-500" />
+                  <Lock className="w-5 h-5 text-sage-500 dark:text-sand-400" />
                   <div>
-                    <p className="font-sans font-medium text-sage-600">Password</p>
-                    <p className="text-sm text-sage-400 font-sans">Change your account password</p>
+                    <p className="font-sans font-medium text-clay-700 dark:text-sand-200">Password</p>
+                    <p className="text-sm text-clay-500 dark:text-sand-400 font-sans">Change your account password</p>
                   </div>
                 </div>
                 <Button
                   onClick={() => setShowPasswordForm(!showPasswordForm)}
                   variant="outline"
-                  className="rounded-xl border-sage-200 bg-white/50 hover:bg-sage-100 text-sage-600 font-sans"
+                  className="rounded-xl border-sage-200 dark:border-gray-600 bg-white/60 dark:bg-gray-700/60 hover:bg-sage-100 dark:hover:bg-gray-600 text-clay-600 dark:text-sand-300 font-sans backdrop-blur-sm"
                 >
                   {showPasswordForm ? "Cancel" : "Change Password"}
                 </Button>
@@ -213,15 +213,15 @@ export default function ProfilePage() {
               {showPasswordForm && (
                 <motion.form
                   onSubmit={handlePasswordChange}
-                  className="mt-4 space-y-4 p-4 bg-sand-50/50 rounded-xl border border-sage-200/50"
+                  className="mt-4 space-y-4 p-4 bg-gradient-to-br from-sand-50/60 via-white/40 to-sage-50/60 dark:from-gray-700/60 dark:via-gray-600/40 dark:to-gray-700/60 rounded-xl border border-sage-200/50 dark:border-gray-600/50 backdrop-blur-sm"
                   initial={{ opacity: 0, height: 0 }}
                   animate={{ opacity: 1, height: "auto" }}
                   exit={{ opacity: 0, height: 0 }}
                   transition={{ duration: 0.3 }}
                 >
                   <div>
-                    <Label htmlFor="currentPassword" className="text-sage-600 font-sans text-sm font-medium my-0 py-0.5">
-                                 Current Password
+                    <Label htmlFor="currentPassword" className="text-clay-600 dark:text-sand-300 font-sans text-sm font-medium my-0 py-0.5">
+                      Current Password
                     </Label>
                     <Input
                       id="currentPassword"
@@ -229,13 +229,13 @@ export default function ProfilePage() {
                       value={passwordForm.currentPassword}
                       onChange={(e) => setPasswordForm((prev) => ({ ...prev, currentPassword: e.target.value }))}
                       disabled={isPasswordLoading}
-                      className="mt-1 rounded-xl border-sage-200 bg-white/50 focus:border-sage-300 font-sans disabled:opacity-50"
+                      className="mt-1 rounded-xl border-sage-200 dark:border-gray-600 bg-white/60 dark:bg-gray-700/60 focus:border-sage-300 dark:focus:border-sand-400 font-sans disabled:opacity-50 text-clay-700 dark:text-sand-100 backdrop-blur-sm"
                       placeholder="Enter current password"
                     />
                   </div>
 
                   <div>
-                    <Label htmlFor="newPassword" className="text-sage-600 font-sans text-sm font-medium">
+                    <Label htmlFor="newPassword" className="text-clay-600 dark:text-sand-300 font-sans text-sm font-medium">
                       New Password
                     </Label>
                     <Input
@@ -244,13 +244,13 @@ export default function ProfilePage() {
                       value={passwordForm.newPassword}
                       onChange={(e) => setPasswordForm((prev) => ({ ...prev, newPassword: e.target.value }))}
                       disabled={isPasswordLoading}
-                      className="mt-1 rounded-xl border-sage-200 bg-white/50 focus:border-sage-300 font-sans disabled:opacity-50"
+                      className="mt-1 rounded-xl border-sage-200 dark:border-gray-600 bg-white/60 dark:bg-gray-700/60 focus:border-sage-300 dark:focus:border-sand-400 font-sans disabled:opacity-50 text-clay-700 dark:text-sand-100 backdrop-blur-sm"
                       placeholder="Enter new password"
                     />
                   </div>
 
                   <div>
-                    <Label htmlFor="confirmPassword" className="text-sage-600 font-sans text-sm font-medium">
+                    <Label htmlFor="confirmPassword" className="text-clay-600 dark:text-sand-300 font-sans text-sm font-medium">
                       Confirm New Password
                     </Label>
                     <Input
@@ -259,7 +259,7 @@ export default function ProfilePage() {
                       value={passwordForm.confirmPassword}
                       onChange={(e) => setPasswordForm((prev) => ({ ...prev, confirmPassword: e.target.value }))}
                       disabled={isPasswordLoading}
-                      className="mt-1 rounded-xl border-sage-200 bg-white/50 focus:border-sage-300 font-sans disabled:opacity-50"
+                      className="mt-1 rounded-xl border-sage-200 dark:border-gray-600 bg-white/60 dark:bg-gray-700/60 focus:border-sage-300 dark:focus:border-sand-400 font-sans disabled:opacity-50 text-clay-700 dark:text-sand-100 backdrop-blur-sm"
                       placeholder="Confirm new password"
                     />
                   </div>
@@ -272,7 +272,7 @@ export default function ProfilePage() {
                       !passwordForm.newPassword ||
                       !passwordForm.confirmPassword
                     }
-                    className="w-full bg-sage-500 hover:bg-sage-400 text-white rounded-xl py-2 font-sans font-medium transition-all duration-200 disabled:opacity-50"
+                    className="w-full bg-gradient-to-r from-sage-500 via-clay-500 to-sand-500 hover:from-sage-600 hover:via-clay-600 hover:to-sand-600 dark:from-sage-600 dark:via-clay-600 dark:to-sand-600 dark:hover:from-sage-700 dark:hover:via-clay-700 dark:hover:to-sand-700 text-white rounded-xl py-2 font-sans font-medium transition-all duration-200 disabled:opacity-50 shadow-md"
                   >
                     {isPasswordLoading ? "Changing Password..." : "Change Password"}
                   </Button>
@@ -288,22 +288,22 @@ export default function ProfilePage() {
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.6, delay: 0.3 }}
         >
-          <h2 className="font-display text-sage-600 text-xl mb-4">Settings</h2>
-          <Card className="bg-transparent border-sage-200/50">
+          <h2 className="font-display text-clay-700 dark:text-sand-200 text-xl mb-4">Settings</h2>
+          <Card className="bg-gradient-to-br from-white/50 via-sage-50/30 to-sand-50/50 dark:from-gray-800/50 dark:via-gray-700/30 dark:to-gray-800/50 border-sage-200/50 dark:border-gray-600/50 backdrop-blur-sm">
             <CardContent className="p-6 space-y-6">
               {/* Notifications */}
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
-                  <Bell className="w-5 h-5 text-sage-500" />
+                  <Bell className="w-5 h-5 text-sage-500 dark:text-sand-400" />
                   <div>
-                    <p className="font-sans font-medium text-sage-600">Notifications</p>
-                    <p className="text-sm text-sage-400 font-sans">Receive updates and reminders</p>
+                    <p className="font-sans font-medium text-clay-700 dark:text-sand-200">Notifications</p>
+                    <p className="text-sm text-clay-500 dark:text-sand-400 font-sans">Receive updates and reminders</p>
                   </div>
                 </div>
                 <Switch
                   checked={notifications}
                   onCheckedChange={setNotifications}
-                  className="data-[state=checked]:bg-sage-500"
+                  className="data-[state=checked]:bg-gradient-to-r data-[state=checked]:from-sage-500 data-[state=checked]:to-clay-500 dark:data-[state=checked]:from-sage-600 dark:data-[state=checked]:to-clay-600"
                 />
               </div>
 
@@ -311,12 +311,12 @@ export default function ProfilePage() {
               <Button
                 onClick={handleDeleteAccount}
                 variant="destructive"
-                className="w-full justify-center font-sans text-white"
+                className="w-full justify-center font-sans text-white bg-red-500 hover:bg-red-600 dark:bg-red-600 dark:hover:bg-red-700 rounded-xl shadow-md"
               >
                 <Trash2 className="w-4 h-4 mr-2" />
                 Delete Account
               </Button>
-              <p className="text-xs text-red-400 mt-2 font-sans">
+              <p className="text-xs text-red-500 dark:text-red-400 mt-2 font-sans">
                 This action cannot be undone. All your data will be permanently deleted.
               </p>
             </CardContent>
@@ -330,9 +330,9 @@ export default function ProfilePage() {
           animate={{ opacity: 1 }}
           transition={{ duration: 0.6, delay: 0.6 }}
         >
-          <p className="text-sage-400 font-sans text-xs">
+          <p className="text-clay-500 dark:text-sand-400 font-sans text-xs">
             Need help? Contact us at{" "}
-            <a href="mailto:support@slurpy.ai" className="underline hover:text-sage-500">
+            <a href="mailto:support@slurpy.ai" className="underline hover:text-clay-600 dark:hover:text-sand-300 transition-colors">
               support@slurpy.ai
             </a>
           </p>
@@ -341,3 +341,4 @@ export default function ProfilePage() {
     </div>
   )
 }
+
