@@ -1,0 +1,82 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// PostgreSQL datasource (supports arrays)
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Chat Models
+model ChatSession {
+  id           String        @id @default(cuid())
+  sessionId    String        @unique
+  userId       String
+  startTime    DateTime      @default(now())
+  endTime      DateTime?
+  duration     Int?          // Duration in minutes
+  messageCount Int           @default(0)
+  messages     ChatMessage[]
+  analysis     Json?         // Optional analysis data
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  @@index([userId])
+  @@index([startTime])
+}
+
+model ChatMessage {
+  id          String      @id @default(cuid())
+  sessionId   String
+  userId      String
+  role        String      // "user" or "assistant"
+  content     String
+  emotion     String?
+  intensity   Float?
+  topics      String[]    // Native PostgreSQL array support
+  timestamp   DateTime    @default(now())
+  session     ChatSession @relation(fields: [sessionId], references: [sessionId], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([sessionId])
+  @@index([timestamp])
+}
+
+// NEW: Daily Mood Tracking
+model DailyMood {
+  id          String    @id @default(cuid())
+  userId      String
+  date        DateTime  // Store as date (YYYY-MM-DD)
+  emotion     String    // "happy", "sad", "anxious", etc.
+  intensity   Int       // 1-10 scale
+  fruit       String    // Emoji representation
+  notes       String?   // Optional notes about the day
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([userId, date]) // One mood entry per user per day
+  @@index([userId])
+  @@index([date])
+}
+
+// NEW: Journal Entries (enhanced from your existing journal)
+model JournalEntry {
+  id          String    @id @default(cuid())
+  userId      String
+  title       String?   // Optional title
+  content     String    // Main journal content
+  date        DateTime  // Date of the entry (can be different from createdAt)
+  mood        String?   // Associated mood if any
+  tags        String[]  // Tags for categorization
+  isPrivate   Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([userId])
+  @@index([date])
+  @@index([userId, date]) // For efficient user + date queries
+}

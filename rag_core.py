@@ -1,6 +1,8 @@
 import os, warnings, json, datetime, pathlib, torch
 from collections import deque
-from typing import Deque, Tuple
+from typing import Deque, Tuple, List, Optional
+import requests
+import uuid
 
 # ── memory engine ────────────────────────────────────────────────
 from memory import add_message, recall              
@@ -42,6 +44,70 @@ def write_session_log(hist: History):
     }
     with LOG_PATH.open("a", encoding="utf-8") as f:
         f.write(json.dumps(entry) + "\n")
+
+# ------------------------------------------------------------------
+# 🆕 INSIGHTS INTEGRATION FUNCTIONS
+def store_message_insights(user_id: str, session_id: str, message: str, role: str, emotion: str, intensity: float, topics: Optional[List[str]] = None):
+    """
+    Store message data for insights analysis
+    Integrates with your Next.js insights API
+    """
+    try:
+        # Your Next.js API endpoint
+        api_url = "http://localhost:3000/api/insights"  # Change to your deployed URL in production
+        
+        payload = {
+            "sessionId": session_id,
+            "message": message,
+            "role": role,  # "user" or "assistant"
+            "emotion": emotion,
+            "intensity": intensity,
+            "topics": topics or []
+        }
+        
+        # In production, you'd need to include proper auth headers
+        # For now, we'll let the API handle auth via Clerk
+        response = requests.post(api_url, json=payload, timeout=5)
+        
+        if response.status_code == 201:
+            print(f"✅ Stored {role} message with emotion: {emotion}")
+        else:
+            print(f"⚠️ Failed to store message: {response.status_code}")
+            
+    except Exception as e:
+        print(f"❌ Error storing message insights: {e}")
+        # Don't let API failures break the chat experience
+
+def extract_topics_from_message(message: str) -> List[str]:
+    """
+    Extract topics from a message using simple keyword matching
+    You can enhance this with more sophisticated NLP if needed
+    """
+    # Common therapy/wellness topics
+    topic_keywords = {
+        "work": ["work", "job", "career", "boss", "colleague", "office", "workplace", "employment"],
+        "relationships": ["relationship", "partner", "boyfriend", "girlfriend", "marriage", "family", "dating"],
+        "anxiety": ["anxious", "worry", "nervous", "panic", "stress", "overwhelmed", "fear"],
+        "depression": ["sad", "depressed", "hopeless", "empty", "lonely", "down"],
+        "self-care": ["self-care", "wellness", "meditation", "exercise", "sleep", "health"],
+        "goals": ["goal", "dream", "ambition", "future", "plan", "achievement", "success"],
+        "health": ["health", "physical", "doctor", "medicine", "illness", "medical"],
+        "money": ["money", "financial", "budget", "debt", "salary", "expensive", "cost"],
+        "education": ["school", "study", "learn", "education", "college", "university", "class"],
+        "social": ["friends", "social", "party", "group", "people", "community"],
+        "therapy": ["therapy", "counseling", "mental health", "therapist", "treatment"],
+        "emotions": ["feel", "feeling", "emotion", "mood", "angry", "happy", "sad"],
+        "crisis": ["crisis", "emergency", "help", "urgent", "serious"]
+    }
+    
+    message_lower = message.lower()
+    detected_topics = []
+    
+    for topic, keywords in topic_keywords.items():
+        if any(keyword in message_lower for keyword in keywords):
+            detected_topics.append(topic)
+    
+    return detected_topics
 
 # ------------------------------------------------------------------
 # 🎭 PERSONALITY MODES - Your brilliant idea!
@@ -193,19 +259,24 @@ def is_greeting(txt: str):  return any(txt.lower().strip().startswith(g) for g i
 def is_farewell(txt: str):  return any(f in txt.lower() for f in FAREWELLS)
 
 # ------------------------------------------------------------------
-def slurpy_answer(msg: str, hist: History, user_id: str | None = None, mode: str = DEFAULT_MODE):
+def slurpy_answer(msg: str, hist: History, user_id: Optional[str] = None, mode: str = DEFAULT_MODE, session_id: Optional[str] = None):
     """
     Main entry‑point: generate Slurpy's answer with personality mode.
+    Enhanced with insights tracking.
 
     Parameters
     ----------
-    msg      : the user's message
-    hist     : short‑term conversational history (deque)
-    user_id  : Clerk user ID (fallbacks to "anonymous" for CLI / tests)
-    mode     : personality mode (therapist, coach, friend, poet, monk, lover)
+    msg        : the user's message
+    hist       : short‑term conversational history (deque)
+    user_id    : Clerk user ID (fallbacks to "anonymous" for CLI / tests)
+    mode       : personality mode (therapist, coach, friend, poet, monk, lover)
+    session_id : unique session identifier for tracking conversations
     """
     if user_id is None:
         user_id = "anonymous"
+    
+    if session_id is None:
+        session_id = str(uuid.uuid4())  # Generate unique session ID
 
     mode_config = get_mode_config(mode)
 
@@ -221,10 +292,19 @@ def slurpy_answer(msg: str, hist: History, user_id: str | None = None, mode: str
         }
         hotline = crisis_responses.get(mode, crisis_responses["therapist"])
         hist.append((msg, hotline, "crisis"))
+        
+        # 🆕 Store crisis message for insights
+        topics = extract_topics_from_message(msg)
+        store_message_insights(user_id, session_id, msg, "user", "crisis", 1.0, topics)
+        store_message_insights(user_id, session_id, hotline, "assistant", "supportive", 0.9, ["crisis", "support"])
+        
         return hotline, "crisis", "Emergency Orange"
 
     emotion, prob = emotion_intensity(msg)
     fruit = fruit_for(emotion)
+
+    # 🆕 Extract topics from user message
+    topics = extract_topics_from_message(msg)
 
     # Retrieve empathic context
     context_docs = retriever.invoke(msg)
@@ -261,17 +341,29 @@ def slurpy_answer(msg: str, hist: History, user_id: str | None = None, mode: str
         hist.popleft()
 
     add_message(user_id, msg, emotion, fruit, prob)
+    
+    # 🆕 Store insights data
+    # Store user message
+    store_message_insights(user_id, session_id, msg, "user", emotion, prob, topics)
+    
+    # Analyze assistant response (keep it supportive/therapeutic)
+    assistant_emotion = "supportive"  # or you could analyze the assistant's response too
+    assistant_topics = ["support", "therapy"] + topics  # Assistant addresses user's topics
+    store_message_insights(user_id, session_id, answer, "assistant", assistant_emotion, 0.7, assistant_topics)
+    
     return answer, emotion, fruit
 
 # ------------------------------------------------------------------
 if __name__ == "__main__":
     mem: History = deque()
     current_mode = DEFAULT_MODE
+    current_session_id = str(uuid.uuid4())  # 🆕 Generate session ID for this conversation
     
     print(f"🎭 Slurpy Personality Modes Available:")
     for mode_id, config in PERSONALITY_MODES.items():
         print(f"  {config['emoji']} {config['name']}: {config['description']}")
     print(f"\n🎯 Starting in {PERSONALITY_MODES[current_mode]['name']} mode")
+    print(f"📊 Session ID: {current_session_id}")  # 🆕 Show session ID
     print("💡 Type 'mode [name]' to switch modes")
     
     try:
@@ -282,11 +374,11 @@ if __name__ == "__main__":
 
     while True:
         try:
-            user = input(f"\n[{PERSONALITY_MODES[current_mode]['emoji']} {PERSONALITY_MODES[current_mode]['name']}] You > ").strip()
+            user_input = input(f"\n[{PERSONALITY_MODES[current_mode]['emoji']} {PERSONALITY_MODES[current_mode]['name']}] You > ").strip()
 
             # Handle mode switching
-            if user.lower().startswith("mode "):
-                requested_mode = user.lower().replace("mode ", "").strip()
+            if user_input.lower().startswith("mode "):
+                requested_mode = user_input.lower().replace("mode ", "").strip()
                 if requested_mode in PERSONALITY_MODES:
                     current_mode = requested_mode
                     mode_config = PERSONALITY_MODES[current_mode]
@@ -296,20 +388,25 @@ if __name__ == "__main__":
                     print(f"❌ Unknown mode. Available: {', '.join(PERSONALITY_MODES.keys())}")
                     continue
 
-            if is_greeting(user):
-                greet = str(llm.invoke(GREET_PROMPT.format(question=user)).content)
+            if is_greeting(user_input):
+                greet = str(llm.invoke(GREET_PROMPT.format(question=user_input)).content)
                 print(f"\nSlurpy ({PERSONALITY_MODES[current_mode]['name']}):", greet, "\n")
-                mem.append((user, greet, mem[-1][2] if mem else "neutral"))
+                mem.append((user_input, greet, mem[-1][2] if mem else "neutral"))
+                
+                # 🆕 Store greeting insights
+                store_message_insights("anonymous", current_session_id, user_input, "user", "neutral", 0.5, ["greeting"])
+                store_message_insights("anonymous", current_session_id, greet, "assistant", "friendly", 0.7, ["greeting"])
                 continue
 
-            if is_farewell(user):
+            if is_farewell(user_input):
                 print(f"\nSlurpy ({PERSONALITY_MODES[current_mode]['name']}): It was lovely chatting. Anything else on your mind? (yes/no)\n")
                 follow = input("You > ").strip().lower()
                 if follow in {"no", "n"} or is_farewell(follow):
                     break
-                user = follow
+                user_input = follow
 
-            reply, emo, fruit = slurpy_answer(user, mem, mode=current_mode)
+            # 🆕 Pass session_id to track conversation
+            reply, emo, fruit = slurpy_answer(user_input, mem, user_id="anonymous", mode=current_mode, session_id=current_session_id)
             print(f"\nSlurpy ({fruit} – {emo} – {PERSONALITY_MODES[current_mode]['name']}):", reply, "\n")
 
         except KeyboardInterrupt:
@@ -322,4 +419,4 @@ if __name__ == "__main__":
             summary_vs.add_texts([summary])
         except Exception:
             pass
-    print("\n🌙 Session saved & summarised. Take care.\n")
+    print(f"\n🌙 Session {current_session_id} saved & summarised. Take care.\n")  # 🆕 Show session ID

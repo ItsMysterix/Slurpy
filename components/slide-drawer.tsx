@@ -2,23 +2,58 @@
 
 import { useState } from "react"
 import { motion } from "framer-motion"
-import { Menu, X, Check, Circle, MoreVertical } from "lucide-react"
+import { Menu, X, Check, Circle, MoreVertical, Calendar, BookOpen, MessageCircle, BarChart3, LogOut } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import Link from "next/link"
-import { useClerk, useUser } from "@clerk/nextjs" 
+import { usePathname } from "next/navigation"
+import { useClerk, useUser } from "@clerk/nextjs"
 
 interface SlideDrawerProps {
-  selectedTab?: "chats" | "analysis"
-  onTabChange?: (tab: "chats" | "analysis") => void
   onSidebarToggle?: (isOpen: boolean) => void
 }
 
-export default function SlideDrawer({ selectedTab = "chats", onTabChange, onSidebarToggle }: SlideDrawerProps) {
+export default function SlideDrawer({ onSidebarToggle }: SlideDrawerProps) {
   const [isOpen, setIsOpen] = useState(false)
+  const pathname = usePathname()
 
   const { signOut } = useClerk()
   const { user } = useUser()
+
+  const navigationItems = [
+    {
+      id: "chats",
+      label: "Chats",
+      icon: MessageCircle,
+      href: "/chat",
+      description: "AI conversations",
+      gradient: "from-sage-400 to-sage-500",
+    },
+    {
+      id: "insights",
+      label: "Session Insights",
+      icon: BarChart3,
+      href: "/insights",
+      description: "Emotion analytics",
+      gradient: "from-clay-400 to-clay-500",
+    },
+    {
+      id: "calendar",
+      label: "Calendar",
+      icon: Calendar,
+      href: "/calendar",
+      description: "Track your mood patterns",
+      gradient: "from-sage-500 to-clay-400",
+    },
+    {
+      id: "journal",
+      label: "Journal",
+      icon: BookOpen,
+      href: "/journal",
+      description: "Reflect on your thoughts",
+      gradient: "from-clay-400 to-sage-400",
+    },
+  ]
 
   const progressSteps = [
     { label: "Listening", status: "completed", icon: Check, color: "text-sage-500 dark:text-sage-400" },
@@ -26,89 +61,79 @@ export default function SlideDrawer({ selectedTab = "chats", onTabChange, onSide
     { label: "Roadmap", status: "pending", icon: Circle, color: "text-sand-400 dark:text-sand-300" },
   ]
 
+  const isActivePage = (href: string) => {
+    return pathname === href
+  }
+
+  const toggleSidebar = () => {
+    const newState = !isOpen
+    setIsOpen(newState)
+    onSidebarToggle?.(newState)
+  }
+
   return (
     <>
       <div
         className={`fixed inset-y-0 left-0 z-40 transition-all duration-300 ${isOpen ? "w-64" : "w-16"} bg-gradient-to-b from-sand-50/90 via-sage-25/80 to-clay-50/90 dark:from-gray-900/90 dark:via-gray-800/80 dark:to-gray-900/90 backdrop-blur-lg border-r border-sage-200/50 dark:border-gray-700/50 flex flex-col shadow-lg`}
       >
-        {/* Top Section - Always visible */}
-        <div className="flex items-center justify-between p-2">
-          {/* Hamburger Button - only show when expanded */}
-          {isOpen && (
-            <Button
-              onClick={() => {
-                setIsOpen(!isOpen)
-                onSidebarToggle?.(!isOpen)
-              }}
-              variant="ghost"
-              size="sm"
-              className="text-clay-600 hover:text-clay-500 dark:text-sand-400 dark:hover:text-sand-300 p-2 flex-shrink-0 transition-colors"
-              aria-label="Toggle menu"
-              aria-expanded={isOpen}
-            >
-              <motion.div animate={{ rotate: isOpen ? 90 : 0 }} transition={{ duration: 0.2 }}>
-                <X size={20} />
-              </motion.div>
-            </Button>
-          )}
+        {/* Top Section - Hamburger Button */}
+        <div className="flex items-center justify-center p-2">
+          <Button
+            onClick={toggleSidebar}
+            variant="ghost"
+            size="sm"
+            className="text-clay-600 hover:text-clay-500 dark:text-sand-400 dark:hover:text-sand-300 p-2 flex-shrink-0 w-12 h-12 rounded-xl hover:bg-sage-100 transition-colors"
+            aria-label="Toggle menu"
+            aria-expanded={isOpen}
+          >
+            <motion.div animate={{ rotate: isOpen ? 90 : 0 }} transition={{ duration: 0.2 }}>
+              {isOpen ? <X size={20} /> : <Menu size={20} />}
+            </motion.div>
+          </Button>
         </div>
 
-        {/* Content - only show when expanded */}
-        {isOpen && (
+        {/* Content - show different content based on open/closed state */}
+        {isOpen ? (
           <>
-            {/* Tabs */}
-            <div className="flex gap-4 px-4 border-sand-200/50 dark:border-gray-700/50 mb-0 flex-row border-b-0 my-4">
-              {(["chats", "analysis"] as const).map((tab) => (
-                <button
-                  key={tab}
-                  onClick={() => {
-                    onTabChange?.(tab)
-                    if (tab === "analysis") {
-                      // This will trigger the analysis view showing current session emotions
-                    }
-                  }}
-                  className={`font-sans text-xs pb-2 border-b-2 transition-colors capitalize ${
-                    selectedTab === tab
-                      ? "text-clay-600 dark:text-sand-300 border-clay-600 dark:border-sand-400"
-                      : "text-clay-400 dark:text-sand-500 border-transparent hover:text-clay-500 dark:hover:text-sand-400"
-                  }`}
-                >
-                  {tab === "analysis" ? "Session Insights" : "Chats"}
-                </button>
-              ))}
-            </div>
-
-            {/* Progress Steps */}
+            {/* Navigation Items - Expanded */}
             <div className="px-4 mb-3">
-              <div className="space-y-3 relative my-4">
-                {progressSteps.map((step, index) => {
-                  const Icon = step.icon
+              <div className="space-y-3">
+                {navigationItems.map((item) => {
+                  const Icon = item.icon
+                  const isActive = isActivePage(item.href)
+
                   return (
-                    <div key={step.label} className="flex items-center gap-2 relative">
-                      {index < progressSteps.length - 1 && (
-                        <div className="absolute left-2 top-5 h-3 w-px bg-sage-300 dark:bg-gray-600" />
-                      )}
+                    <Link key={item.id} href={item.href}>
                       <div
-                        className={`w-4 h-4 rounded-full flex items-center justify-center border transition-colors ${
-                          step.status === "completed"
-                            ? "bg-sage-500 dark:bg-sage-600 border-sage-500 dark:border-sage-600 text-white"
-                            : step.status === "current"
-                              ? "border-clay-400 dark:border-clay-300 text-clay-400 dark:text-clay-300 bg-white/50 dark:bg-gray-800/50"
-                              : "border-sand-400 dark:border-sand-300 text-sand-400 dark:text-sand-300 bg-white/30 dark:bg-gray-800/30"
+                        className={`bg-white/50 dark:bg-sage-800/50 rounded-xl p-3 border transition-all duration-200 cursor-pointer hover:shadow-md ${
+                          isActive
+                            ? "border-sage-300 dark:border-sage-600 bg-sage-50 dark:bg-sage-700/50 shadow-sm"
+                            : "border-sand-200/50 dark:border-sage-700/50 hover:border-sage-200 dark:hover:border-sage-600"
                         }`}
                       >
-                        <Icon className="w-2 h-2" />
+                        <div className="flex items-center gap-3 mb-2">
+                          <div
+                            className={`w-8 h-8 rounded-lg bg-gradient-to-br ${item.gradient} flex items-center justify-center`}
+                          >
+                            <Icon className="w-4 h-4 text-white" />
+                          </div>
+                          <span
+                            className={`font-sans text-sm font-medium ${
+                              isActive ? "text-sage-700 dark:text-sage-200" : "text-sage-600 dark:text-sage-300"
+                            }`}
+                          >
+                            {item.label}
+                          </span>
+                        </div>
+                        <p
+                          className={`text-xs font-sans ml-11 ${
+                            isActive ? "text-sage-600 dark:text-sage-300" : "text-sage-500 dark:text-sage-400"
+                          }`}
+                        >
+                          {item.description}
+                        </p>
                       </div>
-                      <span
-                        className={`font-sans text-xs transition-colors ${
-                          step.status === "pending" 
-                            ? "text-clay-400 dark:text-sand-500" 
-                            : "text-clay-600 dark:text-sand-300"
-                        }`}
-                      >
-                        {step.label}
-                      </span>
-                    </div>
+                    </Link>
                   )
                 })}
               </div>
@@ -117,7 +142,7 @@ export default function SlideDrawer({ selectedTab = "chats", onTabChange, onSide
             {/* Spacer */}
             <div className="flex-1" />
 
-            {/* User Section */}
+            {/* User Section - Expanded */}
             <div className="border-sage-200/50 dark:border-gray-700/50 p-4 flex items-center gap-3 min-h-[64px] border-t bg-gradient-to-r from-white/30 via-sage-50/20 to-sand-50/30 dark:from-gray-800/30 dark:via-gray-700/20 dark:to-gray-800/30 backdrop-blur-sm">
               <Avatar className="w-8 h-8 shadow-md">
                 {user?.imageUrl ? (
@@ -149,34 +174,77 @@ export default function SlideDrawer({ selectedTab = "chats", onTabChange, onSide
                 onClick={() => signOut()}
                 className="w-full bg-gradient-to-r from-red-400 to-red-500 hover:from-red-500 hover:to-red-600 dark:from-red-500 dark:to-red-600 dark:hover:from-red-600 dark:hover:to-red-700 text-white justify-start font-sans text-sm rounded-xl shadow-md transition-all duration-200"
               >
+                <LogOut className="w-4 h-4 mr-2" />
                 Sign out
               </Button>
             </div>
           </>
-        )}
+        ) : (
+          <>
+            {/* Navigation Icons - Collapsed */}
+            <div className="flex-1 flex flex-col items-center py-4 space-y-2">
+              {navigationItems.map((item) => {
+                const Icon = item.icon
+                const isActive = isActivePage(item.href)
 
-        {/* Hamburger Button at bottom when collapsed */}
-        {!isOpen && (
-          <div className="mt-auto mb-4 px-2">
-            <Button
-              onClick={() => {
-                setIsOpen(!isOpen)
-                onSidebarToggle?.(!isOpen)
-              }}
-              variant="ghost"
-              size="sm"
-              className="w-full text-clay-600 hover:text-clay-500 dark:text-sand-400 dark:hover:text-sand-300 p-2 transition-colors"
-              aria-label="Toggle menu"
-              aria-expanded={isOpen}
-            >
-              <motion.div animate={{ rotate: isOpen ? 90 : 0 }} transition={{ duration: 0.2 }}>
-                <Menu size={20} />
-              </motion.div>
-            </Button>
-          </div>
+                return (
+                  <Link key={item.id} href={item.href}>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className={`w-12 h-12 rounded-xl transition-all duration-200 ${
+                        isActive
+                          ? "bg-sage-100 dark:bg-sage-700/50 text-sage-700 dark:text-sage-200 shadow-sm border border-sage-200 dark:border-sage-600"
+                          : "text-clay-600 hover:text-clay-700 hover:bg-sage-50 dark:text-sand-400 dark:hover:text-sand-300 dark:hover:bg-gray-800/50"
+                      }`}
+                      title={item.label}
+                    >
+                      <Icon className="w-5 h-5" />
+                    </Button>
+                  </Link>
+                )
+              })}
+            </div>
+
+            {/* Bottom Section - Collapsed */}
+            <div className="flex flex-col items-center pb-4 space-y-3">
+              {/* Logo */}
+              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-sage-400 to-clay-400 flex items-center justify-center shadow-md">
+                <span className="text-white font-display font-bold text-lg">S</span>
+              </div>
+
+              {/* Profile Avatar */}
+              <Link href="/profile">
+                <Button variant="ghost" size="sm" className="p-0 rounded-full hover:scale-105 transition-transform">
+                  <Avatar className="w-10 h-10 shadow-md">
+                    {user?.imageUrl ? (
+                      <img
+                        src={user.imageUrl}
+                        alt="Profile"
+                        className="w-full h-full object-cover rounded-full"
+                      />
+                    ) : (
+                      <AvatarFallback className="bg-gradient-to-br from-clay-400 via-sage-400 to-sand-400 dark:from-clay-500 dark:via-sage-500 dark:to-sand-500 text-white text-sm">
+                        {user?.firstName?.[0] ?? "U"}
+                      </AvatarFallback>
+                    )}
+                  </Avatar>
+                </Button>
+              </Link>
+
+              {/* Logout Button */}
+              <Button
+                size="sm"
+                onClick={() => signOut()}
+                className="w-12 h-8 bg-gradient-to-r from-red-400 to-red-500 hover:from-red-500 hover:to-red-600 dark:from-red-500 dark:to-red-600 dark:hover:from-red-600 dark:hover:to-red-700 text-white rounded-lg p-0 shadow-md transition-all duration-200"
+                title="Sign out"
+              >
+                <LogOut className="w-4 h-4" />
+              </Button>
+            </div>
+          </>
         )}
       </div>
     </>
   )
 }
-

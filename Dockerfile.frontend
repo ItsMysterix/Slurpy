@@ -1,0 +1,18 @@
+# Dockerfile.frontend (Next.js)
+FROM node:18-alpine
+WORKDIR /app
+
+# Copy everything
+COPY . .
+
+# Install deps
+RUN npm install --legacy-peer-deps
+
+# Build Next.js
+RUN npm run build
+
+# Expose the port
+EXPOSE 3000
+
+# Start Next.js production server
+CMD ["npm", "start"]
