@@ -33,14 +33,25 @@ function ThemeToggle() {
     setMounted(true)
   }, [])
 
-  if (!mounted) return null
+  // Prevent hydration mismatch by not rendering until mounted
+  if (!mounted) {
+    return (
+      <Button
+        variant="ghost"
+        size="sm"
+        className="text-clay-600 hover:text-clay-500 dark:text-sand-400 dark:hover:text-sand-300 p-2 rounded-lg transition-colors opacity-0"
+      >
+        <Sun className="w-5 h-5" />
+      </Button>
+    )
+  }
 
   return (
     <Button
       onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
       variant="ghost"
       size="sm"
-      className="text-sage-600 hover:text-sage-500 dark:text-sage-400 dark:hover:text-sage-300 p-2 rounded-lg"
+      className="text-clay-600 hover:text-clay-500 dark:text-sand-400 dark:hover:text-sand-300 p-2 rounded-lg transition-colors"
     >
       {theme === "dark" ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
     </Button>
@@ -177,13 +188,13 @@ export default function JournalPage() {
   // Show loading state while fetching entries
   if (loading) {
     return (
-      <div className="min-h-screen bg-sand-50 dark:bg-sand-900 transition-all duration-500">
+      <div className="min-h-screen bg-gradient-to-br from-sand-50 via-sage-25 to-clay-50 dark:from-gray-950 dark:via-gray-900 dark:to-gray-950 transition-all duration-500">
         <SlideDrawer onSidebarToggle={setSidebarOpen} />
         <div className={`flex h-screen transition-all duration-300 ${sidebarOpen ? "ml-64" : "ml-16"}`}>
           <div className="flex-1 flex items-center justify-center">
             <div className="text-center">
-              <Loader2 className="w-8 h-8 animate-spin mx-auto mb-4 text-sage-500" />
-              <p className="text-sage-500 dark:text-sage-400">Loading your journal entries...</p>
+              <Loader2 className="w-8 h-8 animate-spin mx-auto mb-4 text-clay-500 dark:text-sand-400" />
+              <p className="text-clay-500 dark:text-sand-400">Loading your journal entries...</p>
             </div>
           </div>
         </div>
@@ -192,14 +203,14 @@ export default function JournalPage() {
   }
 
   return (
-    <div className="min-h-screen bg-sand-50 dark:bg-sand-900 transition-all duration-500">
+    <div className="min-h-screen bg-gradient-to-br from-sand-50 via-sage-25 to-clay-50 dark:from-gray-950 dark:via-gray-900 dark:to-gray-950 transition-all duration-500">
       <SlideDrawer onSidebarToggle={setSidebarOpen} />
       <div className={`flex h-screen transition-all duration-300 ${sidebarOpen ? "ml-64" : "ml-16"}`}>
         <div className="flex-1 flex flex-col">
           {/* Header */}
-          <div className="flex justify-between items-center p-4 border-b border-sand-200 dark:border-sage-700">
+          <div className="flex justify-between items-center p-4 bg-white/30 dark:bg-gray-900/30 backdrop-blur-sm border-b border-sage-100/50 dark:border-gray-800/50">
             <motion.h1
-              className="text-2xl font-display font-medium text-sage-700 dark:text-sage-300 flex items-center gap-3"
+              className="text-2xl font-display font-medium text-clay-700 dark:text-sand-200 flex items-center gap-3"
               initial={{ opacity: 0, x: -20 }}
               animate={{ opacity: 1, x: 0 }}
               transition={{ duration: 0.5 }}
@@ -207,7 +218,7 @@ export default function JournalPage() {
               <BookOpen className="w-6 h-6" />
               Journal
               {user && (
-                <span className="text-sm font-sans text-sage-500 dark:text-sage-400">
+                <span className="text-sm font-sans text-clay-500 dark:text-sand-400">
                   - {user.firstName}'s entries
                 </span>
               )}
@@ -215,7 +226,7 @@ export default function JournalPage() {
             <div className="flex items-center gap-3">
               <Button
                 onClick={() => setShowNewEntry(true)}
-                className="bg-sage-500 hover:bg-sage-400 text-white rounded-xl px-4 py-2"
+                className="bg-gradient-to-r from-sage-500 via-clay-500 to-sand-500 hover:from-sage-600 hover:via-clay-600 hover:to-sand-600 text-white rounded-xl px-4 py-2"
               >
                 <Plus className="w-4 h-4 mr-2" />
                 New Entry
@@ -230,12 +241,12 @@ export default function JournalPage() {
               {/* Search Bar */}
               <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6 }}>
                 <div className="relative">
-                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-sage-400" />
+                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-clay-400 dark:text-sand-500" />
                   <Input
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     placeholder="Search your journal entries..."
-                    className="pl-10 rounded-xl border-sand-200 dark:border-sage-700 bg-white/50 dark:bg-sage-800/50"
+                    className="pl-10 rounded-xl border-sage-200/50 dark:border-gray-600/50 bg-white/60 dark:bg-gray-700/60 focus:border-sage-300 dark:focus:border-sand-400 backdrop-blur-sm"
                   />
                 </div>
               </motion.div>
@@ -247,10 +258,10 @@ export default function JournalPage() {
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ duration: 0.6 }}
                 >
-                  <Card className="bg-white/70 dark:bg-sage-900/70 backdrop-blur-lg border-sand-200/50 dark:border-sage-700/50">
+                  <Card className="bg-gradient-to-br from-white/70 via-sage-50/50 to-sand-50/70 dark:from-gray-900/70 dark:via-gray-800/50 dark:to-gray-900/70 backdrop-blur-lg border border-sage-100/30 dark:border-gray-700/30 shadow-[0_8px_24px_rgba(0,0,0,0.05)] dark:shadow-[0_8px_24px_rgba(0,0,0,0.3)]">
                     <CardContent className="p-6">
                       <div className="flex items-center justify-between mb-4">
-                        <h3 className="font-display text-lg text-sage-600 dark:text-sage-200 flex items-center gap-2">
+                        <h3 className="font-display text-lg text-clay-700 dark:text-sand-200 flex items-center gap-2">
                           <Edit3 className="w-5 h-5" />
                           New Journal Entry
                         </h3>
@@ -258,7 +269,7 @@ export default function JournalPage() {
                           onClick={() => setShowNewEntry(false)}
                           variant="ghost"
                           size="sm"
-                          className="text-sage-500 hover:text-sage-600"
+                          className="text-clay-500 dark:text-sand-400 hover:text-clay-600 dark:hover:text-sand-300"
                           disabled={saving}
                         >
                           Cancel
@@ -270,7 +281,7 @@ export default function JournalPage() {
                           value={newEntry.title}
                           onChange={(e) => setNewEntry((prev) => ({ ...prev, title: e.target.value }))}
                           placeholder="Entry title..."
-                          className="rounded-xl border-sand-200 dark:border-sage-700 bg-white/50 dark:bg-sage-800/50"
+                          className="rounded-xl border-sage-200 dark:border-gray-600 bg-white/60 dark:bg-gray-700/60 focus:border-sage-300 dark:focus:border-sand-400 backdrop-blur-sm"
                           disabled={saving}
                         />
 
@@ -279,7 +290,7 @@ export default function JournalPage() {
                           onChange={(e) => setNewEntry((prev) => ({ ...prev, content: e.target.value }))}
                           placeholder="What's on your mind today?"
                           rows={6}
-                          className="rounded-xl border-sand-200 dark:border-sage-700 bg-white/50 dark:bg-sage-800/50 resize-none"
+                          className="rounded-xl border-sage-200 dark:border-gray-600 bg-white/60 dark:bg-gray-700/60 focus:border-sage-300 dark:focus:border-sand-400 resize-none backdrop-blur-sm"
                           disabled={saving}
                         />
 
@@ -288,14 +299,14 @@ export default function JournalPage() {
                             value={newEntry.mood}
                             onChange={(e) => setNewEntry((prev) => ({ ...prev, mood: e.target.value }))}
                             placeholder="Mood (optional)..."
-                            className="rounded-xl border-sand-200 dark:border-sage-700 bg-white/50 dark:bg-sage-800/50"
+                            className="rounded-xl border-sage-200 dark:border-gray-600 bg-white/60 dark:bg-gray-700/60 focus:border-sage-300 dark:focus:border-sand-400 backdrop-blur-sm"
                             disabled={saving}
                           />
                           <Input
                             value={newEntry.fruit}
                             onChange={(e) => setNewEntry((prev) => ({ ...prev, fruit: e.target.value }))}
                             placeholder="Fruit emoji..."
-                            className="rounded-xl border-sand-200 dark:border-sage-700 bg-white/50 dark:bg-sage-800/50"
+                            className="rounded-xl border-sage-200 dark:border-gray-600 bg-white/60 dark:bg-gray-700/60 focus:border-sage-300 dark:focus:border-sand-400 backdrop-blur-sm"
                             disabled={saving}
                           />
                         </div>
@@ -304,7 +315,7 @@ export default function JournalPage() {
                           value={newEntry.tags}
                           onChange={(e) => setNewEntry((prev) => ({ ...prev, tags: e.target.value }))}
                           placeholder="Tags (comma separated)..."
-                          className="rounded-xl border-sand-200 dark:border-sage-700 bg-white/50 dark:bg-sage-800/50"
+                          className="rounded-xl border-sage-200 dark:border-gray-600 bg-white/60 dark:bg-gray-700/60 focus:border-sage-300 dark:focus:border-sand-400 backdrop-blur-sm"
                           disabled={saving}
                         />
 
@@ -312,14 +323,14 @@ export default function JournalPage() {
                           <Button
                             onClick={() => setShowNewEntry(false)}
                             variant="outline"
-                            className="rounded-xl border-sage-200 hover:bg-sage-100"
+                            className="rounded-xl border-sage-200 hover:bg-sage-100 dark:border-gray-600 dark:hover:bg-gray-700"
                             disabled={saving}
                           >
                             Cancel
                           </Button>
                           <Button
                             onClick={handleSaveEntry}
-                            className="bg-sage-500 hover:bg-sage-400 text-white rounded-xl"
+                            className="bg-gradient-to-r from-sage-500 via-clay-500 to-sand-500 hover:from-sage-600 hover:via-clay-600 hover:to-sand-600 text-white rounded-xl"
                             disabled={saving || !newEntry.title.trim() || !newEntry.content.trim()}
                           >
                             {saving ? (
@@ -347,13 +358,13 @@ export default function JournalPage() {
                     animate={{ opacity: 1 }}
                     transition={{ duration: 0.6 }}
                   >
-                    <BookOpen className="w-12 h-12 text-sage-300 dark:text-sage-600 mx-auto mb-4" />
-                    <p className="text-sage-500 dark:text-sage-400 font-sans mb-4">
+                    <BookOpen className="w-12 h-12 text-clay-300 dark:text-sand-600 mx-auto mb-4" />
+                    <p className="text-clay-500 dark:text-sand-400 font-sans mb-4">
                       Start your journaling journey!
                     </p>
                     <Button
                       onClick={() => setShowNewEntry(true)}
-                      className="bg-sage-500 hover:bg-sage-400 text-white rounded-xl"
+                      className="bg-gradient-to-r from-sage-500 via-clay-500 to-sand-500 hover:from-sage-600 hover:via-clay-600 hover:to-sand-600 text-white rounded-xl"
                     >
                       <Plus className="w-4 h-4 mr-2" />
                       Write your first entry
@@ -367,15 +378,15 @@ export default function JournalPage() {
                       animate={{ opacity: 1, y: 0 }}
                       transition={{ duration: 0.6, delay: index * 0.1 }}
                     >
-                      <Card className="bg-white/70 dark:bg-sage-900/70 backdrop-blur-lg border-sand-200/50 dark:border-sage-700/50 hover:shadow-md transition-all duration-200">
+                      <Card className="bg-gradient-to-br from-white/70 via-sage-50/50 to-sand-50/70 dark:from-gray-900/70 dark:via-gray-800/50 dark:to-gray-900/70 backdrop-blur-lg border border-sage-100/30 dark:border-gray-700/30 shadow-[0_8px_24px_rgba(0,0,0,0.05)] dark:shadow-[0_8px_24px_rgba(0,0,0,0.3)] hover:shadow-lg transition-all duration-200">
                         <CardContent className="p-6">
                           <div className="flex items-start justify-between mb-3">
                             <div className="flex-1">
-                              <h3 className="font-display text-xl text-sage-600 dark:text-sage-200 mb-2">
+                              <h3 className="font-display text-xl text-clay-700 dark:text-sand-200 mb-2">
                                 {entry.title}
                               </h3>
                               <div className="flex items-center gap-3 mb-3">
-                                <div className="flex items-center gap-2 text-sm text-sage-500 dark:text-sage-400">
+                                <div className="flex items-center gap-2 text-sm text-clay-500 dark:text-sand-400">
                                   <Calendar className="w-4 h-4" />
                                   {new Date(entry.date).toLocaleDateString("en-US", {
                                     weekday: "long",
@@ -396,7 +407,7 @@ export default function JournalPage() {
                             </div>
                           </div>
 
-                          <p className="text-sage-600 dark:text-sage-300 font-sans leading-relaxed mb-4">
+                          <p className="text-clay-600 dark:text-sand-300 font-sans leading-relaxed mb-4">
                             {entry.content}
                           </p>
 
@@ -406,13 +417,13 @@ export default function JournalPage() {
                                 <Badge
                                   key={tag}
                                   variant="secondary"
-                                  className="bg-sand-100 dark:bg-sage-800 text-sage-600 dark:text-sage-300 text-xs"
+                                  className="bg-sage-100 dark:bg-gray-800 text-clay-600 dark:text-sand-300 text-xs"
                                 >
                                   #{tag}
                                 </Badge>
                               ))}
                             </div>
-                            <Button variant="ghost" size="sm" className="text-sage-500 hover:text-sage-600">
+                            <Button variant="ghost" size="sm" className="text-clay-500 dark:text-sand-400 hover:text-clay-600 dark:hover:text-sand-300">
                               <Edit3 className="w-4 h-4 mr-1" />
                               Edit
                             </Button>
@@ -431,8 +442,8 @@ export default function JournalPage() {
                   animate={{ opacity: 1 }}
                   transition={{ duration: 0.6 }}
                 >
-                  <BookOpen className="w-12 h-12 text-sage-300 dark:text-sage-600 mx-auto mb-4" />
-                  <p className="text-sage-500 dark:text-sage-400 font-sans">
+                  <BookOpen className="w-12 h-12 text-clay-300 dark:text-sand-600 mx-auto mb-4" />
+                  <p className="text-clay-500 dark:text-sand-400 font-sans">
                     No entries found matching "{searchQuery}"
                   </p>
                 </motion.div>

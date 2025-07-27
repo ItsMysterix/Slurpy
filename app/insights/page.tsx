@@ -53,18 +53,29 @@ function ThemeToggle() {
   const { theme, setTheme } = useTheme()
   const [mounted, setMounted] = useState(false)
 
-  React.useEffect(() => {
+  useEffect(() => {
     setMounted(true)
   }, [])
 
-  if (!mounted) return null
+  // Prevent hydration mismatch by not rendering until mounted
+  if (!mounted) {
+    return (
+      <Button
+        variant="ghost"
+        size="sm"
+        className="text-clay-600 hover:text-clay-500 dark:text-sand-400 dark:hover:text-sand-300 p-2 rounded-lg transition-colors opacity-0"
+      >
+        <Sun className="w-5 h-5" />
+      </Button>
+    )
+  }
 
   return (
     <Button
       onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
       variant="ghost"
       size="sm"
-      className="text-sage-600 hover:text-sage-500 dark:text-sage-400 dark:hover:text-sage-300 p-2 rounded-lg"
+      className="text-clay-600 hover:text-clay-500 dark:text-sand-400 dark:hover:text-sand-300 p-2 rounded-lg transition-colors"
     >
       {theme === "dark" ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
     </Button>
@@ -157,13 +168,13 @@ export default function InsightsPage() {
   // Loading state
   if (loading) {
     return (
-      <div className="min-h-screen bg-sand-50 dark:bg-sand-900 transition-all duration-500">
+      <div className="min-h-screen bg-gradient-to-br from-sand-50 via-sage-25 to-clay-50 dark:from-gray-950 dark:via-gray-900 dark:to-gray-950 transition-all duration-500">
         <SlideDrawer onSidebarToggle={setSidebarOpen} />
         <div className={`flex h-screen transition-all duration-300 ${sidebarOpen ? "ml-64" : "ml-16"}`}>
           <div className="flex-1 flex items-center justify-center">
             <div className="text-center">
-              <Loader2 className="w-8 h-8 animate-spin mx-auto mb-4 text-sage-500" />
-              <p className="text-sage-500 dark:text-sage-400">Loading your insights...</p>
+              <Loader2 className="w-8 h-8 animate-spin mx-auto mb-4 text-clay-500 dark:text-sand-400" />
+              <p className="text-clay-500 dark:text-sand-400">Loading your insights...</p>
             </div>
           </div>
         </div>
@@ -174,7 +185,7 @@ export default function InsightsPage() {
   // Error state
   if (error) {
     return (
-      <div className="min-h-screen bg-sand-50 dark:bg-sand-900 transition-all duration-500">
+      <div className="min-h-screen bg-gradient-to-br from-sand-50 via-sage-25 to-clay-50 dark:from-gray-950 dark:via-gray-900 dark:to-gray-950 transition-all duration-500">
         <SlideDrawer onSidebarToggle={setSidebarOpen} />
         <div className={`flex h-screen transition-all duration-300 ${sidebarOpen ? "ml-64" : "ml-16"}`}>
           <div className="flex-1 flex items-center justify-center">
@@ -182,11 +193,11 @@ export default function InsightsPage() {
               <div className="w-12 h-12 bg-red-100 dark:bg-red-900/30 rounded-full flex items-center justify-center mx-auto mb-4">
                 <BarChart3 className="w-6 h-6 text-red-600 dark:text-red-400" />
               </div>
-              <h2 className="text-xl font-display text-sage-600 dark:text-sage-200 mb-2">Unable to Load Insights</h2>
-              <p className="text-sage-500 dark:text-sage-400 mb-4">{error}</p>
+              <h2 className="text-xl font-display text-clay-700 dark:text-sand-200 mb-2">Unable to Load Insights</h2>
+              <p className="text-clay-500 dark:text-sand-400 mb-4">{error}</p>
               <Button 
                 onClick={() => fetchInsights(selectedTimeframe)}
-                className="bg-sage-500 hover:bg-sage-400 text-white"
+                className="bg-gradient-to-r from-sage-500 via-clay-500 to-sand-500 hover:from-sage-600 hover:via-clay-600 hover:to-sand-600 text-white"
               >
                 Try Again
               </Button>
@@ -200,17 +211,17 @@ export default function InsightsPage() {
   // No data state
   if (!insightsData) {
     return (
-      <div className="min-h-screen bg-sand-50 dark:bg-sand-900 transition-all duration-500">
+      <div className="min-h-screen bg-gradient-to-br from-sand-50 via-sage-25 to-clay-50 dark:from-gray-950 dark:via-gray-900 dark:to-gray-950 transition-all duration-500">
         <SlideDrawer onSidebarToggle={setSidebarOpen} />
         <div className={`flex h-screen transition-all duration-300 ${sidebarOpen ? "ml-64" : "ml-16"}`}>
           <div className="flex-1 flex items-center justify-center">
             <div className="text-center">
-              <BarChart3 className="w-12 h-12 text-sage-300 dark:text-sage-600 mx-auto mb-4" />
-              <h2 className="text-xl font-display text-sage-600 dark:text-sage-200 mb-2">No Insights Available</h2>
-              <p className="text-sage-500 dark:text-sage-400 mb-4">Start chatting with Slurpy to see your insights!</p>
+              <BarChart3 className="w-12 h-12 text-clay-300 dark:text-sand-600 mx-auto mb-4" />
+              <h2 className="text-xl font-display text-clay-700 dark:text-sand-200 mb-2">No Insights Available</h2>
+              <p className="text-clay-500 dark:text-sand-400 mb-4">Start chatting with Slurpy to see your insights!</p>
               <Button 
                 onClick={() => window.location.href = '/chat'}
-                className="bg-sage-500 hover:bg-sage-400 text-white"
+                className="bg-gradient-to-r from-sage-500 via-clay-500 to-sand-500 hover:from-sage-600 hover:via-clay-600 hover:to-sand-600 text-white"
               >
                 Start Chatting
               </Button>
@@ -222,14 +233,14 @@ export default function InsightsPage() {
   }
 
   return (
-    <div className="min-h-screen bg-sand-50 dark:bg-sand-900 transition-all duration-500">
+    <div className="min-h-screen bg-gradient-to-br from-sand-50 via-sage-25 to-clay-50 dark:from-gray-950 dark:via-gray-900 dark:to-gray-950 transition-all duration-500">
       <SlideDrawer onSidebarToggle={setSidebarOpen} />
       <div className={`flex h-screen transition-all duration-300 ${sidebarOpen ? "ml-64" : "ml-16"}`}>
         <div className="flex-1 flex flex-col">
           {/* Header */}
-          <div className="flex justify-between items-center p-4 border-b border-sand-200 dark:border-sage-700">
+          <div className="flex justify-between items-center p-4 bg-white/30 dark:bg-gray-900/30 backdrop-blur-sm border-b border-sage-100/50 dark:border-gray-800/50">
             <motion.h1
-              className="text-2xl font-display font-medium text-sage-700 dark:text-sage-300 flex items-center gap-3"
+              className="text-2xl font-display font-medium text-clay-700 dark:text-sand-200 flex items-center gap-3"
               initial={{ opacity: 0, x: -20 }}
               animate={{ opacity: 1, x: 0 }}
               transition={{ duration: 0.5 }}
@@ -237,13 +248,13 @@ export default function InsightsPage() {
               <BarChart3 className="w-6 h-6" />
               Session Insights
               {user && (
-                <span className="text-sm font-sans text-sage-500 dark:text-sage-400">
+                <span className="text-sm font-sans text-clay-500 dark:text-sand-400">
                   - {user.firstName}'s analytics
                 </span>
               )}
             </motion.h1>
             <div className="flex items-center gap-3">
-              <div className="flex bg-white/50 dark:bg-sage-800/50 rounded-xl p-1 border border-sand-200 dark:border-sage-700">
+              <div className="flex bg-white/50 dark:bg-gray-800/50 rounded-xl p-1 border border-sage-200/50 dark:border-gray-700/50">
                 {timeframes.map((timeframe) => (
                   <Button
                     key={timeframe.id}
@@ -252,8 +263,8 @@ export default function InsightsPage() {
                     size="sm"
                     className={`rounded-lg text-xs transition-all duration-200 ${
                       selectedTimeframe === timeframe.id
-                        ? "bg-sage-500 text-white shadow-sm"
-                        : "text-sage-600 hover:text-sage-700 dark:text-sage-300 dark:hover:text-sage-200 hover:bg-sage-100 dark:hover:bg-sage-700/50"
+                        ? "bg-gradient-to-r from-sage-500 via-clay-500 to-sand-500 text-white shadow-sm"
+                        : "text-clay-600 hover:text-clay-700 dark:text-sand-300 dark:hover:text-sand-200 hover:bg-sage-100 dark:hover:bg-gray-700/50"
                     }`}
                   >
                     {timeframe.label}
@@ -269,49 +280,49 @@ export default function InsightsPage() {
             <div className="max-w-6xl mx-auto space-y-6">
               {/* Current Session Overview */}
               <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6 }}>
-                <Card className="bg-white/70 dark:bg-sage-900/70 backdrop-blur-lg border-sand-200/50 dark:border-sage-700/50">
+                <Card className="bg-gradient-to-br from-white/70 via-sage-50/50 to-sand-50/70 dark:from-gray-900/70 dark:via-gray-800/50 dark:to-gray-900/70 backdrop-blur-lg border border-sage-100/30 dark:border-gray-700/30 shadow-[0_8px_24px_rgba(0,0,0,0.05)] dark:shadow-[0_8px_24px_rgba(0,0,0,0.3)]">
                   <CardContent className="p-6">
                     <div className="flex items-center justify-between mb-4">
-                      <h3 className="font-display text-lg text-sage-600 dark:text-sage-200 flex items-center gap-2">
+                      <h3 className="font-display text-lg text-clay-700 dark:text-sand-200 flex items-center gap-2">
                         <Activity className="w-5 h-5" />
                         {selectedTimeframe === "day" ? "Today's Activity" : 
                          selectedTimeframe === "week" ? "This Week's Summary" :
                          selectedTimeframe === "month" ? "This Month's Summary" : "This Year's Summary"}
                       </h3>
-                      <Badge className="bg-sage-100 text-sage-600 border-sage-300 dark:bg-sage-800 dark:text-sage-300">
+                      <Badge className="bg-sage-100 text-sage-600 border-sage-300 dark:bg-gray-800 dark:text-sand-300">
                         {selectedTimeframe === "day" ? "Active" : "Summary"}
                       </Badge>
                     </div>
 
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                       <div className="text-center">
-                        <div className="text-2xl font-bold text-sage-700 dark:text-sage-200">
+                        <div className="text-2xl font-bold text-clay-700 dark:text-sand-200">
                           {insightsData.currentSession.duration}
                         </div>
-                        <div className="text-sm text-sage-500 dark:text-sage-400 font-sans">
+                        <div className="text-sm text-clay-500 dark:text-sand-400 font-sans">
                           {selectedTimeframe === "day" ? "Duration" : "Total Time"}
                         </div>
                       </div>
                       <div className="text-center">
-                        <div className="text-2xl font-bold text-sage-700 dark:text-sage-200">
+                        <div className="text-2xl font-bold text-clay-700 dark:text-sand-200">
                           {insightsData.currentSession.messagesExchanged}
                         </div>
-                        <div className="text-sm text-sage-500 dark:text-sage-400 font-sans">Messages</div>
+                        <div className="text-sm text-clay-500 dark:text-sand-400 font-sans">Messages</div>
                       </div>
                       <div className="text-center">
-                        <div className="text-2xl font-bold text-sage-700 dark:text-sage-200 flex items-center justify-center gap-1">
+                        <div className="text-2xl font-bold text-clay-700 dark:text-sand-200 flex items-center justify-center gap-1">
                           {insightsData.currentSession.fruit}
                           {insightsData.currentSession.emotionIntensity}/10
                         </div>
-                        <div className="text-sm text-sage-500 dark:text-sage-400 font-sans capitalize">
+                        <div className="text-sm text-clay-500 dark:text-sand-400 font-sans capitalize">
                           {insightsData.currentSession.dominantEmotion}
                         </div>
                       </div>
                       <div className="text-center">
-                        <div className="text-2xl font-bold text-sage-700 dark:text-sage-200">
+                        <div className="text-2xl font-bold text-clay-700 dark:text-sand-200">
                           {insightsData.currentSession.topics.length}
                         </div>
-                        <div className="text-sm text-sage-500 dark:text-sage-400 font-sans">Topics</div>
+                        <div className="text-sm text-clay-500 dark:text-sand-400 font-sans">Topics</div>
                       </div>
                     </div>
                   </CardContent>
@@ -324,9 +335,9 @@ export default function InsightsPage() {
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.6, delay: 0.2 }}
               >
-                <Card className="bg-white/70 dark:bg-sage-900/70 backdrop-blur-lg border-sand-200/50 dark:border-sage-700/50">
+                <Card className="bg-gradient-to-br from-white/70 via-sage-50/50 to-sand-50/70 dark:from-gray-900/70 dark:via-gray-800/50 dark:to-gray-900/70 backdrop-blur-lg border border-sage-100/30 dark:border-gray-700/30 shadow-[0_8px_24px_rgba(0,0,0,0.05)] dark:shadow-[0_8px_24px_rgba(0,0,0,0.3)]">
                   <CardContent className="p-6">
-                    <h3 className="font-display text-lg text-sage-600 dark:text-sage-200 mb-4 flex items-center gap-2">
+                    <h3 className="font-display text-lg text-clay-700 dark:text-sand-200 mb-4 flex items-center gap-2">
                       <TrendingUp className="w-5 h-5" />
                       {selectedTimeframe === "day" ? "Today's Mood" :
                        selectedTimeframe === "week" ? "Weekly Mood Trends" :
@@ -337,12 +348,12 @@ export default function InsightsPage() {
                       {insightsData.weeklyTrends.map((day, index) => (
                         <div key={day.day || index} className="flex flex-col items-center flex-1">
                           <div
-                            className="w-full bg-gradient-to-t from-sage-400 to-sage-500 rounded-t-lg transition-all duration-300 hover:from-sage-500 hover:to-sage-600 cursor-pointer"
+                            className="w-full bg-gradient-to-t from-sage-400 to-clay-500 dark:from-sage-600 dark:to-clay-600 rounded-t-lg transition-all duration-300 hover:from-sage-500 hover:to-clay-600 dark:hover:from-sage-700 dark:hover:to-clay-700 cursor-pointer"
                             style={{ height: `${(day.mood / 10) * 100}%` }}
                             title={`${day.day}: Mood ${day.mood}/10, ${day.sessions} sessions`}
                           />
-                          <div className="text-xs text-sage-500 dark:text-sage-400 mt-2 font-sans">{day.day}</div>
-                          <div className="text-xs text-sage-600 dark:text-sage-300 font-medium">{day.mood}</div>
+                          <div className="text-xs text-clay-500 dark:text-sand-400 mt-2 font-sans">{day.day}</div>
+                          <div className="text-xs text-clay-600 dark:text-sand-300 font-medium">{day.mood}</div>
                         </div>
                       ))}
                     </div>
@@ -358,9 +369,9 @@ export default function InsightsPage() {
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ duration: 0.6, delay: 0.3 }}
                 >
-                  <Card className="bg-white/70 dark:bg-sage-900/70 backdrop-blur-lg border-sand-200/50 dark:border-sage-700/50">
+                  <Card className="bg-gradient-to-br from-white/70 via-sage-50/50 to-sand-50/70 dark:from-gray-900/70 dark:via-gray-800/50 dark:to-gray-900/70 backdrop-blur-lg border border-sage-100/30 dark:border-gray-700/30 shadow-[0_8px_24px_rgba(0,0,0,0.05)] dark:shadow-[0_8px_24px_rgba(0,0,0,0.3)]">
                     <CardContent className="p-6">
-                      <h3 className="font-display text-lg text-sage-600 dark:text-sage-200 mb-4 flex items-center gap-2">
+                      <h3 className="font-display text-lg text-clay-700 dark:text-sand-200 mb-4 flex items-center gap-2">
                         <Heart className="w-5 h-5" />
                         Emotion Breakdown
                       </h3>
@@ -372,18 +383,18 @@ export default function InsightsPage() {
                               <Badge className={`text-xs border ${getEmotionColor(emotion.emotion)}`}>
                                 {emotion.emotion}
                               </Badge>
-                              <span className="text-sm text-sage-600 dark:text-sage-300 font-sans">
+                              <span className="text-sm text-clay-600 dark:text-sand-300 font-sans">
                                 {emotion.count} times
                               </span>
                             </div>
                             <div className="flex items-center gap-2">
-                              <div className="w-20 h-2 bg-sand-200 dark:bg-sage-700 rounded-full overflow-hidden">
+                              <div className="w-20 h-2 bg-sage-200 dark:bg-gray-700 rounded-full overflow-hidden">
                                 <div
-                                  className="h-full bg-sage-400 rounded-full transition-all duration-300"
+                                  className="h-full bg-gradient-to-r from-sage-400 to-clay-500 dark:from-sage-500 dark:to-clay-600 rounded-full transition-all duration-300"
                                   style={{ width: `${emotion.percentage}%` }}
                                 />
                               </div>
-                              <span className="text-xs text-sage-500 dark:text-sage-400 font-sans w-8">
+                              <span className="text-xs text-clay-500 dark:text-sand-400 font-sans w-8">
                                 {emotion.percentage}%
                               </span>
                             </div>
@@ -400,9 +411,9 @@ export default function InsightsPage() {
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ duration: 0.6, delay: 0.4 }}
                 >
-                  <Card className="bg-white/70 dark:bg-sage-900/70 backdrop-blur-lg border-sand-200/50 dark:border-sage-700/50">
+                  <Card className="bg-gradient-to-br from-white/70 via-sage-50/50 to-sand-50/70 dark:from-gray-900/70 dark:via-gray-800/50 dark:to-gray-900/70 backdrop-blur-lg border border-sage-100/30 dark:border-gray-700/30 shadow-[0_8px_24px_rgba(0,0,0,0.05)] dark:shadow-[0_8px_24px_rgba(0,0,0,0.3)]">
                     <CardContent className="p-6">
-                      <h3 className="font-display text-lg text-sage-600 dark:text-sage-200 mb-4 flex items-center gap-2">
+                      <h3 className="font-display text-lg text-clay-700 dark:text-sand-200 mb-4 flex items-center gap-2">
                         <Brain className="w-5 h-5" />
                         Key Insights
                       </h3>
@@ -415,15 +426,15 @@ export default function InsightsPage() {
                               <div className={`w-8 h-8 rounded-lg bg-gradient-to-br flex items-center justify-center flex-shrink-0 ${
                                 insight.trend === "positive" ? "from-green-400 to-green-500" :
                                 insight.trend === "negative" ? "from-red-400 to-red-500" :
-                                "from-sage-400 to-sage-500"
+                                "from-sage-400 to-clay-500"
                               }`}>
                                 <Icon className="w-4 h-4 text-white" />
                               </div>
                               <div className="flex-1">
-                                <h4 className="font-medium text-sage-600 dark:text-sage-200 font-sans mb-1">
+                                <h4 className="font-medium text-clay-700 dark:text-sand-200 font-sans mb-1">
                                   {insight.title}
                                 </h4>
-                                <p className="text-sm text-sage-500 dark:text-sage-400 font-sans leading-relaxed">
+                                <p className="text-sm text-clay-500 dark:text-sand-400 font-sans leading-relaxed">
                                   {insight.description}
                                 </p>
                               </div>
@@ -442,9 +453,9 @@ export default function InsightsPage() {
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.6, delay: 0.5 }}
               >
-                <Card className="bg-white/70 dark:bg-sage-900/70 backdrop-blur-lg border-sand-200/50 dark:border-sage-700/50">
+                <Card className="bg-gradient-to-br from-white/70 via-sage-50/50 to-sand-50/70 dark:from-gray-900/70 dark:via-gray-800/50 dark:to-gray-900/70 backdrop-blur-lg border border-sage-100/30 dark:border-gray-700/30 shadow-[0_8px_24px_rgba(0,0,0,0.05)] dark:shadow-[0_8px_24px_rgba(0,0,0,0.3)]">
                   <CardContent className="p-6">
-                    <h3 className="font-display text-lg text-sage-600 dark:text-sage-200 mb-4">
+                    <h3 className="font-display text-lg text-clay-700 dark:text-sand-200 mb-4">
                       {selectedTimeframe === "day" ? "Today's Topics" : "Recent Topics Discussed"}
                     </h3>
 
@@ -454,13 +465,13 @@ export default function InsightsPage() {
                           <Badge
                             key={index}
                             variant="secondary"
-                            className="bg-sand-100 dark:bg-sage-800 text-sage-600 dark:text-sage-300"
+                            className="bg-sage-100 dark:bg-gray-800 text-clay-600 dark:text-sand-300"
                           >
                             {topic}
                           </Badge>
                         ))
                       ) : (
-                        <p className="text-sage-500 dark:text-sage-400 font-sans text-sm">
+                        <p className="text-clay-500 dark:text-sand-400 font-sans text-sm">
                           No topics identified yet. Start a conversation to see insights!
                         </p>
                       )}

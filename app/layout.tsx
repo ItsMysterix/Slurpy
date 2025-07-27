@@ -28,7 +28,15 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <ClerkProvider>
       <html lang="en" className={`${cormorant.variable} ${jakarta.variable}`} suppressHydrationWarning>
         <body className="font-sans antialiased">
-          <ThemeProvider attribute="class" defaultTheme="light">
+          {/* Only change: give next-themes the right defaults */}
+          <ThemeProvider
+            attribute="class"              // Tailwind dark mode via class on <html>
+            defaultTheme="system"          // respect OS theme by default
+            enableSystem                   // allow system switching
+            disableTransitionOnChange      // avoid flashing on toggle
+            // storageKey="slurpy-theme"   // optional: persist under custom key
+            // themes={['light','dark']}    // optional: lock to these
+          >
             {children}
           </ThemeProvider>
         </body>

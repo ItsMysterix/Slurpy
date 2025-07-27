@@ -55,12 +55,6 @@ export default function SlideDrawer({ onSidebarToggle }: SlideDrawerProps) {
     },
   ]
 
-  const progressSteps = [
-    { label: "Listening", status: "completed", icon: Check, color: "text-sage-500 dark:text-sage-400" },
-    { label: "Analyzing", status: "current", icon: Circle, color: "text-clay-400 dark:text-clay-300" },
-    { label: "Roadmap", status: "pending", icon: Circle, color: "text-sand-400 dark:text-sand-300" },
-  ]
-
   const isActivePage = (href: string) => {
     return pathname === href
   }
@@ -74,15 +68,15 @@ export default function SlideDrawer({ onSidebarToggle }: SlideDrawerProps) {
   return (
     <>
       <div
-        className={`fixed inset-y-0 left-0 z-40 transition-all duration-300 ${isOpen ? "w-64" : "w-16"} bg-gradient-to-b from-sand-50/90 via-sage-25/80 to-clay-50/90 dark:from-gray-900/90 dark:via-gray-800/80 dark:to-gray-900/90 backdrop-blur-lg border-r border-sage-200/50 dark:border-gray-700/50 flex flex-col shadow-lg`}
+        className={`fixed inset-y-0 left-0 z-40 transition-all duration-300 ${isOpen ? "w-64" : "w-16"} bg-gradient-to-b from-white/95 via-sage-25/90 to-clay-50/95 dark:from-gray-950/95 dark:via-gray-900/90 dark:to-gray-950/95 backdrop-blur-lg border-r border-sage-200/50 dark:border-gray-700/50 flex flex-col shadow-lg`}
       >
         {/* Top Section - Hamburger Button */}
-        <div className="flex items-center justify-center p-2">
+        <div className={`flex ${isOpen ? 'justify-start' : 'justify-center'} p-2`}>
           <Button
             onClick={toggleSidebar}
             variant="ghost"
             size="sm"
-            className="text-clay-600 hover:text-clay-500 dark:text-sand-400 dark:hover:text-sand-300 p-2 flex-shrink-0 w-12 h-12 rounded-xl hover:bg-sage-100 transition-colors"
+            className="text-clay-600 hover:text-clay-500 dark:text-sand-400 dark:hover:text-sand-300 p-2 flex-shrink-0 w-12 h-12 rounded-xl hover:bg-sage-100/70 dark:hover:bg-gray-800/70 transition-colors"
             aria-label="Toggle menu"
             aria-expanded={isOpen}
           >
@@ -105,21 +99,21 @@ export default function SlideDrawer({ onSidebarToggle }: SlideDrawerProps) {
                   return (
                     <Link key={item.id} href={item.href}>
                       <div
-                        className={`bg-white/50 dark:bg-sage-800/50 rounded-xl p-3 border transition-all duration-200 cursor-pointer hover:shadow-md ${
+                        className={`bg-white/70 dark:bg-gray-800/70 rounded-xl p-3 border transition-all duration-200 cursor-pointer hover:shadow-md backdrop-blur-sm ${
                           isActive
-                            ? "border-sage-300 dark:border-sage-600 bg-sage-50 dark:bg-sage-700/50 shadow-sm"
-                            : "border-sand-200/50 dark:border-sage-700/50 hover:border-sage-200 dark:hover:border-sage-600"
+                            ? "border-sage-300/70 dark:border-sage-600/70 bg-sage-50/80 dark:bg-sage-800/50 shadow-sm"
+                            : "border-sage-200/50 dark:border-gray-700/50 hover:border-sage-200 dark:hover:border-gray-600/70"
                         }`}
                       >
                         <div className="flex items-center gap-3 mb-2">
                           <div
-                            className={`w-8 h-8 rounded-lg bg-gradient-to-br ${item.gradient} flex items-center justify-center`}
+                            className={`w-8 h-8 rounded-lg bg-gradient-to-br ${item.gradient} flex items-center justify-center shadow-sm`}
                           >
                             <Icon className="w-4 h-4 text-white" />
                           </div>
                           <span
                             className={`font-sans text-sm font-medium ${
-                              isActive ? "text-sage-700 dark:text-sage-200" : "text-sage-600 dark:text-sage-300"
+                              isActive ? "text-clay-700 dark:text-sand-200" : "text-clay-600 dark:text-sand-300"
                             }`}
                           >
                             {item.label}
@@ -127,7 +121,7 @@ export default function SlideDrawer({ onSidebarToggle }: SlideDrawerProps) {
                         </div>
                         <p
                           className={`text-xs font-sans ml-11 ${
-                            isActive ? "text-sage-600 dark:text-sage-300" : "text-sage-500 dark:text-sage-400"
+                            isActive ? "text-clay-600 dark:text-sand-300" : "text-clay-500 dark:text-sand-400"
                           }`}
                         >
                           {item.description}
@@ -143,7 +137,7 @@ export default function SlideDrawer({ onSidebarToggle }: SlideDrawerProps) {
             <div className="flex-1" />
 
             {/* User Section - Expanded */}
-            <div className="border-sage-200/50 dark:border-gray-700/50 p-4 flex items-center gap-3 min-h-[64px] border-t bg-gradient-to-r from-white/30 via-sage-50/20 to-sand-50/30 dark:from-gray-800/30 dark:via-gray-700/20 dark:to-gray-800/30 backdrop-blur-sm">
+            <div className="border-sage-200/50 dark:border-gray-700/50 p-4 flex items-center gap-3 min-h-[64px] border-t bg-gradient-to-r from-white/50 via-sage-50/30 to-sand-50/50 dark:from-gray-900/50 dark:via-gray-800/30 dark:to-gray-900/50 backdrop-blur-sm">
               <Avatar className="w-8 h-8 shadow-md">
                 {user?.imageUrl ? (
                   <img
@@ -162,7 +156,7 @@ export default function SlideDrawer({ onSidebarToggle }: SlideDrawerProps) {
               </span>
 
               <Link href="/profile">
-                <Button variant="ghost" size="sm" className="text-clay-400 hover:text-clay-600 dark:text-sand-500 dark:hover:text-sand-300 p-2 transition-colors">
+                <Button variant="ghost" size="sm" className="text-clay-400 hover:text-clay-600 dark:text-sand-500 dark:hover:text-sand-300 p-2 transition-colors hover:bg-sage-100/50 dark:hover:bg-gray-700/50 rounded-lg">
                   <MoreVertical className="w-4 h-4" />
                 </Button>
               </Link>
@@ -172,7 +166,7 @@ export default function SlideDrawer({ onSidebarToggle }: SlideDrawerProps) {
             <div className="px-4 pb-4">
               <Button
                 onClick={() => signOut()}
-                className="w-full bg-gradient-to-r from-red-400 to-red-500 hover:from-red-500 hover:to-red-600 dark:from-red-500 dark:to-red-600 dark:hover:from-red-600 dark:hover:to-red-700 text-white justify-start font-sans text-sm rounded-xl shadow-md transition-all duration-200"
+                className="w-full bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 dark:from-red-600 dark:to-red-700 dark:hover:from-red-700 dark:hover:to-red-800 text-white justify-start font-sans text-sm rounded-xl shadow-md transition-all duration-200"
               >
                 <LogOut className="w-4 h-4 mr-2" />
                 Sign out
@@ -182,7 +176,7 @@ export default function SlideDrawer({ onSidebarToggle }: SlideDrawerProps) {
         ) : (
           <>
             {/* Navigation Icons - Collapsed */}
-            <div className="flex-1 flex flex-col items-center py-4 space-y-2">
+            <div className="flex-1 flex flex-col items-center py-4 space-y-3">
               {navigationItems.map((item) => {
                 const Icon = item.icon
                 const isActive = isActivePage(item.href)
@@ -192,14 +186,14 @@ export default function SlideDrawer({ onSidebarToggle }: SlideDrawerProps) {
                     <Button
                       variant="ghost"
                       size="sm"
-                      className={`w-12 h-12 rounded-xl transition-all duration-200 ${
+                      className={`w-11 h-11 rounded-xl transition-all duration-200 ${
                         isActive
-                          ? "bg-sage-100 dark:bg-sage-700/50 text-sage-700 dark:text-sage-200 shadow-sm border border-sage-200 dark:border-sage-600"
-                          : "text-clay-600 hover:text-clay-700 hover:bg-sage-50 dark:text-sand-400 dark:hover:text-sand-300 dark:hover:bg-gray-800/50"
+                          ? "bg-gradient-to-br from-sage-100/80 to-clay-100/80 dark:bg-gradient-to-br dark:from-sage-800/70 dark:to-clay-800/70 text-clay-700 dark:text-sand-200 shadow-md border border-sage-200/70 dark:border-sage-600/50"
+                          : "text-clay-600 hover:text-clay-700 hover:bg-sage-100/60 dark:text-sand-400 dark:hover:text-sand-300 dark:hover:bg-gray-800/60 hover:shadow-sm"
                       }`}
                       title={item.label}
                     >
-                      <Icon className="w-5 h-5" />
+                      <Icon className="w-5 h-5 text-inherit" />
                     </Button>
                   </Link>
                 )
@@ -208,15 +202,10 @@ export default function SlideDrawer({ onSidebarToggle }: SlideDrawerProps) {
 
             {/* Bottom Section - Collapsed */}
             <div className="flex flex-col items-center pb-4 space-y-3">
-              {/* Logo */}
-              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-sage-400 to-clay-400 flex items-center justify-center shadow-md">
-                <span className="text-white font-display font-bold text-lg">S</span>
-              </div>
-
               {/* Profile Avatar */}
               <Link href="/profile">
-                <Button variant="ghost" size="sm" className="p-0 rounded-full hover:scale-105 transition-transform">
-                  <Avatar className="w-10 h-10 shadow-md">
+                <Button variant="ghost" size="sm" className="p-0 rounded-full hover:scale-105 transition-transform hover:shadow-lg">
+                  <Avatar className="w-10 h-10 shadow-md ring-2 ring-sage-200/50 dark:ring-gray-600/50">
                     {user?.imageUrl ? (
                       <img
                         src={user.imageUrl}
@@ -236,7 +225,7 @@ export default function SlideDrawer({ onSidebarToggle }: SlideDrawerProps) {
               <Button
                 size="sm"
                 onClick={() => signOut()}
-                className="w-12 h-8 bg-gradient-to-r from-red-400 to-red-500 hover:from-red-500 hover:to-red-600 dark:from-red-500 dark:to-red-600 dark:hover:from-red-600 dark:hover:to-red-700 text-white rounded-lg p-0 shadow-md transition-all duration-200"
+                className="w-11 h-9 bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 dark:from-red-600 dark:to-red-700 dark:hover:from-red-700 dark:hover:to-red-800 text-white rounded-xl p-0 shadow-md transition-all duration-200 hover:shadow-lg"
                 title="Sign out"
               >
                 <LogOut className="w-4 h-4" />
