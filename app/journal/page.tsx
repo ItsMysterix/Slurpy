@@ -6,7 +6,7 @@ import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
-import { BookOpen, Plus, Search, Calendar, Sun, Moon, Edit3, Loader2 } from "lucide-react"
+import { BookOpen, Plus, Search, Calendar, Sun, Moon, Edit3, Loader2, Save, X, Trash2, Eye, EyeOff } from "lucide-react"
 import { useTheme } from "next-themes"
 import { useAuth, useUser } from "@clerk/nextjs"
 import SlideDrawer from "@/components/slide-drawer"
@@ -33,7 +33,6 @@ function ThemeToggle() {
     setMounted(true)
   }, [])
 
-  // Prevent hydration mismatch by not rendering until mounted
   if (!mounted) {
     return (
       <Button
@@ -68,6 +67,10 @@ export default function JournalPage() {
   const [journalEntries, setJournalEntries] = useState<JournalEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [deleting, setDeleting] = useState<string | null>(null)
+  const [editingEntry, setEditingEntry] = useState<string | null>(null)
+  const [previewEntry, setPreviewEntry] = useState<JournalEntry | null>(null)
+  const [expandedEntries, setExpandedEntries] = useState<Set<string>>(new Set())
   const [newEntry, setNewEntry] = useState({
     title: "",
     content: "",
@@ -75,8 +78,56 @@ export default function JournalPage() {
     mood: "",
     fruit: "🌱"
   })
+  const [editEntry, setEditEntry] = useState({
+    title: "",
+    content: "",
+    tags: "",
+    mood: "",
+    fruit: ""
+  })
 
-  // Fetch journal entries for the current user
+  // ---------- Normalizers (prevent shape issues) ----------
+  const normalizeTags = (tags: unknown): string[] => {
+    if (Array.isArray(tags)) return tags.map(String).map(t => t.trim()).filter(Boolean)
+    if (typeof tags === "string") {
+      return tags.split(",").map(t => t.trim()).filter(Boolean)
+    }
+    return []
+  }
+
+  const normalizeEntry = (e: any): JournalEntry => {
+    const id =
+      e?.id ?? e?._id ?? crypto.randomUUID()
+    const createdAt = e?.createdAt ?? e?.date ?? new Date().toISOString()
+    const updatedAt = e?.updatedAt ?? createdAt
+    const date = e?.date ?? createdAt
+
+    return {
+      id: String(id),
+      title: String(e?.title ?? ""),
+      content: String(e?.content ?? ""),
+      date: String(date),
+      mood: e?.mood ? String(e.mood) : undefined,
+      fruit: e?.fruit ? String(e.fruit) : undefined,
+      tags: normalizeTags(e?.tags),
+      userId: String(e?.userId ?? e?.user_id ?? ""),
+      createdAt: String(createdAt),
+      updatedAt: String(updatedAt),
+    }
+  }
+
+  const normalizeArrayResponse = (raw: any): JournalEntry[] => {
+    const arr = Array.isArray(raw)
+      ? raw
+      : Array.isArray(raw?.entries)
+        ? raw.entries
+        : raw
+          ? [raw]
+          : []
+    return arr.map(normalizeEntry)
+  }
+
+  // ---------- Fetch journal entries for current user ----------
   const fetchJournalEntries = async () => {
     if (!userId) return
     
@@ -85,26 +136,28 @@ export default function JournalPage() {
       const response = await fetch(`/api/journal?userId=${userId}`)
       
       if (response.ok) {
-        const entries = await response.json()
-        setJournalEntries(entries)
+        const raw = await response.json()
+        const normalized = normalizeArrayResponse(raw)
+        setJournalEntries(normalized)
       } else {
         console.error("Failed to fetch journal entries")
+        setJournalEntries([]) // keep it an array to avoid filter crashes
       }
     } catch (error) {
       console.error("Error fetching journal entries:", error)
+      setJournalEntries([]) // keep it an array to avoid filter crashes
     } finally {
       setLoading(false)
     }
   }
 
-  // Load entries when component mounts or user changes
   useEffect(() => {
     if (userId) {
       fetchJournalEntries()
     }
   }, [userId])
 
-  // Save new journal entry
+  // ---------- Save new journal entry ----------
   const handleSaveEntry = async () => {
     if (!userId || !newEntry.title.trim() || !newEntry.content.trim()) {
       alert("Please fill in both title and content")
@@ -135,24 +188,15 @@ export default function JournalPage() {
       })
 
       if (response.ok) {
-        const savedEntry = await response.json()
-        
-        // Add the new entry to the list
+        const rawSaved = await response.json()
+        const savedArray = normalizeArrayResponse(rawSaved)
+        const savedEntry = savedArray[0] ?? normalizeEntry(rawSaved)
         setJournalEntries(prev => [savedEntry, ...prev])
-        
-        // Reset form
-        setNewEntry({ 
-          title: "", 
-          content: "", 
-          tags: "", 
-          mood: "", 
-          fruit: "🌱" 
-        })
+        setNewEntry({ title: "", content: "", tags: "", mood: "", fruit: "🌱" })
         setShowNewEntry(false)
-        
         console.log("Entry saved successfully!")
       } else {
-        const error = await response.json()
+        const error = await response.json().catch(() => ({}))
         console.error("Failed to save entry:", error)
         alert("Failed to save entry. Please try again.")
       }
@@ -164,8 +208,136 @@ export default function JournalPage() {
     }
   }
 
-  // Filter entries based on search query
-  const filteredEntries = journalEntries.filter(
+  // ---------- Start editing ----------
+  const handleEditEntry = (entry: JournalEntry) => {
+    setEditingEntry(entry.id)
+    setEditEntry({
+      title: entry.title,
+      content: entry.content,
+      tags: entry.tags.join(", "),
+      mood: entry.mood || "",
+      fruit: entry.fruit || ""
+    })
+  }
+
+  // ---------- Save edited entry ----------
+  const handleSaveEdit = async (entryId: string) => {
+    if (!editEntry.title.trim() || !editEntry.content.trim()) {
+      alert("Please fill in both title and content")
+      return
+    }
+
+    try {
+      setSaving(true)
+      
+      const updateData = {
+        id: entryId,
+        title: editEntry.title.trim(),
+        content: editEntry.content.trim(),
+        mood: editEntry.mood.trim() || undefined,
+        fruit: editEntry.fruit || undefined,
+        tags: editEntry.tags
+          .split(",")
+          .map(tag => tag.trim())
+          .filter(tag => tag.length > 0)
+      }
+
+      const response = await fetch("/api/journal", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(updateData)
+      })
+
+      if (response.ok) {
+        const rawUpdated = await response.json()
+        const updatedArray = normalizeArrayResponse(rawUpdated)
+        const updatedEntry = updatedArray[0] ?? normalizeEntry(rawUpdated)
+
+        setJournalEntries(prev => 
+          prev.map(entry => entry.id === entryId ? updatedEntry : entry)
+        )
+        setEditingEntry(null)
+        console.log("Entry updated successfully!")
+      } else {
+        const error = await response.json().catch(() => ({}))
+        console.error("Failed to update entry:", error)
+        alert("Failed to update entry. Please try again.")
+      }
+    } catch (error) {
+      console.error("Error updating entry:", error)
+      alert("Error updating entry. Please try again.")
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  // ---------- Delete entry ----------
+  const handleDeleteEntry = async (entryId: string) => {
+    if (!confirm("Are you sure you want to delete this journal entry? This action cannot be undone.")) {
+      return
+    }
+
+    try {
+      setDeleting(entryId)
+      
+      const response = await fetch(`/api/journal?id=${entryId}`, {
+        method: "DELETE"
+      })
+
+      if (response.ok) {
+        setJournalEntries(prev => prev.filter(entry => entry.id !== entryId))
+        console.log("Entry deleted successfully!")
+      } else {
+        const error = await response.json().catch(() => ({}))
+        console.error("Failed to delete entry:", error)
+        alert("Failed to delete entry. Please try again.")
+      }
+    } catch (error) {
+      console.error("Error deleting entry:", error)
+      alert("Error deleting entry. Please try again.")
+    } finally {
+      setDeleting(null)
+    }
+  }
+
+  // Toggle preview mode
+  const handlePreviewEntry = (entry: JournalEntry) => {
+    setPreviewEntry(entry)
+  }
+
+  // Close preview
+  const handleClosePreview = () => {
+    setPreviewEntry(null)
+  }
+
+  // Cancel editing
+  const handleCancelEdit = () => {
+    setEditingEntry(null)
+    setEditEntry({ title: "", content: "", tags: "", mood: "", fruit: "" })
+  }
+
+  // Toggle expanded content
+  const toggleExpanded = (entryId: string) => {
+    const newExpanded = new Set(expandedEntries)
+    if (newExpanded.has(entryId)) {
+      newExpanded.delete(entryId)
+    } else {
+      newExpanded.add(entryId)
+    }
+    setExpandedEntries(newExpanded)
+  }
+
+  // Truncate content for preview
+  const truncateContent = (content: string, maxLength: number = 200) => {
+    if (content.length <= maxLength) return content
+    return content.substring(0, maxLength) + "..."
+  }
+
+  // Filter entries based on search query (guard with Array.isArray even though we normalize)
+  const safeEntries = Array.isArray(journalEntries) ? journalEntries : []
+  const filteredEntries = safeEntries.filter(
     (entry) =>
       entry.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
       entry.content.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -185,7 +357,6 @@ export default function JournalPage() {
     return moodColors[mood.toLowerCase()] || "bg-gray-100 text-gray-700 border-gray-300 dark:bg-gray-800 dark:text-gray-300"
   }
 
-  // Show loading state while fetching entries
   if (loading) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-sand-50 via-sage-25 to-clay-50 dark:from-gray-950 dark:via-gray-900 dark:to-gray-950 transition-all duration-500">
@@ -380,54 +551,172 @@ export default function JournalPage() {
                     >
                       <Card className="bg-gradient-to-br from-white/70 via-sage-50/50 to-sand-50/70 dark:from-gray-900/70 dark:via-gray-800/50 dark:to-gray-900/70 backdrop-blur-lg border border-sage-100/30 dark:border-gray-700/30 shadow-[0_8px_24px_rgba(0,0,0,0.05)] dark:shadow-[0_8px_24px_rgba(0,0,0,0.3)] hover:shadow-lg transition-all duration-200">
                         <CardContent className="p-6">
-                          <div className="flex items-start justify-between mb-3">
-                            <div className="flex-1">
-                              <h3 className="font-display text-xl text-clay-700 dark:text-sand-200 mb-2">
-                                {entry.title}
-                              </h3>
-                              <div className="flex items-center gap-3 mb-3">
-                                <div className="flex items-center gap-2 text-sm text-clay-500 dark:text-sand-400">
-                                  <Calendar className="w-4 h-4" />
-                                  {new Date(entry.date).toLocaleDateString("en-US", {
-                                    weekday: "long",
-                                    year: "numeric",
-                                    month: "long",
-                                    day: "numeric",
-                                  })}
-                                </div>
-                                <div className="flex items-center gap-2">
-                                  {entry.fruit && <span className="text-lg">{entry.fruit}</span>}
-                                  {entry.mood && (
-                                    <Badge className={`text-xs border ${getMoodColor(entry.mood)}`}>
-                                      {entry.mood}
-                                    </Badge>
+                          {editingEntry === entry.id ? (
+                            // Edit Mode
+                            <div className="space-y-4">
+                              <Input
+                                value={editEntry.title}
+                                onChange={(e) => setEditEntry(prev => ({ ...prev, title: e.target.value }))}
+                                placeholder="Entry title..."
+                                className="rounded-xl border-sage-200 dark:border-gray-600 bg-white/60 dark:bg-gray-700/60"
+                                disabled={saving}
+                              />
+                              <Textarea
+                                value={editEntry.content}
+                                onChange={(e) => setEditEntry(prev => ({ ...prev, content: e.target.value }))}
+                                placeholder="Content..."
+                                rows={6}
+                                className="rounded-xl border-sage-200 dark:border-gray-600 bg-white/60 dark:bg-gray-700/60 resize-none"
+                                disabled={saving}
+                              />
+                              <div className="grid grid-cols-2 gap-4">
+                                <Input
+                                  value={editEntry.mood}
+                                  onChange={(e) => setEditEntry(prev => ({ ...prev, mood: e.target.value }))}
+                                  placeholder="Mood..."
+                                  className="rounded-xl border-sage-200 dark:border-gray-600 bg-white/60 dark:bg-gray-700/60"
+                                  disabled={saving}
+                                />
+                                <Input
+                                  value={editEntry.fruit}
+                                  onChange={(e) => setEditEntry(prev => ({ ...prev, fruit: e.target.value }))}
+                                  placeholder="Fruit emoji..."
+                                  className="rounded-xl border-sage-200 dark:border-gray-600 bg-white/60 dark:bg-gray-700/60"
+                                  disabled={saving}
+                                />
+                              </div>
+                              <Input
+                                value={editEntry.tags}
+                                onChange={(e) => setEditEntry(prev => ({ ...prev, tags: e.target.value }))}
+                                placeholder="Tags (comma separated)..."
+                                className="rounded-xl border-sage-200 dark:border-gray-600 bg-white/60 dark:bg-gray-700/60"
+                                disabled={saving}
+                              />
+                              <div className="flex justify-end gap-3">
+                                <Button
+                                  onClick={handleCancelEdit}
+                                  variant="outline"
+                                  size="sm"
+                                  disabled={saving}
+                                >
+                                  <X className="w-4 h-4 mr-1" />
+                                  Cancel
+                                </Button>
+                                <Button
+                                  onClick={() => handleSaveEdit(entry.id)}
+                                  size="sm"
+                                  className="bg-gradient-to-r from-sage-500 to-clay-500 hover:from-sage-600 hover:to-clay-600 text-white"
+                                  disabled={saving}
+                                >
+                                  {saving ? (
+                                    <>
+                                      <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                                      Saving...
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Save className="w-4 h-4 mr-1" />
+                                      Save
+                                    </>
                                   )}
-                                </div>
+                                </Button>
                               </div>
                             </div>
-                          </div>
+                          ) : (
+                            // View Mode
+                            <>
+                              <div className="flex items-start justify-between mb-3">
+                                <div className="flex-1">
+                                  <h3 className="font-display text-xl text-clay-700 dark:text-sand-200 mb-2">
+                                    {entry.title}
+                                  </h3>
+                                  <div className="flex items-center gap-3 mb-3">
+                                    <div className="flex items-center gap-2 text-sm text-clay-500 dark:text-sand-400">
+                                      <Calendar className="w-4 h-4" />
+                                      {new Date(entry.date).toLocaleDateString("en-US", {
+                                        weekday: "long",
+                                        year: "numeric",
+                                        month: "long",
+                                        day: "numeric",
+                                      })}
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                      {entry.fruit && <span className="text-lg">{entry.fruit}</span>}
+                                      {entry.mood && (
+                                        <Badge className={`text-xs border ${getMoodColor(entry.mood)}`}>
+                                          {entry.mood}
+                                        </Badge>
+                                      )}
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
 
-                          <p className="text-clay-600 dark:text-sand-300 font-sans leading-relaxed mb-4">
-                            {entry.content}
-                          </p>
+                              <div className="mb-4">
+                                <p className="text-clay-600 dark:text-sand-300 font-sans leading-relaxed">
+                                  {expandedEntries.has(entry.id) ? entry.content : truncateContent(entry.content)}
+                                </p>
+                                {entry.content.length > 200 && (
+                                  <Button
+                                    onClick={() => toggleExpanded(entry.id)}
+                                    variant="ghost"
+                                    size="sm"
+                                    className="mt-2 text-sage-600 dark:text-sage-400 hover:text-sage-700 dark:hover:text-sage-300 p-0 h-auto font-normal"
+                                  >
+                                    {expandedEntries.has(entry.id) ? 'Show less' : 'Read more'}
+                                  </Button>
+                                )}
+                              </div>
 
-                          <div className="flex items-center justify-between">
-                            <div className="flex flex-wrap gap-2">
-                              {entry.tags.map((tag) => (
-                                <Badge
-                                  key={tag}
-                                  variant="secondary"
-                                  className="bg-sage-100 dark:bg-gray-800 text-clay-600 dark:text-sand-300 text-xs"
-                                >
-                                  #{tag}
-                                </Badge>
-                              ))}
-                            </div>
-                            <Button variant="ghost" size="sm" className="text-clay-500 dark:text-sand-400 hover:text-clay-600 dark:hover:text-sand-300">
-                              <Edit3 className="w-4 h-4 mr-1" />
-                              Edit
-                            </Button>
-                          </div>
+                              <div className="flex items-center justify-between">
+                                <div className="flex flex-wrap gap-2">
+                                  {entry.tags.map((tag) => (
+                                    <Badge
+                                      key={tag}
+                                      variant="secondary"
+                                      className="bg-sage-100 dark:bg-gray-800 text-clay-600 dark:text-sand-300 text-xs"
+                                    >
+                                      #{tag}
+                                    </Badge>
+                                  ))}
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <Button 
+                                    onClick={() => handlePreviewEntry(entry)}
+                                    variant="ghost" 
+                                    size="sm" 
+                                    className="text-blue-500 dark:text-blue-400 hover:text-blue-600 dark:hover:text-blue-300"
+                                  >
+                                    <Eye className="w-4 h-4 mr-1" />
+                                    Preview
+                                  </Button>
+                                  <Button 
+                                    onClick={() => handleEditEntry(entry)}
+                                    variant="ghost" 
+                                    size="sm" 
+                                    className="text-clay-500 dark:text-sand-400 hover:text-clay-600 dark:hover:text-sand-300"
+                                  >
+                                    <Edit3 className="w-4 h-4 mr-1" />
+                                    Edit
+                                  </Button>
+                                  <Button 
+                                    onClick={() => handleDeleteEntry(entry.id)}
+                                    variant="ghost" 
+                                    size="sm" 
+                                    className="text-red-500 dark:text-red-400 hover:text-red-600 dark:hover:text-red-300"
+                                    disabled={deleting === entry.id}
+                                  >
+                                    {deleting === entry.id ? (
+                                      <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                                    ) : (
+                                      <Trash2 className="w-4 h-4 mr-1" />
+                                    )}
+                                    Delete
+                                  </Button>
+                                </div>
+                              </div>
+                            </>
+                          )}
                         </CardContent>
                       </Card>
                     </motion.div>
@@ -452,6 +741,137 @@ export default function JournalPage() {
           </div>
         </div>
       </div>
+
+      {/* Preview Modal */}
+      {previewEntry && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.95 }}
+            className="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden"
+          >
+            <div className="flex items-center justify-between p-6 border-b border-gray-200 dark:border-gray-700">
+              <h2 className="text-2xl font-display font-medium text-clay-700 dark:text-sand-200 flex items-center gap-3">
+                <Eye className="w-6 h-6" />
+                Preview Entry
+              </h2>
+              <Button
+                onClick={handleClosePreview}
+                variant="ghost"
+                size="sm"
+                className="text-clay-500 dark:text-sand-400 hover:text-clay-600 dark:hover:text-sand-300"
+              >
+                <X className="w-5 h-5" />
+              </Button>
+            </div>
+            
+            <div className="p-6 overflow-y-auto max-h-[calc(90vh-120px)]">
+              <div className="space-y-6">
+                <div>
+                  <h1 className="text-3xl font-display font-medium text-clay-700 dark:text-sand-200 mb-4">
+                    {previewEntry.title}
+                  </h1>
+                  
+                  <div className="flex items-center gap-4 mb-6">
+                    <div className="flex items-center gap-2 text-clay-500 dark:text-sand-400">
+                      <Calendar className="w-5 h-5" />
+                      <span className="text-lg">
+                        {new Date(previewEntry.date).toLocaleDateString("en-US", {
+                          weekday: "long",
+                          year: "numeric",
+                          month: "long",
+                          day: "numeric",
+                        })}
+                      </span>
+                    </div>
+                    
+                    <div className="flex items-center gap-3">
+                      {previewEntry.fruit && (
+                        <span className="text-2xl">{previewEntry.fruit}</span>
+                      )}
+                      {previewEntry.mood && (
+                        <Badge className={`text-sm border ${getMoodColor(previewEntry.mood)}`}>
+                          {previewEntry.mood}
+                        </Badge>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="prose prose-lg dark:prose-invert max-w-none">
+                  <div className="text-clay-600 dark:text-sand-300 font-sans leading-relaxed text-lg whitespace-pre-wrap">
+                    {previewEntry.content}
+                  </div>
+                </div>
+
+                {previewEntry.tags.length > 0 && (
+                  <div className="border-t border-gray-200 dark:border-gray-700 pt-6">
+                    <h3 className="text-lg font-display font-medium text-clay-700 dark:text-sand-200 mb-3">
+                      Tags
+                    </h3>
+                    <div className="flex flex-wrap gap-2">
+                      {previewEntry.tags.map((tag) => (
+                        <Badge
+                          key={tag}
+                          variant="secondary"
+                          className="bg-sage-100 dark:bg-gray-800 text-clay-600 dark:text-sand-300 text-sm px-3 py-1"
+                        >
+                          #{tag}
+                        </Badge>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <div className="border-t border-gray-200 dark:border-gray-700 pt-4">
+                  <div className="flex justify-between items-center text-sm text-clay-500 dark:text-sand-400">
+                    <span>
+                      Created: {new Date(previewEntry.createdAt).toLocaleDateString("en-US", {
+                        month: "short",
+                        day: "numeric",
+                        year: "numeric",
+                        hour: "2-digit",
+                        minute: "2-digit"
+                      })}
+                    </span>
+                    {previewEntry.updatedAt !== previewEntry.createdAt && (
+                      <span>
+                        Last updated: {new Date(previewEntry.updatedAt).toLocaleDateString("en-US", {
+                          month: "short",
+                          day: "numeric",
+                          year: "numeric",
+                          hour: "2-digit",
+                          minute: "2-digit"
+                        })}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-3 p-6 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50">
+              <Button
+                onClick={() => {
+                  handleClosePreview()
+                  handleEditEntry(previewEntry)
+                }}
+                className="bg-gradient-to-r from-sage-500 via-clay-500 to-sand-500 hover:from-sage-600 hover:via-clay-600 hover:to-sand-600 text-white"
+              >
+                <Edit3 className="w-4 h-4 mr-2" />
+                Edit Entry
+              </Button>
+              <Button
+                onClick={handleClosePreview}
+                variant="outline"
+              >
+                Close
+              </Button>
+            </div>
+          </motion.div>
+        </div>
+      )}
     </div>
   )
 }

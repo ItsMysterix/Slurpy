@@ -1,26 +1,33 @@
 "use client"
 
 import type React from "react"
-
 import { useState, useEffect, useCallback } from "react"
-import { useUser, useReverification } from "@clerk/nextjs"
-import { useTheme } from "next-themes"
+import Link from "next/link"
+import { useRouter } from "next/navigation"
 import { motion } from "framer-motion"
+import {
+  ArrowLeft, User, Bell, Trash2, Lock, CheckCircle,
+  Sun, Moon, Monitor, ImagePlus, Loader2
+} from "lucide-react"
+import { useTheme } from "next-themes"
+import { useUser, useClerk, useReverification } from "@clerk/nextjs"
+
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Card, CardContent } from "@/components/ui/card"
 import { Switch } from "@/components/ui/switch"
-import { ArrowLeft, User, Bell, Trash2, Lock, CheckCircle, Sun, Moon, Monitor } from "lucide-react"
-import Link from "next/link"
 
 export default function ProfilePage() {
+  const router = useRouter()
+  
   // Theme
   const { theme, setTheme } = useTheme()
   const [mounted, setMounted] = useState(false)
 
   // Clerk
-  const { user } = useUser()
+  const { user, isLoaded } = useUser()
+  const { signOut } = useClerk()
 
   // Profile state
   const [name, setName] = useState("")
@@ -31,6 +38,7 @@ export default function ProfilePage() {
   // UI state
   const [isLoading, setIsLoading] = useState(false)
   const [isPasswordLoading, setIsPasswordLoading] = useState(false)
+  const [isDeleting, setIsDeleting] = useState(false)
   const [notifications, setNotifications] = useState(true)
   const [dataSharing, setDataSharing] = useState(false)
   const [showSuccess, setShowSuccess] = useState(false)
@@ -41,10 +49,23 @@ export default function ProfilePage() {
     confirmPassword: "",
   })
 
+  // Avatar upload
+  const [avatarFile, setAvatarFile] = useState<File | null>(null)
+  const [avatarPreview, setAvatarPreview] = useState<string | null>(null)
+  const [avatarUploading, setAvatarUploading] = useState(false)
+
   // Prevent hydration mismatch for theme
   useEffect(() => {
     setMounted(true)
   }, [])
+
+  // Redirect if user is not loaded or doesn't exist
+  useEffect(() => {
+    if (isLoaded && !user) {
+      console.log("User not found, redirecting to landing page")
+      router.push("/")
+    }
+  }, [isLoaded, user, router])
 
   // Hydrate fields from Clerk
   useEffect(() => {
@@ -67,7 +88,7 @@ export default function ProfilePage() {
     return daysSince >= 7
   }, [lastUsernameUpdate])
 
-  // Core save logic (unchanged), but kept separate so we can wrap it with useReverification
+  // -------- USERNAME UPDATE (with step-up via useReverification) --------
   const doSaveUsername = async () => {
     if (!username.trim() || !user) return
     if (!canChangeUsername()) {
@@ -79,7 +100,6 @@ export default function ProfilePage() {
     try {
       await user.update({
         username,
-        // write the cooldown timestamp to unsafeMetadata (frontend-writeable)
         unsafeMetadata: {
           ...(user.unsafeMetadata as object),
           lastUsernameUpdate: new Date().toISOString(),
@@ -97,10 +117,74 @@ export default function ProfilePage() {
     }
   }
 
-  // 🔒 New: wrap with Clerk reverification so the SDK can step-up auth when required
+  // Clerk step-up auth for username change
   const saveUsername = useReverification(doSaveUsername)
 
-  // (Optional) password reset email simulation
+  // -------- PROFILE IMAGE UPLOAD --------
+  const onAvatarFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0]
+    if (!f) return
+    setAvatarFile(f)
+    const url = URL.createObjectURL(f)
+    setAvatarPreview(url)
+  }
+
+  const saveAvatar = async () => {
+    if (!user || !avatarFile) return
+    setAvatarUploading(true)
+    try {
+      await user.setProfileImage({ file: avatarFile })
+      // Clean preview & file, refresh the image URL
+      setAvatarFile(null)
+      if (avatarPreview) {
+        URL.revokeObjectURL(avatarPreview)
+        setAvatarPreview(null)
+      }
+      setShowSuccess(true)
+      setTimeout(() => setShowSuccess(false), 3000)
+    } catch (err) {
+      console.error("Failed to upload profile image:", err)
+      alert("Failed to update profile image. Try again.")
+    } finally {
+      setAvatarUploading(false)
+    }
+  }
+
+  // -------- DELETE ACCOUNT (improved with proper redirect) --------
+  const doDeleteAccount = async () => {
+    if (!isLoaded || !user) {
+      alert("Please wait, still loading your account.")
+      return
+    }
+
+    const confirmed = window.confirm(
+      "Are you sure you want to delete your account? This action cannot be undone."
+    )
+    if (!confirmed) return
+
+    setIsDeleting(true)
+    try {
+      console.log("Starting account deletion...")
+      
+      // Optional: purge app data here before deleting Clerk user
+      // await fetch("/api/purge-user", { method: "POST" })
+
+      // Delete the user account
+      await user.delete()
+      
+      console.log("Account deleted successfully, redirecting...")
+      
+      // Force redirect to landing page
+      window.location.href = "/"
+      
+    } catch (err) {
+      console.error("Delete failed:", err)
+      alert("Account deletion failed. Please try again.")
+      setIsDeleting(false)
+    }
+  }
+
+  // Password reset email simulation
   const handlePasswordReset = async () => {
     setIsPasswordLoading(true)
     try {
@@ -138,30 +222,15 @@ export default function ProfilePage() {
     }
   }
 
-  // Delete account (simulated)
-  const handleDeleteAccount = async () => {
-    const confirmed = window.confirm(
-      "Are you sure you want to delete your account? This action cannot be undone."
-    )
-
-    if (!confirmed) return
-    try {
-      await new Promise((resolve) => setTimeout(resolve, 1000))
-      alert("Account deletion initiated")
-    } catch (error) {
-      console.error("Failed to delete account")
-    }
-  }
-
-  // Theme toggle component
+  // Theme toggle UI
   const ThemeToggle = () => {
     if (!mounted) return null
 
     const getThemeIcon = () => {
       switch (theme) {
-        case 'light':
+        case "light":
           return <Sun className="w-4 h-4" />
-        case 'dark':
+        case "dark":
           return <Moon className="w-4 h-4" />
         default:
           return <Monitor className="w-4 h-4" />
@@ -170,23 +239,23 @@ export default function ProfilePage() {
 
     const getNextTheme = () => {
       switch (theme) {
-        case 'light':
-          return 'dark'
-        case 'dark':
-          return 'system'
+        case "light":
+          return "dark"
+        case "dark":
+          return "system"
         default:
-          return 'light'
+          return "light"
       }
     }
 
     const getThemeLabel = () => {
       switch (theme) {
-        case 'light':
-          return 'Light'
-        case 'dark':
-          return 'Dark'
+        case "light":
+          return "Light"
+        case "dark":
+          return "Dark"
         default:
-          return 'System'
+          return "System"
       }
     }
 
@@ -212,6 +281,20 @@ export default function ProfilePage() {
         </Button>
       </div>
     )
+  }
+
+  // Show loading spinner while determining user state
+  if (!isLoaded) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-sand-50 via-sage-25 to-clay-50 dark:from-gray-950 dark:via-gray-900 dark:to-gray-950 transition-all duration-500 flex items-center justify-center">
+        <Loader2 className="w-8 h-8 animate-spin text-sage-500" />
+      </div>
+    )
+  }
+
+  // Don't render anything if user doesn't exist (redirect will happen)
+  if (!user) {
+    return null
   }
 
   return (
@@ -254,14 +337,73 @@ export default function ProfilePage() {
           <Card className="bg-gradient-to-br from-white/50 via-sage-50/30 to-sand-50/50 dark:from-gray-800/50 dark:via-gray-700/30 dark:to-gray-800/50 border-sage-200/50 dark:border-gray-600/50 backdrop-blur-sm">
             <CardContent className="p-6">
               <div className="flex items-center gap-4 mb-6">
-                <div className="w-16 h-16 rounded-full bg-gradient-to-br from-sage-400 via-clay-400 to-sand-400 dark:from-sage-500 dark:via-clay-500 dark:to-sand-500 flex items-center justify-center shadow-lg">
-                  <User className="w-8 h-8 text-white" />
+                <div className="relative">
+                  <div className="w-16 h-16 rounded-full overflow-hidden bg-gradient-to-br from-sage-400 via-clay-400 to-sand-400 dark:from-sage-500 dark:via-clay-500 dark:to-sand-500 flex items-center justify-center shadow-lg">
+                    {/* Current avatar or initials */}
+                    {user?.imageUrl && !avatarPreview ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={user.imageUrl} alt="avatar" className="w-full h-full object-cover" />
+                    ) : avatarPreview ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={avatarPreview} alt="preview" className="w-full h-full object-cover" />
+                    ) : (
+                      <User className="w-8 h-8 text-white" />
+                    )}
+                  </div>
+
+                  {/* Avatar uploader */}
+                  <label
+                    htmlFor="avatar"
+                    className="absolute -bottom-2 -right-2 cursor-pointer rounded-full bg-white/80 dark:bg-gray-800/80 border border-sage-200 dark:border-gray-700 p-1.5 shadow-sm"
+                    title="Change profile photo"
+                  >
+                    <ImagePlus className="w-4 h-4 text-clay-600 dark:text-sand-300" />
+                    <input
+                      id="avatar"
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={onAvatarFileChange}
+                    />
+                  </label>
                 </div>
+
                 <div>
                   <h3 className="font-display text-clay-700 dark:text-sand-200 text-lg">Your Profile</h3>
                   <p className="text-clay-500 dark:text-sand-400 text-sm font-sans">Manage your account settings</p>
                 </div>
               </div>
+
+              {/* Save/Cancel avatar buttons */}
+              {avatarPreview && (
+                <div className="flex gap-2 mb-6">
+                  <Button
+                    onClick={saveAvatar}
+                    disabled={avatarUploading}
+                    className="bg-gradient-to-r from-sage-500 via-clay-500 to-sand-500 hover:from-sage-600 hover:via-clay-600 hover:to-sand-600 text-white rounded-xl"
+                  >
+                    {avatarUploading ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        Saving…
+                      </>
+                    ) : (
+                      "Save Photo"
+                    )}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      if (avatarPreview) URL.revokeObjectURL(avatarPreview)
+                      setAvatarPreview(null)
+                      setAvatarFile(null)
+                    }}
+                    className="rounded-xl"
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              )}
 
               <div className="space-y-4">
                 {/* Username (editable with cooldown) */}
@@ -499,12 +641,22 @@ export default function ProfilePage() {
               {/* Danger Zone */}
               <div className="pt-2">
                 <Button
-                  onClick={handleDeleteAccount}
+                  onClick={doDeleteAccount}
                   variant="destructive"
-                  className="w-full justify-center font-sans text-white bg-red-500 hover:bg-red-600 dark:bg-red-600 dark:hover:bg-red-700 rounded-xl shadow-md"
+                  disabled={isDeleting || !isLoaded}
+                  className="w-full justify-center font-sans text-white bg-red-500 hover:bg-red-600 dark:bg-red-600 dark:hover:bg-red-700 rounded-xl shadow-md disabled:opacity-60"
                 >
-                  <Trash2 className="w-4 h-4 mr-2" />
-                  Delete Account
+                  {isDeleting ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      Deleting Account...
+                    </>
+                  ) : (
+                    <>
+                      <Trash2 className="w-4 h-4 mr-2" />
+                      Delete Account
+                    </>
+                  )}
                 </Button>
                 <p className="text-xs text-red-500 dark:text-red-400 mt-2 font-sans">
                   This action cannot be undone. All your data will be permanently deleted.

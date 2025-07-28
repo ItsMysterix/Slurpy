@@ -9,7 +9,21 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { ChevronLeft, ChevronRight, CalendarIcon, TrendingUp, Sun, Moon, Plus, BookOpen, Edit3, Trash2, MessageCircle, Heart, X, Save } from "lucide-react"
+import {
+  ChevronLeft,
+  ChevronRight,
+  Calendar as CalendarIcon,
+  TrendingUp,
+  Sun,
+  Moon,
+  Plus,
+  BookOpen,
+  Edit3,
+  Trash2,
+  MessageCircle,
+  Heart,
+  X,
+} from "lucide-react"
 import { useTheme } from "next-themes"
 import { useAuth } from "@clerk/nextjs"
 import { toast } from "sonner"
@@ -111,7 +125,7 @@ function RightSidePanel({
   onClose,
   selectedDate,
   dayData,
-  onDataUpdate
+  onDataUpdate,
 }: {
   isOpen: boolean
   onClose: () => void
@@ -119,9 +133,9 @@ function RightSidePanel({
   dayData: CalendarData | null
   onDataUpdate: () => void
 }) {
-  const [activeTab, setActiveTab] = useState<'mood' | 'journal' | 'chat'>('mood')
+  const [activeTab, setActiveTab] = useState<"mood" | "journal" | "chat">("mood")
   const [isLoading, setIsLoading] = useState(false)
-  
+
   // Mood form state
   const [emotion, setEmotion] = useState(dayData?.mood?.emotion || "")
   const [intensity, setIntensity] = useState(dayData?.mood?.intensity?.toString() || "5")
@@ -152,8 +166,8 @@ function RightSidePanel({
           date: selectedDate.toISOString(),
           emotion,
           intensity: parseInt(intensity),
-          notes: notes.trim() || null
-        })
+          notes: notes.trim() || null,
+        }),
       })
 
       if (response.ok) {
@@ -176,7 +190,7 @@ function RightSidePanel({
     setIsLoading(true)
     try {
       const response = await fetch(`/api/calendar?date=${selectedDate.toISOString()}`, {
-        method: "DELETE"
+        method: "DELETE",
       })
 
       if (response.ok) {
@@ -196,7 +210,7 @@ function RightSidePanel({
     }
   }
 
-  const selectedEmotion = EMOTIONS.find(e => e.value === emotion)
+  const selectedEmotion = EMOTIONS.find((e) => e.value === emotion)
 
   if (!isOpen || !selectedDate) return null
 
@@ -214,15 +228,13 @@ function RightSidePanel({
           <div className="flex items-center justify-between p-4 border-b border-sage-100/50 dark:border-gray-700/50">
             <div>
               <h3 className="font-display text-lg text-clay-700 dark:text-sand-200">
-                {selectedDate.toLocaleDateString('en-US', { 
-                  weekday: 'long', 
-                  month: 'long', 
-                  day: 'numeric' 
+                {selectedDate.toLocaleDateString("en-US", {
+                  weekday: "long",
+                  month: "long",
+                  day: "numeric",
                 })}
               </h3>
-              <p className="text-sm text-clay-500 dark:text-sand-400">
-                {selectedDate.getFullYear()}
-              </p>
+              <p className="text-sm text-clay-500 dark:text-sand-400">{selectedDate.getFullYear()}</p>
             </div>
             <Button
               onClick={onClose}
@@ -237,33 +249,33 @@ function RightSidePanel({
           {/* Tab Navigation */}
           <div className="flex border-b border-sage-100/50 dark:border-gray-700/50">
             <button
-              onClick={() => setActiveTab('mood')}
+              onClick={() => setActiveTab("mood")}
               className={`flex-1 flex items-center justify-center gap-2 py-3 text-sm font-medium transition-colors ${
-                activeTab === 'mood'
-                  ? 'text-clay-700 dark:text-sand-200 border-b-2 border-sage-500'
-                  : 'text-clay-500 dark:text-sand-400 hover:text-clay-600 dark:hover:text-sand-300'
+                activeTab === "mood"
+                  ? "text-clay-700 dark:text-sand-200 border-b-2 border-sage-500"
+                  : "text-clay-500 dark:text-sand-400 hover:text-clay-600 dark:hover:text-sand-300"
               }`}
             >
               <Heart className="w-4 h-4" />
               Mood
             </button>
             <button
-              onClick={() => setActiveTab('journal')}
+              onClick={() => setActiveTab("journal")}
               className={`flex-1 flex items-center justify-center gap-2 py-3 text-sm font-medium transition-colors ${
-                activeTab === 'journal'
-                  ? 'text-clay-700 dark:text-sand-200 border-b-2 border-sage-500'
-                  : 'text-clay-500 dark:text-sand-400 hover:text-clay-600 dark:hover:text-sand-300'
+                activeTab === "journal"
+                  ? "text-clay-700 dark:text-sand-200 border-b-2 border-sage-500"
+                  : "text-clay-500 dark:text-sand-400 hover:text-clay-600 dark:hover:text-sand-300"
               }`}
             >
               <BookOpen className="w-4 h-4" />
               Journal
             </button>
             <button
-              onClick={() => setActiveTab('chat')}
+              onClick={() => setActiveTab("chat")}
               className={`flex-1 flex items-center justify-center gap-2 py-3 text-sm font-medium transition-colors ${
-                activeTab === 'chat'
-                  ? 'text-clay-700 dark:text-sand-200 border-b-2 border-sage-500'
-                  : 'text-clay-500 dark:text-sand-400 hover:text-clay-600 dark:hover:text-sand-300'
+                activeTab === "chat"
+                  ? "text-clay-700 dark:text-sand-200 border-b-2 border-sage-500"
+                  : "text-clay-500 dark:text-sand-400 hover:text-clay-600 dark:hover:text-sand-300"
               }`}
             >
               <MessageCircle className="w-4 h-4" />
@@ -273,12 +285,8 @@ function RightSidePanel({
 
           {/* Tab Content */}
           <div className="flex-1 overflow-y-auto p-4">
-            {activeTab === 'mood' && (
-              <motion.div
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="space-y-4"
-              >
+            {activeTab === "mood" && (
+              <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
                 <div>
                   <Label className="text-clay-600 dark:text-sand-300 text-sm font-medium">How are you feeling?</Label>
                   <Select value={emotion} onValueChange={setEmotion}>
@@ -293,11 +301,11 @@ function RightSidePanel({
                       </SelectValue>
                     </SelectTrigger>
                     <SelectContent>
-                      {EMOTIONS.map(emotion => (
-                        <SelectItem key={emotion.value} value={emotion.value}>
+                      {EMOTIONS.map((emo) => (
+                        <SelectItem key={emo.value} value={emo.value}>
                           <span className="flex items-center gap-2">
-                            <span>{emotion.fruit}</span>
-                            <span>{emotion.label}</span>
+                            <span>{emo.fruit}</span>
+                            <span>{emo.label}</span>
                           </span>
                         </SelectItem>
                       ))}
@@ -330,17 +338,17 @@ function RightSidePanel({
                 </div>
 
                 <div className="flex gap-2 pt-4">
-                  <Button 
-                    onClick={handleSaveMood} 
-                    disabled={isLoading || !emotion} 
+                  <Button
+                    onClick={handleSaveMood}
+                    disabled={isLoading || !emotion}
                     className="flex-1 bg-gradient-to-r from-sage-500 via-clay-500 to-sand-500 hover:from-sage-600 hover:via-clay-600 hover:to-sand-600 text-white"
                   >
                     {isLoading ? "Saving..." : dayData?.mood ? "Update Mood" : "Save Mood"}
                   </Button>
                   {dayData?.mood && (
-                    <Button 
-                      variant="outline" 
-                      onClick={handleDeleteMood} 
+                    <Button
+                      variant="outline"
+                      onClick={handleDeleteMood}
                       disabled={isLoading}
                       className="text-red-600 hover:text-red-700"
                     >
@@ -351,25 +359,22 @@ function RightSidePanel({
               </motion.div>
             )}
 
-            {activeTab === 'journal' && (
-              <motion.div
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="space-y-4"
-              >
+            {activeTab === "journal" && (
+              <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
                 {dayData?.journals && dayData.journals.length > 0 ? (
                   <>
                     <h4 className="font-medium text-clay-700 dark:text-sand-200">Journal Entries</h4>
                     <div className="space-y-3">
                       {dayData.journals.map((journal) => (
-                        <Card key={journal.id} className="bg-white/50 dark:bg-gray-800/50 border-sage-200/50 dark:border-gray-600/50">
+                        <Card
+                          key={journal.id}
+                          className="bg-white/50 dark:bg-gray-800/50 border-sage-200/50 dark:border-gray-600/50"
+                        >
                           <CardContent className="p-3">
                             <h5 className="font-medium text-clay-700 dark:text-sand-200 text-sm mb-1">
                               {journal.title || "Untitled Entry"}
                             </h5>
-                            <p className="text-xs text-clay-600 dark:text-sand-300 mb-2">
-                              {journal.preview}
-                            </p>
+                            <p className="text-xs text-clay-600 dark:text-sand-300 mb-2">{journal.preview}</p>
                             <div className="flex flex-wrap gap-1">
                               {journal.tags.map((tag) => (
                                 <Badge key={tag} variant="secondary" className="text-xs">
@@ -387,7 +392,7 @@ function RightSidePanel({
                     <BookOpen className="w-8 h-8 text-clay-300 dark:text-sand-600 mx-auto mb-2" />
                     <p className="text-sm text-clay-500 dark:text-sand-400 mb-3">No journal entries for this day</p>
                     <Button
-                      onClick={() => window.location.href = '/journal'}
+                      onClick={() => (window.location.href = "/journal")}
                       size="sm"
                       className="bg-gradient-to-r from-sage-500 via-clay-500 to-sand-500 hover:from-sage-600 hover:via-clay-600 hover:to-sand-600 text-white"
                     >
@@ -399,26 +404,21 @@ function RightSidePanel({
               </motion.div>
             )}
 
-            {activeTab === 'chat' && (
-              <motion.div
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="space-y-4"
-              >
+            {activeTab === "chat" && (
+              <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
                 {dayData?.chatSessions && dayData.chatSessions.length > 0 ? (
                   <>
                     <h4 className="font-medium text-clay-700 dark:text-sand-200">Chat Sessions</h4>
                     <div className="space-y-3">
                       {dayData.chatSessions.map((session) => (
-                        <Card key={session.id} className="bg-white/50 dark:bg-gray-800/50 border-sage-200/50 dark:border-gray-600/50">
+                        <Card
+                          key={session.id}
+                          className="bg-white/50 dark:bg-gray-800/50 border-sage-200/50 dark:border-gray-600/50"
+                        >
                           <CardContent className="p-3">
                             <div className="flex justify-between items-start mb-2">
-                              <h5 className="font-medium text-clay-700 dark:text-sand-200 text-sm">
-                                Chat Session
-                              </h5>
-                              <span className="text-xs text-clay-500 dark:text-sand-400">
-                                {session.duration}
-                              </span>
+                              <h5 className="font-medium text-clay-700 dark:text-sand-200 text-sm">Chat Session</h5>
+                              <span className="text-xs text-clay-500 dark:text-sand-400">{session.duration}</span>
                             </div>
                             <div className="flex justify-between text-xs text-clay-600 dark:text-sand-300">
                               <span>{session.messagesCount} messages</span>
@@ -434,7 +434,7 @@ function RightSidePanel({
                     <MessageCircle className="w-8 h-8 text-clay-300 dark:text-sand-600 mx-auto mb-2" />
                     <p className="text-sm text-clay-500 dark:text-sand-400 mb-3">No chat sessions for this day</p>
                     <Button
-                      onClick={() => window.location.href = '/chat'}
+                      onClick={() => (window.location.href = "/chat")}
                       size="sm"
                       className="bg-gradient-to-r from-sage-500 via-clay-500 to-sand-500 hover:from-sage-600 hover:via-clay-600 hover:to-sand-600 text-white"
                     >
@@ -463,10 +463,10 @@ export default function CalendarPage() {
     averageMood: 0,
     journalEntries: 0,
     chatSessions: 0,
-    emotionDistribution: {}
+    emotionDistribution: {},
   })
   const [isLoading, setIsLoading] = useState(true)
-  
+
   const { isSignedIn } = useAuth()
 
   const today = new Date()
@@ -480,8 +480,18 @@ export default function CalendarPage() {
   const startingDayOfWeek = firstDayOfMonth.getDay()
 
   const monthNames = [
-    "January", "February", "March", "April", "May", "June",
-    "July", "August", "September", "October", "November", "December",
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
   ]
 
   const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
@@ -492,10 +502,8 @@ export default function CalendarPage() {
 
     setIsLoading(true)
     try {
-      const response = await fetch(
-        `/api/calendar?year=${currentYear}&month=${currentMonth}`
-      )
-      
+      const response = await fetch(`/api/calendar?year=${currentYear}&month=${currentMonth}`)
+
       if (response.ok) {
         const data = await response.json()
         setCalendarData(data.calendarData)
@@ -513,6 +521,7 @@ export default function CalendarPage() {
 
   useEffect(() => {
     fetchCalendarData()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentMonth, currentYear, isSignedIn])
 
   const navigateMonth = (direction: number) => {
@@ -524,9 +533,12 @@ export default function CalendarPage() {
   }
 
   const getMoodColor = (intensity: number) => {
-    if (intensity >= 8) return "bg-green-100 border-green-300 text-green-700 dark:bg-green-900/30 dark:border-green-600 dark:text-green-300"
-    if (intensity >= 6) return "bg-yellow-100 border-yellow-300 text-yellow-700 dark:bg-yellow-900/30 dark:border-yellow-600 dark:text-yellow-300"
-    if (intensity >= 4) return "bg-orange-100 border-orange-300 text-orange-700 dark:bg-orange-900/30 dark:border-orange-600 dark:text-orange-300"
+    if (intensity >= 8)
+      return "bg-green-100 border-green-300 text-green-700 dark:bg-green-900/30 dark:border-green-600 dark:text-green-300"
+    if (intensity >= 6)
+      return "bg-yellow-100 border-yellow-300 text-yellow-700 dark:bg-yellow-900/30 dark:border-yellow-600 dark:text-yellow-300"
+    if (intensity >= 4)
+      return "bg-orange-100 border-orange-300 text-orange-700 dark:bg-orange-900/30 dark:border-orange-600 dark:text-orange-300"
     return "bg-red-100 border-red-300 text-red-700 dark:bg-red-900/30 dark:border-red-600 dark:text-red-300"
   }
 
@@ -542,7 +554,7 @@ export default function CalendarPage() {
   }
 
   // Calculate calendar grid
-  const calendarDays = []
+  const calendarDays: (number | null)[] = []
 
   // Empty cells for days before month starts
   for (let i = 0; i < startingDayOfWeek; i++) {
@@ -560,9 +572,7 @@ export default function CalendarPage() {
         <Card className="p-6 text-center bg-gradient-to-br from-white/70 via-sage-50/50 to-sand-50/70 dark:from-gray-900/70 dark:via-gray-800/50 dark:to-gray-900/70 backdrop-blur-lg border border-sage-100/30 dark:border-gray-700/30">
           <CardContent>
             <h2 className="text-xl font-semibold mb-2 text-clay-700 dark:text-sand-200">Please sign in</h2>
-            <p className="text-clay-600 dark:text-sand-400">
-              Sign in to track your moods and view your calendar.
-            </p>
+            <p className="text-clay-600 dark:text-sand-400">Sign in to track your moods and view your calendar.</p>
           </CardContent>
         </Card>
       </div>
@@ -572,7 +582,11 @@ export default function CalendarPage() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-sand-50 via-sage-25 to-clay-50 dark:from-gray-950 dark:via-gray-900 dark:to-gray-950 transition-all duration-500">
       <SlideDrawer onSidebarToggle={setSidebarOpen} />
-      <div className={`flex h-screen transition-all duration-300 ${sidebarOpen ? "ml-64" : "ml-16"} ${rightPanelOpen ? "mr-96" : "mr-0"}`}>
+      <div
+        className={`flex h-screen transition-all duration-300 ${sidebarOpen ? "ml-64" : "ml-16"} ${
+          rightPanelOpen ? "mr-96" : "mr-0"
+        }`}
+      >
         <div className="flex-1 flex flex-col">
           {/* Header */}
           <div className="flex justify-between items-center p-4 bg-white/30 dark:bg-gray-900/30 backdrop-blur-sm border-b border-sage-100/50 dark:border-gray-800/50">
@@ -621,7 +635,10 @@ export default function CalendarPage() {
                 </div>
 
                 <div className="flex items-center gap-2">
-                  <Badge variant="secondary" className="bg-sage-100 text-sage-600 dark:bg-gray-800 dark:text-sand-300 border-sage-200 dark:border-gray-600">
+                  <Badge
+                    variant="secondary"
+                    className="bg-sage-100 text-sage-600 dark:bg-gray-800 dark:text-sand-300 border-sage-200 dark:border-gray-600"
+                  >
                     <TrendingUp className="w-3 h-3 mr-1" />
                     Track Progress
                   </Badge>
@@ -629,20 +646,13 @@ export default function CalendarPage() {
               </motion.div>
 
               {/* Calendar Grid */}
-              <motion.div
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.6, delay: 0.2 }}
-              >
+              <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6, delay: 0.2 }}>
                 <Card className="bg-gradient-to-br from-white/70 via-sage-50/50 to-sand-50/70 dark:from-gray-900/70 dark:via-gray-800/50 dark:to-gray-900/70 backdrop-blur-lg border border-sage-100/30 dark:border-gray-700/30 shadow-[0_8px_24px_rgba(0,0,0,0.05)] dark:shadow-[0_8px_24px_rgba(0,0,0,0.3)]">
                   <CardContent className="p-6">
                     {/* Day Headers */}
                     <div className="grid grid-cols-7 gap-2 mb-4">
                       {dayNames.map((day) => (
-                        <div
-                          key={day}
-                          className="text-center text-sm font-medium text-clay-500 dark:text-sand-400 py-2"
-                        >
+                        <div key={day} className="text-center text-sm font-medium text-clay-500 dark:text-sand-400 py-2">
                           {day}
                         </div>
                       ))}
@@ -651,8 +661,9 @@ export default function CalendarPage() {
                     {/* Calendar Days */}
                     <div className="grid grid-cols-7 gap-2">
                       {calendarDays.map((day, index) => {
-                        if (!day) {
-                          return <div key={index} className="h-24" />
+                        // Use explicit null check to avoid treating day=0 as falsy if ever used
+                        if (day === null) {
+                          return <div key={`pad-${currentYear}-${currentMonth}-${index}`} className="h-24" />
                         }
 
                         const dateKey = formatDateKey(day)
@@ -667,7 +678,7 @@ export default function CalendarPage() {
 
                         return (
                           <motion.div
-                            key={day}
+                            key={`day-${dateKey}`} // ✅ unique & stable per cell
                             className={`h-24 rounded-xl border-2 transition-all duration-200 cursor-pointer hover:shadow-md ${
                               isToday
                                 ? "border-sage-400 bg-sage-50 dark:border-sand-400 dark:bg-gray-800/70"
@@ -758,9 +769,7 @@ export default function CalendarPage() {
                       </div>
                     </div>
                     <div className="mt-4 pt-4 border-t border-sage-200/50 dark:border-gray-700/50">
-                      <p className="text-xs text-clay-500 dark:text-sand-400">
-                        Click on any day to view details and add activities
-                      </p>
+                      <p className="text-xs text-clay-500 dark:text-sand-400">Click on any day to view details and add activities</p>
                     </div>
                   </CardContent>
                 </Card>
@@ -798,7 +807,8 @@ export default function CalendarPage() {
                           <div className="flex justify-between items-center">
                             <span className="text-sm text-clay-600 dark:text-sand-300 font-sans">Best day</span>
                             <span className="font-medium text-clay-700 dark:text-sand-200 flex items-center gap-1">
-                              {new Date(stats.bestDay.date).getDate()}{stats.bestDay.fruit}
+                              {new Date(stats.bestDay.date).getDate()}
+                              {stats.bestDay.fruit}
                             </span>
                           </div>
                         )}
@@ -809,11 +819,7 @@ export default function CalendarPage() {
               </motion.div>
 
               {/* Quick Actions */}
-              <motion.div
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.6, delay: 0.6 }}
-              >
+              <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6, delay: 0.6 }}>
                 <Card className="bg-gradient-to-br from-white/70 via-sage-50/50 to-sand-50/70 dark:from-gray-900/70 dark:via-gray-800/50 dark:to-gray-900/70 backdrop-blur-lg border border-sage-100/30 dark:border-gray-700/30 shadow-[0_8px_24px_rgba(0,0,0,0.05)] dark:shadow-[0_8px_24px_rgba(0,0,0,0.3)]">
                   <CardContent className="p-6">
                     <h3 className="font-display text-lg text-clay-700 dark:text-sand-200 mb-4">Quick Actions</h3>
@@ -829,7 +835,7 @@ export default function CalendarPage() {
                         Add Today's Mood
                       </Button>
                       <Button
-                        onClick={() => window.location.href = '/journal'}
+                        onClick={() => (window.location.href = "/journal")}
                         variant="outline"
                         className="flex-1 border-sage-200/50 dark:border-gray-600/50 hover:bg-sage-100 dark:hover:bg-gray-700 text-clay-600 dark:text-sand-300 bg-white/60 dark:bg-gray-700/60 backdrop-blur-sm"
                       >

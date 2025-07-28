@@ -9,11 +9,15 @@ const isPublicRoute = createRouteMatcher([
 ])
 
 export default clerkMiddleware(async (auth, req) => {
+  // Allow all public routes
   if (isPublicRoute(req)) return
 
+  // For all other routes, check authentication
   const session = await auth()
   if (!session?.userId) {
-    throw new Error('Unauthorized');
+    // Redirect to sign-in instead of throwing error
+    const signInUrl = new URL('/sign-in', req.url)
+    return Response.redirect(signInUrl)
   }
 })
 
