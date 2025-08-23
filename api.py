@@ -2,29 +2,47 @@
 """
 api.py — FastAPI gateway for Slurpy with Personality Modes
 ----------------------------------------------------------
-• POST /chat   → chats with Slurpy (JWT‑only auth, optional DEV bypass)
-• GET  /modes  → list personality modes + default
-• GET  /health → liveness
+• POST /chat         → classic (non-streaming) chat (JWT-only auth, optional DEV bypass)
+• POST /chat_stream  → streaming NDJSON (typewriter UI)
+• GET  /modes        → list personality modes + default
+• GET  /health       → liveness
 
 Env
 - API_DEBUG            (true/false)    → verbose logs
 - DEV_NO_AUTH          (true/false)    → bypass Clerk verification, use "dev_user"
 - FRONTEND_ORIGIN      (e.g. http://localhost:3000) → CORS allowlist
+- OPENAI_API_KEY       → used for /chat_stream (direct streaming)
+- OPENAI_MODEL         → defaults to gpt-4o-mini
 """
 
 from __future__ import annotations
 
 import os
+import json
 import uuid
 from collections import deque
-from typing import Deque, Dict, Tuple
+from typing import Deque, Dict, Tuple, AsyncGenerator
 
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from auth_clerk import verify_clerk_token
-from rag_core import slurpy_answer, get_available_modes, DEFAULT_MODE
+from rag_core import (
+    slurpy_answer,
+    get_available_modes,
+    DEFAULT_MODE,
+    emotion_intensity,     # used for CEL
+    build_stream_prompt,   # used for streaming prompt construction
+)
+from cel import make_patch
+
+# Optional: stream directly with OpenAI SDK
+try:
+    from openai import OpenAI
+except Exception:  # pragma: no cover
+    OpenAI = None  # will error at runtime if /chat_stream is called
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Debug toggle
@@ -36,7 +54,7 @@ def dbg(*args, **kwargs):
 
 # ─────────────────────────────────────────────────────────────────────────────
 # App + CORS
-app = FastAPI(title="Slurpy RAG API with Personality Modes", version="2.0")
+app = FastAPI(title="Slurpy RAG API with Personality Modes", version="2.1")
 
 _frontend_origin = os.getenv("FRONTEND_ORIGIN", "http://localhost:3000").strip()
 _allow_all = os.getenv("CORS_ALLOW_ALL", "false").lower() in {"1", "true", "yes"}
@@ -97,6 +115,7 @@ class ChatResponse(BaseModel):
     emotion: str
     fruit: str
     mode: str
+    tool_hint: str | None = None  # CEL suggestions (e.g., "Breathing")
 
 class ModeInfo(BaseModel):
     id: str
@@ -109,7 +128,7 @@ class ModesResponse(BaseModel):
     default_mode: str
 
 # ─────────────────────────────────────────────────────────────────────────────
-# In‑memory session history per (user_id, session_id)
+# In-memory session history per (user_id, session_id)
 History = Deque[Tuple[str, str, str]]  # (user_text, assistant_text, user_emotion)
 histories: Dict[tuple[str, str], History] = {}
 
@@ -122,6 +141,7 @@ def _sanitize_mode(requested: str) -> str:
         return DEFAULT_MODE
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Classic non-streaming endpoint (kept as-is)
 @app.post("/chat", response_model=ChatResponse)
 async def chat_endpoint(payload: ChatRequest, req: Request):
     try:
@@ -144,6 +164,35 @@ async def chat_endpoint(payload: ChatRequest, req: Request):
 
         dbg(f"📚 Using session: {sid} for user: {user_id}")
         dbg(f"🎭 Using mode: {mode}")
+
+        # ── CEL: classify + plan BEFORE calling core (for safety gate)
+        try:
+            label, prob = emotion_intensity(payload.text)
+            dbg(f"🧪 Emotion classified: {label} ({prob:.2f})")
+        except Exception as _e:
+            # If classifier hiccups, fall back to neutral
+            dbg(f"⚠️ Emotion classification failed: {_e}")
+            label, prob = ("neutral", 0.0)
+
+        patch = make_patch(label, float(prob), mode, text=payload.text)
+        dbg(f"🧩 CEL patch → tool_hint={patch.tool_hint} safety={patch.safety}")
+
+        # Optional early safety exit (expand as you add more policies)
+        if getattr(patch, "safety", None) == "crisis":
+            crisis_msg = (
+                "I’m concerned about your safety. Please reach out now: "
+                "call or text 988 in the US, or contact your local emergency services."
+            )
+            dbg("⛑️ Crisis path taken; returning safety message.")
+            return ChatResponse(
+                session_id=sid,
+                message=crisis_msg,
+                emotion="crisis",
+                fruit="🆘",
+                mode=mode,
+                tool_hint=None,
+            )
+
         dbg("💬 Calling slurpy_answer...")
 
         # Ensure rag_core uses the SAME session_id we use here
@@ -157,12 +206,17 @@ async def chat_endpoint(payload: ChatRequest, req: Request):
 
         dbg("✅ Slurpy replied:", answer)
 
+        # ── CEL: apply empathy preface AFTER core response (prevents robotic "Got it." lead-ins)
+        final_message = f"{(getattr(patch, 'user_preface', '') or '').strip()}\n\n{answer}".strip() \
+                        if getattr(patch, "user_preface", None) else answer
+
         return ChatResponse(
             session_id=sid,
-            message=answer,
-            emotion=emotion,
+            message=final_message,
+            emotion=emotion or label or "neutral",
             fruit=fruit,
             mode=mode,
+            tool_hint=getattr(patch, "tool_hint", None),
         )
     except HTTPException:
         raise
@@ -170,6 +224,126 @@ async def chat_endpoint(payload: ChatRequest, req: Request):
         # Keep internal details out of client; use server logs for debugging
         print("🔥 INTERNAL ERROR:", str(e))
         raise HTTPException(status_code=500, detail="Server error")
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Streaming NDJSON endpoint for typewriter UI
+#
+# Frontend can read each line and, when type=="delta", append `.text` to the
+# currently-rendering assistant bubble. When type=="done", finalize the bubble.
+#
+# Event shapes:
+#  { "type":"start", "session_id":"...", "mode":"...", "tool_hint": "Breathing" | null }
+#  { "type":"meta",  "emotion":"anxious", "fruit":"Jittery Banana" }
+#  { "type":"delta", "text":"<token-or-chunk>" }
+#  { "type":"done" }
+#
+@app.post("/chat_stream")
+async def chat_stream(payload: ChatRequest, req: Request):
+    # Validate early to fail fast before opening stream
+    if not payload.text or not isinstance(payload.text, str):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Field 'text' is required.",
+        )
+
+    user_id = get_clerk_user_id(req)
+    sid = payload.session_id or str(uuid.uuid4())
+    mode = _sanitize_mode(payload.mode or DEFAULT_MODE)
+
+    key = (user_id, sid)
+    hist = histories.setdefault(key, deque(maxlen=6))
+
+    # CEL pre-check (no DB writes here)
+    try:
+        label, prob = emotion_intensity(payload.text)
+        patch = make_patch(label, float(prob), mode, text=payload.text)
+        dbg(f"🧩 [stream] CEL → hint={patch.tool_hint} safety={patch.safety}")
+        if getattr(patch, "safety", None) == "crisis":
+            async def crisis_stream() -> AsyncGenerator[bytes, None]:
+                yield _nd({"type": "start", "session_id": sid, "mode": mode, "tool_hint": None})
+                yield _nd({"type": "meta", "emotion": "crisis", "fruit": "🆘"})
+                yield _nd({"type": "delta", "text": "I’m concerned about your safety. Please reach out now: call or text 988 in the US, or contact your local emergency services."})
+                yield _nd({"type": "done"})
+            return _streaming_response(crisis_stream())
+    except Exception as _e:
+        dbg(f"⚠️ [stream] CEL failed: {_e}")
+        patch = type("Patch", (), {"tool_hint": None, "user_preface": None})()  # minimal fallback
+
+    # Build prompt (fast; no model call)
+    prompt_meta = build_stream_prompt(payload.text, hist, user_id=user_id, mode=mode)
+    full_prompt = prompt_meta["full_prompt"]
+    emotion_guess = prompt_meta["user_emotion"]
+    fruit = prompt_meta["fruit"]
+
+    # Prepare OpenAI client
+    if OpenAI is None:
+        raise HTTPException(status_code=500, detail="OpenAI SDK not available for streaming")
+    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+    temperature = float(os.getenv("OPENAI_TEMPERATURE", "0.7"))
+
+    # Stream generator
+    async def token_gen() -> AsyncGenerator[bytes, None]:
+        # Start + meta events
+        yield _nd({"type": "start", "session_id": sid, "mode": mode, "tool_hint": getattr(patch, "tool_hint", None)})
+        yield _nd({"type": "meta", "emotion": emotion_guess, "fruit": fruit})
+
+        # Optionally stream an empathy preface first (helps immediacy)
+        preface = (getattr(patch, "user_preface", "") or "").strip()
+        combined = ""
+
+        if preface:
+            yield _nd({"type": "delta", "text": preface + "\n\n"})
+            combined += preface + "\n\n"
+
+        try:
+            # OpenAI Chat Completions streaming
+            stream = client.chat.completions.create(
+                model=model,
+                stream=True,
+                temperature=temperature,
+                max_tokens=400,
+                messages=[
+                    # We can pass the entire composed prompt as a single user message.
+                    {"role": "user", "content": full_prompt}
+                ],
+            )
+            for event in stream:
+                if not event.choices:
+                    continue
+                piece = event.choices[0].delta.content or ""
+                if piece:
+                    combined += piece
+                    yield _nd({"type": "delta", "text": piece})
+        except Exception as e:
+            dbg("🔥 Streaming error:", e)
+            yield _nd({"type": "delta", "text": "\n\n(temporary hiccup while streaming; message may be truncated) "})
+
+        # Close event
+        yield _nd({"type": "done"})
+
+        # Update in-memory history so next turn has context (no DB writes here)
+        # Use the emotion guess we computed pre-stream for consistency
+        try:
+            # Avoid empty combined
+            final_text = combined.strip() if combined.strip() else "(no content)"
+            hist.append((payload.text, final_text, emotion_guess))
+        except Exception as _e:
+            dbg("⚠️ Could not append to history after stream:", _e)
+
+    return _streaming_response(token_gen())
+
+# Helpers for NDJSON streaming
+def _nd(obj: dict) -> bytes:
+    return (json.dumps(obj, ensure_ascii=False) + "\n").encode("utf-8")
+
+def _streaming_response(gen: AsyncGenerator[bytes, None]) -> StreamingResponse:
+    headers = {
+        "Cache-Control": "no-cache",
+        "X-Accel-Buffering": "no",  # for nginx
+    }
+    # NDJSON (one JSON object per line)
+    return StreamingResponse(gen, media_type="application/x-ndjson", headers=headers)
 
 # ─────────────────────────────────────────────────────────────────────────────
 @app.get("/modes", response_model=ModesResponse)
@@ -188,7 +362,7 @@ async def get_modes_endpoint():
 # ─────────────────────────────────────────────────────────────────────────────
 @app.get("/health")
 async def health():
-    return {"status": "ok", "version": "2.0-modes"}
+    return {"status": "ok", "version": "2.1-modes+stream"}
 
 # ─────────────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useEffect, useState } from "react"
+import React, { useEffect, useMemo, useState } from "react"
 import { motion } from "framer-motion"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
@@ -195,6 +195,53 @@ export default function InsightsPage() {
     return map[emotion.toLowerCase()] || map.neutral
   }
 
+  // ---------- Aggregate and de-duplicate trends (unique keys) ----------
+  const dailyTrends = useMemo(() => {
+    const rows = insightsData?.weeklyTrends ?? []
+    const dayKey = (d: string) => {
+      try {
+        // normalize to YYYY-MM-DD even if 'date' has time
+        return new Date(d).toISOString().slice(0, 10)
+      } catch {
+        return (d || "").slice(0, 10)
+      }
+    }
+
+    const map = new Map<
+      string,
+      { date: string; dayLabel: string; moodTotal: number; sessionsTotal: number; n: number }
+    >()
+
+    for (const t of rows) {
+      const key = dayKey(t.date || t.day)
+      const curr = map.get(key)
+      const mood = Number(t.mood) || 0
+      const sessions = Number(t.sessions) || 0
+      if (curr) {
+        curr.moodTotal += mood
+        curr.sessionsTotal += sessions
+        curr.n += 1
+      } else {
+        map.set(key, {
+          date: key,
+          dayLabel: t.day || key,
+          moodTotal: mood,
+          sessionsTotal: sessions,
+          n: 1,
+        })
+      }
+    }
+
+    return Array.from(map.values())
+      .map((x) => ({
+        date: x.date,
+        day: x.dayLabel,
+        mood: x.n ? x.moodTotal / x.n : 0,
+        sessions: x.sessionsTotal,
+      }))
+      .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0))
+  }, [insightsData?.weeklyTrends])
+
   // ---------- UI states ----------
   if (initialLoading) {
     return (
@@ -360,17 +407,22 @@ export default function InsightsPage() {
                     </h3>
 
                     <div className="flex items-end justify-between h-40 gap-2">
-                      {insightsData.weeklyTrends.map((t) => (
-                        <div key={t.date} className="flex flex-col items-center flex-1">
-                          <div
-                            className="w-full bg-gradient-to-t from-sage-400 to-clay-500 dark:from-sage-600 dark:to-clay-600 rounded-t-lg transition-all duration-300 hover:from-sage-500 hover:to-clay-600 dark:hover:from-sage-700 dark:hover:to-clay-700 cursor-pointer"
-                            style={{ height: `${(t.mood / 10) * 100}%` }}
-                            title={`${t.day}: Mood ${t.mood}/10, ${t.sessions} sessions`}
-                          />
-                          <div className="text-xs text-clay-500 dark:text-sand-400 mt-2">{t.day}</div>
-                          <div className="text-xs text-clay-600 dark:text-sand-300 font-medium">{t.mood}</div>
-                        </div>
-                      ))}
+                      {dailyTrends.map((t) => {
+                        const pct = Math.max(0, Math.min(1, (t.mood ?? 0) / 10)) * 100
+                        return (
+                          <div key={t.date} className="flex flex-col items-center flex-1">
+                            <div
+                              className="w-full bg-gradient-to-t from-sage-400 to-clay-500 dark:from-sage-600 dark:to-clay-600 rounded-t-lg transition-all duration-300 hover:from-sage-500 hover:to-clay-600 dark:hover:from-sage-700 dark:hover:to-clay-700 cursor-pointer"
+                              style={{ height: `${pct}%` }}
+                              title={`${t.day}: Mood ${Math.round((t.mood ?? 0) * 10) / 10}/10, ${t.sessions} sessions`}
+                            />
+                            <div className="text-xs text-clay-500 dark:text-sand-400 mt-2">{t.day}</div>
+                            <div className="text-xs text-clay-600 dark:text-sand-300 font-medium">
+                              {Math.round((t.mood ?? 0) * 10) / 10}
+                            </div>
+                          </div>
+                        )
+                      })}
                     </div>
                   </CardContent>
                 </Card>
@@ -386,23 +438,26 @@ export default function InsightsPage() {
                         Emotion Breakdown
                       </h3>
                       <div className="space-y-3">
-                        {insightsData.emotionBreakdown.map((emotion) => (
-                          <div key={emotion.emotion} className="flex items-center justify-between">
-                            <div className="flex items-center gap-3">
-                              <Badge className={`text-xs border ${getEmotionColor(emotion.emotion)}`}>{emotion.emotion}</Badge>
-                              <span className="text-sm text-clay-600 dark:text-sand-300">{emotion.count} times</span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <div className="w-20 h-2 bg-sage-200 dark:bg-gray-700 rounded-full overflow-hidden">
-                                <div
-                                  className="h-full bg-gradient-to-r from-sage-400 to-clay-500 dark:from-sage-500 dark:to-clay-600 rounded-full transition-all duration-300"
-                                  style={{ width: `${emotion.percentage}%` }}
-                                />
+                        {insightsData.emotionBreakdown.map((emotion) => {
+                          const widthPct = Math.max(0, Math.min(100, emotion.percentage))
+                          return (
+                            <div key={emotion.emotion} className="flex items-center justify-between">
+                              <div className="flex items-center gap-3">
+                                <Badge className={`text-xs border ${getEmotionColor(emotion.emotion)}`}>{emotion.emotion}</Badge>
+                                <span className="text-sm text-clay-600 dark:text-sand-300">{emotion.count} times</span>
                               </div>
-                              <span className="text-xs text-clay-500 dark:text-sand-400 w-8">{emotion.percentage}%</span>
+                              <div className="flex items-center gap-2">
+                                <div className="w-20 h-2 bg-sage-200 dark:bg-gray-700 rounded-full overflow-hidden">
+                                  <div
+                                    className="h-full bg-gradient-to-r from-sage-400 to-clay-500 dark:from-sage-500 dark:to-clay-600 rounded-full transition-all duration-300"
+                                    style={{ width: `${widthPct}%` }}
+                                  />
+                                </div>
+                                <span className="text-xs text-clay-500 dark:text-sand-400 w-8">{widthPct}%</span>
+                              </div>
                             </div>
-                          </div>
-                        ))}
+                          )
+                        })}
                       </div>
                     </CardContent>
                   </Card>

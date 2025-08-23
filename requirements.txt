@@ -185,3 +185,4 @@ jiter==0.10.0
 panda==0.3.1
 tk==0.1.0
 protobuf==6.31.1
+sse-starlette>=1.6.5

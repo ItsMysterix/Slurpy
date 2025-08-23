@@ -29,6 +29,10 @@ interface ChatState {
   setCurrentModes: (modes: string[]) => void
   setHasStartedChat: (v: boolean) => void
   setIsTyping: (v: boolean) => void
+  updateMessage: (
+    id: string,
+    patch: Partial<Omit<Message, "id" | "timestamp">> & { content?: string }
+  ) => void
   resetAll: () => void
 }
 
@@ -76,6 +80,11 @@ export const useChatStore = create<ChatState>()(
       setCurrentModes: (modes) => set({ currentModes: modes }),
       setHasStartedChat: (v) => set({ hasStartedChat: v }),
       setIsTyping: (v) => set({ isTyping: v }),
+
+      updateMessage: (id, patch) =>
+        set((s) => ({
+          messages: s.messages.map((m) => (m.id === id ? { ...m, ...patch } : m)),
+        })),
 
       resetAll: () =>
         set({

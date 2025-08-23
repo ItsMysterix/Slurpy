@@ -7,7 +7,8 @@ Key improvements:
 - Better memory integration and personalization
 - Context-aware conversation flow
 - Reduced robotic patterns
-- Enhanced emotional intelligence
+- Enhanced emotional intelligence (synonym/ slang normalization)
+- Streaming-friendly prompt builder
 - Fixed all type errors
 """
 
@@ -104,6 +105,55 @@ def get_varied_follow_up(category: str) -> str:
     return random.choice(options)
 
 # ────────────────────────────────────────────────────────────────────────────
+# Emotion normalization (handles slang & inflections like panicked/panicking/edgy/heated)
+_ANXIOUS_SYNS = {
+    "anxious","anxiety","nervous","on edge","on-edge","edgy","jittery","shaky","uneasy",
+    "panic","panicked","panicking","afraid","scared","terrified","worried","fear","dread",
+    "stressed","overwhelmed","overwhelm","tense"
+}
+_ANGRY_SYNS = {
+    "angry","mad","furious","livid","pissed","raging","rage","heated","irritated","irritable",
+    "annoyed","frustrated","resentful","hostile","fuming","boiling"
+}
+_SAD_SYNS = {
+    "sad","down","depressed","depression","empty","numb","tired","exhausted","drained",
+    "blue","hopeless","low","miserable","lonely","tearful","crying"
+}
+_HAPPY_SYNS = {"happy","joy","joyful","content","glad","grateful","peaceful","calm","relieved","hopeful","excited"}
+_NEUTRAL_SYNS = {"neutral","okay","fine","meh","alright","so-so","ok"}
+
+def _normalize_emotion_label(label: str) -> str:
+    l = (label or "neutral").lower().strip()
+    if l in {"fear","panic","panicked","panicking"}:  # classic panic → anxious
+        return "anxious"
+    if l in {"irritated","heated"}:
+        return "angry"
+    if l in {"tired","numb","exhausted"}:
+        return "sad"
+    return l
+
+def _guess_emotion_from_text(txt: str) -> Optional[str]:
+    t = (txt or "").lower()
+    # quick containment checks
+    for s in _ANXIOUS_SYNS:
+        if s in t:
+            return "anxious"
+    for s in _ANGRY_SYNS:
+        if s in t:
+            return "angry"
+    for s in _SAD_SYNS:
+        if s in t:
+            return "sad"
+    for s in _HAPPY_SYNS:
+        if s in t:
+            # treat “calm/peaceful” as positive but not overstimulating
+            return "calm" if "calm" in t or "peaceful" in t else "happy"
+    for s in _NEUTRAL_SYNS:
+        if s in t:
+            return "neutral"
+    return None
+
+# ────────────────────────────────────────────────────────────────────────────
 # Memory integration helpers
 def get_personalized_context(user_id: str, current_msg: str) -> str:
     """Get personalized context based on user's history"""
@@ -124,15 +174,16 @@ def extract_conversation_themes(user_msg: str, memories: List[str]) -> List[str]
     
     # Common therapy themes
     theme_keywords: Dict[str, List[str]] = {
-        "anxiety": ["anxious", "worry", "nervous", "panic", "stress", "overwhelmed", "fear"],
-        "depression": ["sad", "depressed", "hopeless", "empty", "lonely", "down", "worthless"],
+        "anxiety": list(_ANXIOUS_SYNS),
+        "depression": list(_SAD_SYNS),
+        "anger": list(_ANGRY_SYNS),
         "relationships": ["relationship", "partner", "friend", "family", "conflict", "breakup"],
         "work_stress": ["work", "job", "boss", "career", "deadline", "pressure"],
         "self_esteem": ["confidence", "self-worth", "insecure", "doubt", "failure"],
         "trauma": ["trauma", "abuse", "ptsd", "flashback", "triggered"],
         "grief": ["loss", "death", "grieving", "mourning", "miss"],
         "growth": ["progress", "better", "healing", "learning", "change"],
-        "coping": ["cope", "manage", "handle", "deal with", "strategy"]
+        "coping": ["cope", "coping", "manage", "handling", "deal with", "strategy", "tools"]
     }
     
     # Check current message
@@ -162,6 +213,8 @@ def build_personalized_system_prompt(user_id: str, current_msg: str, mode: str, 
             personalization += "This person has shared about anxiety before. Be especially grounding and calm. "
         if "depression" in themes or "ongoing_depression" in themes:
             personalization += "This person has opened up about depression. Be warm and validating. "
+        if "anger" in themes or "ongoing_anger" in themes:
+            personalization += "Anger is present; acknowledge its legitimacy and explore what's underneath without judgment. "
         if "relationships" in themes:
             personalization += "Relationship concerns are important to this person. "
         if "work_stress" in themes:
@@ -175,7 +228,7 @@ def build_personalized_system_prompt(user_id: str, current_msg: str, mode: str, 
 PERSONALIZATION CONTEXT: {personalization}
 
 CONVERSATION GUIDELINES:
-- Avoid repetitive phrases like "I'm here with you" - vary your responses naturally
+- Avoid repetitive phrases like "I'm here with you" or "Got it." — vary your responses naturally
 - Reference relevant past conversations when appropriate to show continuity
 - Build on previous sessions rather than starting fresh each time
 - Use the person's communication style - formal vs casual, direct vs exploratory
@@ -206,7 +259,9 @@ def generate_contextual_response(user_msg: str, user_emotion: str, memories: Lis
         approach = "validating"
     elif user_emotion in ["anxious", "worried", "overwhelmed"]:
         approach = "supportive"
-    elif user_emotion in ["excited", "happy", "content"]:
+    elif user_emotion in ["angry", "frustrated", "irritated"]:
+        approach = "curious"
+    elif user_emotion in ["excited", "happy", "content", "calm"]:
         approach = "encouraging"
     else:
         approach = "curious"
@@ -349,7 +404,7 @@ def store_enhanced_analytics(session_id: str, user_id: str, user_msg: str,
 
 def sync_to_nextjs_api(user_id: str, session_id: str, message: str, role: str,
                        emotion: Optional[str], intensity: Optional[float], topics: List[str]):
-    """Best‑effort sync to Next.js /api/insights; ignore failures so chat UX never breaks."""
+    """Best-effort sync to Next.js /api/insights; ignore failures so chat UX never breaks."""
     try:
         api_url = os.getenv("INSIGHTS_API_URL", "http://localhost:3000/api/insights")
         payload = {
@@ -418,12 +473,14 @@ def get_available_modes() -> List[Dict[str, str]]:
 def get_mode_config(mode: str) -> Dict[str, str]:
     return PERSONALITY_MODES.get(mode, PERSONALITY_MODES[DEFAULT_MODE])
 
-# Emotion detection
+# Emotion detection (raw model)
 def emotion_intensity(text: str) -> Tuple[str, float]:
     inputs = _emo_tok(text, return_tensors="pt", truncation=True)
     probs = torch.softmax(_emo_model(**inputs).logits, dim=1)[0]
     idx = int(torch.argmax(probs))
     label = _emo_model.config.id2label[idx]
+    # normalize inflections (panic/panicked/… → anxious etc.)
+    label = _normalize_emotion_label(label)
     return label, float(probs[idx])
 
 def fruit_for(emotion: str) -> str:
@@ -432,7 +489,7 @@ def fruit_for(emotion: str) -> str:
         "anxious": "Jittery Banana", "angry": "Spicy Chili", "calm": "Cool Melon",
         "sad": "Gentle Blueberry", "hopeful": "Sweet Grape", "content": "Warm Peach",
         "worried": "Sour Apple", "thoughtful": "Deep Plum", "proud": "Golden Apricot",
-        "neutral": "Fresh Cucumber"
+        "happy": "Sunny Mango", "neutral": "Fresh Cucumber"
     }
     return fruits.get(emotion, "Fresh Cucumber")
 
@@ -440,8 +497,9 @@ def extract_topics_from_message(message: str) -> List[str]:
     topic_keywords = {
         "work": ["work", "job", "career", "boss", "colleague", "office", "workplace", "employment"],
         "relationships": ["relationship", "partner", "boyfriend", "girlfriend", "marriage", "family", "dating"],
-        "anxiety": ["anxious", "worry", "nervous", "panic", "stress", "overwhelmed", "fear"],
-        "depression": ["sad", "depressed", "hopeless", "empty", "lonely", "down"],
+        "anxiety": list(_ANXIOUS_SYNS),
+        "depression": list(_SAD_SYNS),
+        "anger": list(_ANGRY_SYNS),
         "self-care": ["self-care", "wellness", "meditation", "exercise", "sleep", "health"],
         "goals": ["goal", "dream", "ambition", "future", "plan", "achievement", "success"],
         "health": ["health", "physical", "doctor", "medicine", "illness", "medical"],
@@ -493,16 +551,21 @@ def is_greeting(txt: str) -> bool:
     greetings = {"hi", "hey", "yo", "hello", "good morning", "good afternoon", "good evening", "sup", "what's up"}
     return any(txt.lower().strip().startswith(g) for g in greetings)
 
+def _strip_tics(response: str) -> str:
+    """Remove conversation tics like leading 'Got it.'"""
+    return re.sub(r'^\s*(got\s+it[.!]?\s*)+', '', response, flags=re.IGNORECASE).strip()
+
 def clean_response(response: str, recent_responses: List[str]) -> str:
     """Clean up response to be more natural and avoid repetition"""
-    
-    # Remove common AI artifacts
-    response = re.sub(r'^(As an AI|I understand that|I hear you|I can see)', '', response, flags=re.IGNORECASE)
+    # Remove common AI artifacts and tics
+    response = re.sub(r'^(As an AI|I understand that|I hear you|I can see)\b[:,]?\s*', '', response, flags=re.IGNORECASE)
+    response = _strip_tics(response)
+
     response = response.strip()
     
     # Check for repetitive patterns
     if recent_responses:
-        # If response is too similar to recent ones, add variation
+        # If response is too similar to recent ones, add variation (keep original casing)
         for recent in recent_responses[-2:]:
             if len(response) > 30 and len(recent) > 30 and response.lower()[:30] == recent.lower()[:30]:
                 variations = [
@@ -512,7 +575,7 @@ def clean_response(response: str, recent_responses: List[str]) -> str:
                     "What I'm hearing is ",
                     "From what you're sharing, "
                 ]
-                response = random.choice(variations) + response.lower()
+                response = random.choice(variations) + response
                 break
     
     return response
@@ -524,6 +587,67 @@ llm = ChatOpenAI(
     model_kwargs={"max_tokens": 400},
 )
 
+# ────────────────────────────────────────────────────────────────────────────
+# Streaming-friendly prompt builder (no DB writes / no LLM call)
+def build_stream_prompt(
+    msg: str,
+    hist: History,
+    user_id: Optional[str] = None,
+    mode: str = DEFAULT_MODE,
+) -> Dict[str, Any]:
+    """
+    Construct the exact full prompt and metadata so the API layer can stream tokens.
+    DOES NOT call the LLM or touch the DB/history.
+    Returns dict with: full_prompt, user_emotion, intensity, fruit, themes
+    """
+    if user_id is None:
+        user_id = "anonymous"
+
+    # Model guess + slang normalization pass (use either model label or text guess)
+    model_label, prob = emotion_intensity(msg)  # already normalized via _normalize_emotion_label
+    slang_guess = _guess_emotion_from_text(msg)
+    user_em = slang_guess or model_label  # prefer explicit slang in text if present
+
+    memories = recall(user_id, msg, k=5)
+    personalized_context = get_personalized_context(user_id, msg)
+    themes = extract_conversation_themes(msg, memories)
+
+    # Prepare guidance (same logic as sync path)
+    recent_responses = [response for _, response, _ in list(hist)[-3:]]
+    starter, strategy = generate_contextual_response(msg, user_em, memories, themes, mode, recent_responses)
+    system_prompt = build_personalized_system_prompt(user_id, msg, mode, themes)
+
+    context_section = ""
+    if personalized_context:
+        context_section = f"PERSONAL CONTEXT:\n{personalized_context}\n\n"
+    if themes:
+        context_section += f"CONVERSATION THEMES: {', '.join(themes)}\n\n"
+
+    full_prompt = f"""
+{system_prompt}
+
+{context_section}CONVERSATION HISTORY:
+{format_history(hist)}
+
+CURRENT MESSAGE: {msg}
+USER EMOTION: {user_em} (intensity: {prob:.2f})
+
+RESPONSE GUIDANCE: {strategy}
+
+Respond naturally and specifically to what they've shared. Avoid repetitive phrases. 
+Show that you remember and care about their ongoing situation. Be genuinely helpful.
+"""
+
+    return {
+        "full_prompt": full_prompt.strip(),
+        "user_emotion": user_em,
+        "intensity": prob,
+        "fruit": fruit_for(user_em),
+        "themes": themes,
+        "starter": starter,  # exposed for debug if needed
+    }
+
+# ────────────────────────────────────────────────────────────────────────────
 # Enhanced main response function
 def slurpy_answer(msg: str,
                   hist: History,
@@ -542,9 +666,11 @@ def slurpy_answer(msg: str,
     # Ensure analytics session row exists
     store_chat_session_analytics(session_id, user_id)
 
-    # Get user's emotion
-    user_em, user_prob = emotion_intensity(msg)
-    
+    # Model guess + slang normalization pass (use either model label or text guess)
+    model_label, user_prob = emotion_intensity(msg)  # normalized
+    slang_guess = _guess_emotion_from_text(msg)
+    user_em = slang_guess or model_label
+
     # Get personalized context from memory
     memories = recall(user_id, msg, k=5)
     personalized_context = get_personalized_context(user_id, msg)
@@ -648,6 +774,7 @@ Show that you remember and care about their ongoing situation. Be genuinely help
         # Fallback response
         print(f"⚠️ LLM Error: {e}")
         fallback = f"I'm having a moment of technical difficulty, but I'm still here with you. {starter}"
+        fallback = clean_response(fallback, recent_responses)
         hist.append((msg, fallback, user_em))
         topics = extract_topics_from_message(msg)
         store_enhanced_analytics(session_id, user_id, msg, fallback, user_em, user_prob, themes)
@@ -722,6 +849,8 @@ if __name__ == "__main__":
             if user_input.lower() in ["quit", "exit", "bye"]:
                 break
 
+            # Build prompt (for debug) and answer
+            prompt_debug = build_stream_prompt(user_input, mem, user_id="anonymous", mode=current_mode)
             reply, emo, fruit = slurpy_answer(
                 user_input, mem, user_id="anonymous", mode=current_mode, session_id=current_session_id
             )
