@@ -11,7 +11,6 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Card, CardContent } from "@/components/ui/card"
 import { useSignIn } from "@clerk/nextjs"
-import { ClerkAPIError } from "@clerk/types"
 
 export default function ForgotPasswordPage() {
   const [email, setEmail] = useState("")
@@ -26,6 +25,16 @@ export default function ForgotPasswordPage() {
   const validateEmail = (email: string) => {
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
     return emailRegex.test(email)
+  }
+
+  // ---- CHANGED: send a RESET LINK via Clerk (types may not include this strategy yet → cast) ----
+  const sendResetLink = async (identifier: string) => {
+    await (signIn as any).create({
+      strategy: "reset_password_email_link",
+      identifier,
+      redirectUrl: "/reset-password",
+      redirectUrlComplete: "/reset-password",
+    })
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -50,52 +59,18 @@ export default function ForgotPasswordPage() {
     setIsSubmitting(true)
 
     try {
-      // Use Clerk's password reset functionality
-      await signIn.create({
-        strategy: "reset_password_email_code",
-        identifier: email,
-      })
-
+      await sendResetLink(email)
       setIsSubmitted(true)
       setResendCount((prev) => prev + 1)
-    } catch (err) {
-      console.error("Password reset error:", err)
-      
-      // Type guard to check if it's a Clerk API error
-      if (
-        err && 
-        typeof err === 'object' && 
-        'errors' in err && 
-        Array.isArray((err as any).errors) &&
-        (err as any).errors.length > 0
-      ) {
-        const firstError = (err as any).errors[0]
-        
-        if (firstError && typeof firstError === 'object' && 'code' in firstError) {
-          const errorCode = firstError.code
-          const errorMessage = firstError.message
-          
-          switch (errorCode) {
-            case "form_identifier_not_found":
-              setError("No account found with this email address.")
-              break
-            case "form_password_pwned":
-              setError("This email has been involved in a data breach. Please contact support.")
-              break
-            case "throttled":
-              setError("Too many attempts. Please wait before trying again.")
-              break
-            default:
-              setError(errorMessage || "Failed to send reset email. Please try again.")
-          }
-        } else {
-          setError("Failed to send reset email. Please try again.")
-        }
-      } else if (err instanceof Error) {
-        // Handle regular Error objects
-        setError(err.message || "Failed to send reset email. Please try again.")
+    } catch (err: any) {
+      console.error("Password reset link error:", err)
+      const first = err?.errors?.[0]
+      if (first?.code === "form_identifier_not_found") {
+        setError("No account found with this email address.")
+      } else if (first?.code === "throttled") {
+        setError("Too many attempts. Please wait before trying again.")
       } else {
-        setError("An unexpected error occurred. Please try again.")
+        setError(first?.message || err?.message || "Failed to send reset link. Please try again.")
       }
     } finally {
       setIsSubmitting(false)
@@ -109,36 +84,15 @@ export default function ForgotPasswordPage() {
     setIsSubmitting(true)
 
     try {
-      // Resend the password reset email using Clerk
-      await signIn.create({
-        strategy: "reset_password_email_code",
-        identifier: email,
-      })
-      
+      await sendResetLink(email)
       setResendCount((prev) => prev + 1)
 
       // Enable resend after 30 seconds
       setTimeout(() => setCanResend(true), 30000)
-    } catch (err) {
+    } catch (err: any) {
       console.error("Resend error:", err)
-      
-      // Handle Clerk API errors properly
-      if (
-        err && 
-        typeof err === 'object' && 
-        'errors' in err && 
-        Array.isArray((err as any).errors) &&
-        (err as any).errors.length > 0
-      ) {
-        const firstError = (err as any).errors[0]
-        if (firstError && typeof firstError === 'object' && 'message' in firstError) {
-          setError(firstError.message || "Failed to resend email. Please try again.")
-        } else {
-          setError("Failed to resend email. Please try again.")
-        }
-      } else {
-        setError("Failed to resend email. Please try again.")
-      }
+      const first = err?.errors?.[0]
+      setError(first?.message || err?.message || "Failed to resend email. Please try again.")
       setCanResend(true) // Re-enable resend if there's an error
     } finally {
       setIsSubmitting(false)
@@ -193,10 +147,10 @@ export default function ForgotPasswordPage() {
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.6, delay: 0.4 }}
               >
-                <p className="text-sage-500 mb-2 font-sans">We've sent a password reset link to:</p>
+                <p className="text-sage-500 mb-2 font-sans">We&apos;ve sent a password reset link to:</p>
                 <p className="text-sage-600 font-medium font-sans mb-6 bg-sage-100 px-4 py-2 rounded-xl">{email}</p>
                 <p className="text-sm text-sage-400 mb-8 font-sans leading-relaxed">
-                  If you don't see the email, check your spam folder. The link will expire in 24 hours.
+                  If you don&apos;t see the email, check your spam folder. The link will expire in 24 hours.
                 </p>
               </motion.div>
 
@@ -300,7 +254,7 @@ export default function ForgotPasswordPage() {
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.6, delay: 0.4 }}
             >
-              No worries! Enter your email and we'll send you a reset link to get back into your account.
+              No worries! Enter your email and we&apos;ll send you a <b>reset link</b> to get back into your account.
             </motion.p>
           </div>
 
@@ -388,7 +342,7 @@ export default function ForgotPasswordPage() {
             </p>
 
             <p className="text-sage-400 font-sans text-sm">
-              Don't have an account?{" "}
+              Don&apos;t have an account?{" "}
               <Link
                 href="/sign-up"
                 className="text-sage-500 hover:text-sage-600 font-medium underline underline-offset-2 transition-colors"

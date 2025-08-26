@@ -41,7 +41,7 @@ from typing import Optional
 # ─────────────────────────────────────────────────────────────────────────────
 # Optional semantic router (GPT) — only used if CEL_USE_LLM=1 and OPENAI_API_KEY is set
 try:
-    from cel_llm import llm_semantic_emotion  # type: ignore
+    from backend.cel_llm import llm_semantic_emotion  # type: ignore
 except Exception:  # pragma: no cover
     llm_semantic_emotion = None  # type: ignore
 

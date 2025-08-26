@@ -177,6 +177,7 @@ SQLAlchemy==2.0.41
 
 # HuggingFace specific
 hf-xet==1.1.5
+langchain-huggingface==0.3.0
 
 # JSON parsing
 jiter==0.10.0

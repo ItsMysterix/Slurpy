@@ -28,15 +28,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from auth_clerk import verify_clerk_token
-from rag_core import (
+from backend.auth_clerk import verify_clerk_token
+from backend.rag_core import (
     slurpy_answer,
     get_available_modes,
     DEFAULT_MODE,
     emotion_intensity,     # used for CEL
     build_stream_prompt,   # used for streaming prompt construction
 )
-from cel import make_patch
+from backend.cel import make_patch
 
 # Optional: stream directly with OpenAI SDK
 try:

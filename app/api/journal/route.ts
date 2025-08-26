@@ -1,44 +1,29 @@
 // app/api/journal/route.ts
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
-import { PrismaClient } from "@prisma/client";
+import { createClient } from "@supabase/supabase-js";
+import { randomUUID } from "crypto";
 
-// Reuse a single Prisma client in dev to avoid connection burn
-const g = global as unknown as { prisma?: PrismaClient };
-export const prisma = g.prisma ?? new PrismaClient();
-if (process.env.NODE_ENV !== "production") g.prisma = prisma;
+/* -------------------------- Supabase (server) -------------------------- */
+function sb() {
+  const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE; // server-only
+  console.log("[journal/sb] url?", !!url, "service?", !!key);
+  if (!url || !key) throw new Error("Missing SUPABASE_URL / SUPABASE_SERVICE_ROLE env");
+  return createClient(url, key, { auth: { persistSession: false } });
+}
 
-/* -------------------------- helpers -------------------------- */
-const isNumericId = (v: string) => /^\d+$/.test(String(v || ""));
-const asNumber = (v: string) => Number(String(v));
-
+/* ----------------------------- helpers -------------------------------- */
 function normalizeTags(input: unknown): string[] {
   if (Array.isArray(input)) return input.map(String).map(t => t.trim()).filter(Boolean);
   if (typeof input === "string") return input.split(",").map(t => t.trim()).filter(Boolean);
   return [];
 }
 
-async function findEntryFlexible(entryId: string, userId: string) {
-  // Try numeric first if it looks numeric
-  if (isNumericId(entryId)) {
-    try {
-      const byNum = await prisma.journalEntry.findFirst({
-        where: { id: asNumber(entryId) as any, userId } as any,
-      });
-      if (byNum) return byNum;
-    } catch {/* ignore */}
-  }
-  // Then try string
-  try {
-    const byStr = await prisma.journalEntry.findFirst({
-      where: { id: String(entryId) as any, userId } as any,
-    });
-    if (byStr) return byStr;
-  } catch {/* ignore */}
-  return null;
-}
-
-/** Shape the row to what the UI expects */
 function shape(entry: any) {
   return {
     id: entry.id,
@@ -48,19 +33,31 @@ function shape(entry: any) {
     fruit: entry.fruit ?? null,
     tags: Array.isArray(entry.tags) ? entry.tags : [],
     userId: entry.userId,
-    createdAt: entry.createdAt,
-    updatedAt: entry.updatedAt,
-    // Your page reads entry.date — map to the model's date (fallback to createdAt)
-    date: entry.date ?? entry.createdAt,
+    createdAt: entry.createdAt ? new Date(entry.createdAt) : null,
+    updatedAt: entry.updatedAt ? new Date(entry.updatedAt) : null,
+    date: entry.date ? new Date(entry.date) : (entry.createdAt ? new Date(entry.createdAt) : null),
   };
 }
 
-/* --------------------------- GET ----------------------------- */
+async function findEntryByIdForUser(client: ReturnType<typeof sb>, id: string, userId: string) {
+  const { data, error } = await client
+    .from("JournalEntry")
+    .select("id,title,content,mood,fruit,tags,userId,createdAt,updatedAt,date")
+    .eq("userId", userId)
+    .eq("id", id)
+    .single();
+  if (error) return null;
+  return data;
+}
+
+/* --------------------------------- GET -------------------------------- */
+// GET /api/journal?id=<id>
 export async function GET(req: NextRequest) {
   try {
     const { userId } = await auth();
     if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
+    const client = sb();
     const url = new URL(req.url);
     const id = url.searchParams.get("id");
     const requestedUserId = url.searchParams.get("userId");
@@ -69,55 +66,73 @@ export async function GET(req: NextRequest) {
     }
 
     if (id) {
-      const entry = await findEntryFlexible(id, userId);
-      if (!entry) return NextResponse.json({ error: "Not found" }, { status: 404 });
-      return NextResponse.json(shape(entry));
+      const row = await findEntryByIdForUser(client, id, userId);
+      if (!row) return NextResponse.json({ error: "Not found" }, { status: 404 });
+      return NextResponse.json(shape(row));
     }
 
-    // Order primarily by `date`, then `createdAt` as tiebreaker (works even if date is non-null)
-    const rows = await prisma.journalEntry.findMany({
-      where: { userId },
-      orderBy: [{ date: "desc" }, { createdAt: "desc" }],
-    });
-    return NextResponse.json(rows.map(shape));
+    // Prefer DB ordering; fall back to JS sort safety
+    const { data, error } = await client
+      .from("JournalEntry")
+      .select("id,title,content,mood,fruit,tags,userId,createdAt,updatedAt,date")
+      .eq("userId", userId)
+      .order("date", { ascending: false, nullsFirst: false })
+      .order("createdAt", { ascending: false, nullsFirst: false });
+    if (error) throw error;
+
+    return NextResponse.json((data ?? []).map(shape));
   } catch (e) {
     console.error("GET /api/journal error:", e);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }
 
-/* --------------------------- POST ---------------------------- */
+/* --------------------------------- POST ------------------------------- */
+// POST /api/journal { title, content, mood?, fruit?, tags?, date? }
 export async function POST(req: NextRequest) {
   try {
     const { userId } = await auth();
     if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
+    const client = sb();
     const body = await req.json();
+
     const title = String(body?.title ?? "").trim();
     const content = String(body?.content ?? "").trim();
     if (!title || !content) {
       return NextResponse.json({ error: "title and content are required" }, { status: 400 });
     }
 
-    // JournalEntry.date is required in your Prisma model → supply one.
+    // JournalEntry.date is NOT NULL → provide one
     let dateVal: Date = new Date();
     if (body?.date) {
       const maybe = new Date(body.date);
       if (!isNaN(maybe.getTime())) dateVal = maybe;
     }
 
-    const data = await prisma.journalEntry.create({
-      data: {
-        userId,
-        title,
-        content,
-        mood: body?.mood ? String(body.mood) : null,
-        fruit: body?.fruit ? String(body.fruit) : null,
-        tags: normalizeTags(body?.tags),
-        date: dateVal, // <-- REQUIRED
-      },
-    });
+    const nowIso = new Date().toISOString();
+    const id = randomUUID(); // <-- REQUIRED: table id is TEXT NOT NULL
 
+    const { data, error } = await client
+      .from("JournalEntry")
+      .insert([
+        {
+          userId,
+          title,
+          content,
+          mood: body?.mood ? String(body.mood) : null,
+          fruit: body?.fruit ? String(body.fruit) : null,
+          tags: normalizeTags(body?.tags),
+          date: dateVal.toISOString(),
+          createdAt: nowIso,
+          updatedAt: nowIso,
+          isPrivate: true,
+        },
+      ])
+      .select("id,title,content,mood,fruit,tags,userId,createdAt,updatedAt,date")
+      .single();
+
+    if (error) throw error;
     return NextResponse.json(shape(data), { status: 201 });
   } catch (e) {
     console.error("POST /api/journal error:", e);
@@ -125,67 +140,76 @@ export async function POST(req: NextRequest) {
   }
 }
 
-/* ---------------------------- PUT ---------------------------- */
+/* --------------------------------- PUT -------------------------------- */
+// PUT /api/journal { id, title?, content?, mood?, fruit?, tags?, date? }
 export async function PUT(req: NextRequest) {
   try {
     const { userId } = await auth();
     if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
+    const client = sb();
     const body = await req.json();
     const id = String(body?.id ?? "").trim();
     if (!id) return NextResponse.json({ error: "id is required" }, { status: 400 });
 
-    const existing = await findEntryFlexible(id, userId);
+    const existing = await findEntryByIdForUser(client, id, userId);
     if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-    const title =
-      body?.title !== undefined ? String(body.title).trim() : existing.title;
-    const content =
-      body?.content !== undefined ? String(body.content).trim() : existing.content;
+    const title = body?.title !== undefined ? String(body.title).trim() : existing.title;
+    const content = body?.content !== undefined ? String(body.content).trim() : existing.content;
     if (!title || !content) {
       return NextResponse.json({ error: "title and content are required" }, { status: 400 });
     }
 
-    // Optional date update
-    let datePatch: Date | undefined = undefined;
+    let datePatch: string | undefined = undefined;
     if (body?.date) {
       const d = new Date(body.date);
-      if (!isNaN(d.getTime())) datePatch = d;
+      if (!isNaN(d.getTime())) datePatch = d.toISOString();
     }
 
-    const updated = await prisma.journalEntry.update({
-      where: { id: existing.id as any },
-      data: {
-        title,
-        content,
-        mood: body?.mood !== undefined ? (body.mood ? String(body.mood) : null) : existing.mood,
-        fruit: body?.fruit !== undefined ? (body.fruit ? String(body.fruit) : null) : existing.fruit,
-        tags: body?.tags !== undefined ? normalizeTags(body.tags) : existing.tags,
-        ...(datePatch ? { date: datePatch } : {}),
-      },
-    });
+    const updatePayload: any = {
+      title,
+      content,
+      mood: body?.mood !== undefined ? (body.mood ? String(body.mood) : null) : existing.mood,
+      fruit: body?.fruit !== undefined ? (body.fruit ? String(body.fruit) : null) : existing.fruit,
+      tags: body?.tags !== undefined ? normalizeTags(body.tags) : existing.tags,
+      updatedAt: new Date().toISOString(),
+      ...(datePatch ? { date: datePatch } : {}),
+    };
 
-    return NextResponse.json(shape(updated));
+    const { data, error } = await client
+      .from("JournalEntry")
+      .update(updatePayload)
+      .eq("id", id)
+      .eq("userId", userId)
+      .select("id,title,content,mood,fruit,tags,userId,createdAt,updatedAt,date")
+      .single();
+
+    if (error) throw error;
+    return NextResponse.json(shape(data));
   } catch (e) {
     console.error("PUT /api/journal error:", e);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }
 
-/* -------------------------- DELETE --------------------------- */
+/* -------------------------------- DELETE ------------------------------ */
+// DELETE /api/journal?id=<id>
 export async function DELETE(req: NextRequest) {
   try {
     const { userId } = await auth();
     if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
+    const client = sb();
     const url = new URL(req.url);
     const id = url.searchParams.get("id");
     if (!id) return NextResponse.json({ error: "id is required" }, { status: 400 });
 
-    const existing = await findEntryFlexible(id, userId);
+    const existing = await findEntryByIdForUser(client, id, userId);
     if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-    await prisma.journalEntry.delete({ where: { id: existing.id as any } });
+    const { error } = await client.from("JournalEntry").delete().eq("id", id).eq("userId", userId);
+    if (error) throw error;
 
     return NextResponse.json({ success: true });
   } catch (e) {

@@ -1,18 +1,25 @@
 FROM python:3.11-slim
 
-# Install system dependencies needed for building Python packages
-RUN apt-get update && apt-get install -y \
-    gcc \
-    python3-dev \
-    build-essential \
-    && rm -rf /var/lib/apt/lists/*
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc python3-dev build-essential \
+ && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
+# deps first (better layer cache)
 COPY requirements.txt .
+RUN pip install -r requirements.txt
 
-RUN pip install --no-cache-dir -r requirements.txt
+# copy your backend package and any folders it imports
+COPY backend ./backend
+COPY emotion ./emotion
+# copy these ONLY if your code actually needs them at runtime; they’re big:
+# COPY slurpy_qdrant_index ./slurpy_qdrant_index
+# COPY ed_index_full ./ed_index_full
 
-COPY . .
-
-CMD ["uvicorn", "api:app", "--host", "0.0.0.0", "--port", "8000"]
+EXPOSE 8000
+CMD ["uvicorn", "backend.api:app", "--host", "0.0.0.0", "--port", "8000"]

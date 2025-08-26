@@ -6,7 +6,7 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import { useChatStore, type Message } from "@/lib/chat-store"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
-import { User, Send, Sun, Moon, Plus, Pause, Play, X } from "lucide-react"
+import { User, Send, Sun, Moon, Plus, Pause, Play, X, Bot } from "lucide-react"
 import { useTheme } from "next-themes"
 import { useUser } from "@clerk/nextjs"
 import { FloatingLeaves } from "@/components/floating-leaves"
@@ -174,9 +174,9 @@ function FloatingSuggestionButtons({ onSuggestionClick }: { onSuggestionClick: (
           onClick={() => onSuggestionClick(suggestion)}
           className="relative z-10 px-6 py-4 rounded-2xl border border-slate-200/30 dark:border-slate-700/50 bg-white/80 dark:bg-slate-800/80 hover:bg-slate-50/90 dark:hover:bg-slate-700/90 text-slate-700 dark:text-slate-200 text-sm transition-all duration-300 hover:border-slate-300/50 dark:hover:border-slate-600/70 hover:shadow-xl backdrop-blur-md font-rubik"
           initial={{ opacity: 0, y: 30, scale: 0.9 }}
-          animate={{ opacity: 1, y: 0, scale: 1, rotate: [0, 1, -1, 0] }}
-          transition={{ delay: index * 0.15, duration: 0.6, rotate: { duration: 4 + index * 0.5, repeat: Infinity, ease: "easeInOut" } }}
-          whileHover={{ scale: 1.05, y: -8, rotate: 0, transition: { duration: 0.2 } }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          transition={{ delay: index * 0.15, duration: 0.6 }}
+          whileHover={{ scale: 1.05, y: -8, transition: { duration: 0.2 } }}
           whileTap={{ scale: 0.95 }}
         >
           {suggestion}
@@ -197,21 +197,45 @@ function TypingIndicator() {
   )
 }
 
+/* ------------------------------------------------------------------ */
+/* Mode Change Popup Component */
+/* ------------------------------------------------------------------ */
+function ModeChangePopup({ modes }: { modes: string[] }) {
+  const modeNames = modes.map((id) => PERSONALITY_MODES.find((m) => m.id === id)?.name).join(" + ")
+  
+  return (
+    <motion.div
+      initial={{ opacity: 0, scale: 0.8, y: 20 }}
+      animate={{ opacity: 1, scale: 1, y: 0 }}
+      exit={{ opacity: 0, scale: 0.8, y: -20 }}
+      className="fixed top-20 left-1/2 transform -translate-x-1/2 z-50 bg-white/95 dark:bg-slate-800/95 backdrop-blur-xl rounded-2xl px-6 py-4 shadow-2xl border border-slate-200/50 dark:border-slate-700/50"
+    >
+      <div className="flex items-center gap-2">
+        <div className="w-6 h-6 bg-gradient-to-br from-slate-400 via-zinc-400 to-stone-400 dark:from-slate-500 dark:via-zinc-500 dark:to-stone-500 rounded-full flex items-center justify-center">
+          <Bot className="w-3 h-3 text-white" />
+        </div>
+        <span className="text-sm font-medium text-slate-700 dark:text-slate-200 font-rubik">
+          Mode updated to: {modeNames} ✨
+        </span>
+      </div>
+    </motion.div>
+  )
+}
+
 function MessageBubble({ message }: { message: Message }) {
   const { user } = useUser()
   const isUser = message.sender === "user"
 
   const getSlurpyDisplay = () => {
-    if (!message.modes || message.modes.length === 0) return "🧘"
-    if (message.modes.length === 1) return PERSONALITY_MODES.find((m) => m.id === message.modes![0])?.emoji || "🧘"
-    return message.modes.map((id) => PERSONALITY_MODES.find((m) => m.id === id)?.emoji).join("")
+    // Always use Bot icon instead of emojis
+    return <Bot className="w-4 h-4 text-white" />
   }
 
   return (
     <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }} className={`flex gap-3 ${isUser ? "justify-end" : "justify-start"} mb-6`}>
       {!isUser && (
         <div className="w-8 h-8 bg-gradient-to-br from-slate-400 via-zinc-400 to-stone-400 dark:from-slate-500 dark:via-zinc-500 dark:to-stone-500 flex-shrink-0 rounded-full flex items-center justify-center shadow-lg">
-          <span className="text-sm">{getSlurpyDisplay()}</span>
+          {getSlurpyDisplay()}
         </div>
       )}
 
@@ -294,17 +318,13 @@ function ChatInputArea({
               <AnimatePresence>
                 {modesOpen && (
                   <motion.div className="flex gap-2" initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} transition={{ duration: 0.3, ease: "easeOut" }}>
-                    {PERSONALITY_MODES.map((mode, index) => (
+                    {PERSONALITY_MODES.map((mode) => (
                       <motion.button
                         key={mode.id}
                         onClick={() => toggleMode(mode.id)}
-                        initial={{ opacity: 0, y: 10 }}
-                        animate={{ opacity: 1, y: 0, rotate: [0, 1, -1, 0] }}
-                        transition={{
-                          delay: index * 0.1,
-                          duration: 0.4,
-                          rotate: { duration: 3 + index * 0.3, repeat: Infinity, ease: "easeInOut" },
-                        }}
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        transition={{ duration: 0.2 }}
                         className={`h-10 px-4 rounded-lg flex items-center transition-all duration-200 whitespace-nowrap font-rubik ${
                           currentModes.includes(mode.id)
                             ? "bg-gradient-to-r from-slate-200 via-zinc-200 to-stone-200 dark:from-slate-700 dark:via-zinc-700 dark:to-stone-700 text-slate-800 dark:text-slate-200 shadow-md"
@@ -345,12 +365,12 @@ function cleanLLMText(text: string) {
   return out
 }
 
-/* A small live (“typewriter”) bubble kept outside the store */
+/* A small live ("typewriter") bubble kept outside the store */
 function LiveBubble({ text }: { text: string }) {
   return (
     <div className="flex gap-3 justify-start mb-6">
       <div className="w-8 h-8 bg-gradient-to-br from-slate-400 via-zinc-400 to-stone-400 dark:from-slate-500 dark:via-zinc-500 dark:to-stone-500 rounded-full flex items-center justify-center shadow-lg">
-        <span className="text-sm">🧘</span>
+        <Bot className="w-4 h-4 text-white" />
       </div>
       <div className="max-w-[80%] flex flex-col items-start">
         <div className="px-4 py-3 rounded-2xl bg-slate-50/90 dark:bg-slate-900/90 text-slate-800 dark:text-slate-100 backdrop-blur-sm">
@@ -379,6 +399,10 @@ export default function SlurpyChatPage() {
 
   // Local live typewriter bubble
   const [liveText, setLiveText] = useState<string | null>(null)
+
+  // Mode change popup state
+  const [showModePopup, setShowModePopup] = useState(false)
+  const [popupModes, setPopupModes] = useState<string[]>([])
 
   // Zustand store
   const messages = useChatStore((s) => s.messages)
@@ -409,15 +433,14 @@ export default function SlurpyChatPage() {
   const handleModesChange = (newModes: string[]) => {
     setCurrentModes(newModes)
     if (hasStartedChat && newModes.length > 0) {
-      const modeNames = newModes.map((id) => PERSONALITY_MODES.find((m) => m.id === id)?.name).join(" + ")
-      const systemMsg: Message = {
-        id: `${Date.now()}-${Math.random()}`,
-        content: `Personality updated to: ${modeNames} ✨`,
-        sender: "slurpy",
-        timestamp: new Date().toISOString(),
-        modes: newModes,
-      }
-      addMessage(systemMsg)
+      // Show popup instead of adding message to chat
+      setPopupModes(newModes)
+      setShowModePopup(true)
+      
+      // Auto-hide after 4 seconds
+      setTimeout(() => {
+        setShowModePopup(false)
+      }, 4000)
     }
   }
 
@@ -562,6 +585,14 @@ export default function SlurpyChatPage() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-zinc-25 to-stone-50 dark:from-slate-950 dark:via-zinc-900 dark:to-stone-950 transition-all duration-500">
       <SlideDrawer onSidebarToggle={setSidebarOpen} />
+      
+      {/* Mode Change Popup */}
+      <AnimatePresence>
+        {showModePopup && (
+          <ModeChangePopup modes={popupModes} />
+        )}
+      </AnimatePresence>
+
       <div className={`flex h-screen transition-all duration-300 ${sidebarOpen ? "ml-64" : "ml-16"}`}>
         <div className="flex-1 flex flex-col">
           {/* Header */}

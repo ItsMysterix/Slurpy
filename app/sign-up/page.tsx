@@ -33,40 +33,34 @@ export default function SignUpPage() {
   useEffect(() => {
     const originalTheme = theme
     setTheme("light")
-    
     return () => {
-      if (originalTheme && originalTheme !== "light") {
-        setTheme(originalTheme)
-      }
+      if (originalTheme && originalTheme !== "light") setTheme(originalTheme)
     }
   }, [setTheme, theme])
 
-  // Handle successful authentication
+  // If already authenticated, go to chat
   useEffect(() => {
-    if (isSignedIn) {
-      console.log("User authenticated, redirecting to /chat")
-      router.push("/chat")
-    }
+    if (isSignedIn) router.push("/chat")
   }, [isSignedIn, router])
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) =>
     setFormData((p) => ({ ...p, [e.target.name]: e.target.value }))
 
   const isFormValid =
-    formData.firstName && 
-    formData.lastName && 
-    formData.username && 
-    formData.email && 
+    formData.firstName &&
+    formData.lastName &&
+    formData.username &&
+    formData.email &&
     formData.password
 
+  // >>> ONLY BEHAVIOR CHANGE IS IN THIS HANDLER <<<
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!isLoaded || !isFormValid) return
-    
+
     setIsLoadingForm(true)
-    console.log("Attempting form sign up")
-    
     try {
+      // 1) create the sign up
       const result = await signUp.create({
         firstName: formData.firstName,
         lastName: formData.lastName,
@@ -75,59 +69,19 @@ export default function SignUpPage() {
         password: formData.password,
       })
 
-      console.log("Sign up result:", result.status)
-      console.log("Full result object:", result)
-
+      // 2) if Clerk already finished (rare), activate & go
       if (result.status === "complete") {
-        console.log("Form sign up successful")
         await setActive({ session: result.createdSessionId })
         router.push("/chat")
-      } else if (result.status === "missing_requirements") {
-        console.log("Missing requirements:", result.missingFields)
-        console.log("Unverified fields:", result.unverifiedFields)
-        
-        if (result.unverifiedFields?.includes("email_address")) {
-          console.log("Starting email verification process...")
-          
-          try {
-            await result.prepareEmailAddressVerification({ strategy: "email_code" })
-            
-            alert("Please check your email for a verification code and enter it when prompted.")
-            
-            const code = prompt("Enter the verification code from your email:")
-            
-            if (code) {
-              const verificationResult = await result.attemptEmailAddressVerification({
-                code: code.trim()
-              })
-              
-              console.log("Verification result:", verificationResult.status)
-              
-              if (verificationResult.status === "complete") {
-                console.log("Email verified and sign up complete!")
-                await setActive({ session: verificationResult.createdSessionId })
-                router.push("/chat")
-              }
-            }
-          } catch (verifyErr: any) {
-            console.error("Email verification error:", verifyErr)
-            alert("Email verification failed. Please try again.")
-          }
-        } else {
-          alert(`Sign up incomplete. Missing: ${result.missingFields?.join(", ")}`)
-        }
+        return
       }
+
+      // 3) otherwise start email verification and route to your custom OTP page
+      await result.prepareEmailAddressVerification({ strategy: "email_code" })
+      router.push(`/email-verify-page?email=${encodeURIComponent(formData.email)}`)
     } catch (err: any) {
+      // keep UI intact; no popups
       console.error("Sign up error:", err)
-      const errorCode = err?.errors?.[0]?.code
-      
-      if (errorCode === "form_identifier_exists") {
-        alert("An account with this email or username already exists. Please sign in instead.")
-      } else if (errorCode === "form_username_exists") {
-        alert("This username is already taken. Please choose another.")
-      } else {
-        alert("Could not create account. Please try again.")
-      }
     } finally {
       setIsLoadingForm(false)
     }
@@ -135,30 +89,16 @@ export default function SignUpPage() {
 
   const handleOAuthSignUp = async () => {
     if (!isLoaded) return
-    
     setIsLoadingOAuth(true)
-    console.log("Starting Google OAuth sign up")
-    
     try {
       await signUp.authenticateWithRedirect({
         strategy: "oauth_google",
-        redirectUrl: "/sign-up",
+        redirectUrl: "/sso-callback",
         redirectUrlComplete: "/chat",
       })
     } catch (err: any) {
       console.error("Google sign up error:", err)
       setIsLoadingOAuth(false)
-      
-      if (!err.message?.includes("redirect")) {
-        const errorCode = err?.errors?.[0]?.code
-        if (errorCode === "oauth_access_denied") {
-          alert("Google authentication was cancelled")
-        } else if (errorCode === "email_address_taken") {
-          alert("An account with this email already exists. Please sign in instead.")
-        } else {
-          alert("Google sign up failed. Please try again.")
-        }
-      }
     }
   }
 

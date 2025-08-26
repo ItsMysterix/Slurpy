@@ -309,7 +309,7 @@ export default function LandingPage() {
                 {/* Use the actual Slurpy image */}
                 <div className="relative w-48 h-48">
                   <Image
-                    src="/slurpy/components/slurpy2-0.png"
+                    src="/slurpy2-0.png"
                     alt="Slurpy - Your AI mental wellness companion"
                     fill
                     className="object-contain"
