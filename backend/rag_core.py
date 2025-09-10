@@ -1,419 +1,298 @@
-# -*- coding: utf-8 -*-
-"""
-therapy_specialized_bot.py — Mental health chatbot with therapeutic differentiation
-
-What makes this different from generic AI:
-1. Therapeutic training and evidence-based approaches
-2. Mental health crisis detection and intervention
-3. Therapeutic memory and progress tracking  
-4. Specialized mental health knowledge base
-5. Therapeutic relationship building
-6. Mental health assessment capabilities
-7. Therapeutic homework and exercises
-"""
-
-import os, json, datetime, sqlite3, uuid, re
+# backend/rag_core.py
+import os, uuid, re
 from collections import deque
 from typing import Deque, Tuple, List, Optional, Dict, Any
-from contextlib import contextmanager
 
-from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
-from backend.memory import add_message, recall
+from langchain_core.messages import SystemMessage, HumanMessage
 
-load_dotenv()
+from emotion.predict import _model as _emo_model, _tok as _emo_tok
+from .modes import available as modes_available, config as mode_config, DEFAULT_MODE
+from .analytics import init as init_db, upsert_session, add_msg, set_session_fields
+from .safety import classify as safety_classify, crisis_message
+from .ufm import update as ufm_update
+from .plans import vote as plans_vote, roadmap as plans_roadmap
+from .roleplay import PERSONAS, record as rp_record
+from .memory import add_message as kv_add, recall  # package-relative import
+
 History = Deque[Tuple[str, str, str]]
 
-# Therapeutic knowledge base - this is what differentiates from generic AI
-THERAPEUTIC_APPROACHES = {
-    "cbt": {
-        "name": "Cognitive Behavioral Therapy",
-        "techniques": [
-            "thought challenging", "behavioral activation", "exposure therapy", 
-            "cognitive restructuring", "mindfulness", "grounding techniques"
-        ],
-        "suitable_for": ["anxiety", "depression", "panic", "phobias", "ocd"]
-    },
-    "dbt": {
-        "name": "Dialectical Behavior Therapy", 
-        "techniques": [
-            "distress tolerance", "emotion regulation", "interpersonal effectiveness", 
-            "mindfulness", "wise mind", "TIPP skills"
-        ],
-        "suitable_for": ["borderline personality", "emotional dysregulation", "self-harm", "suicidal ideation"]
-    },
-    "act": {
-        "name": "Acceptance and Commitment Therapy",
-        "techniques": [
-            "values clarification", "psychological flexibility", "mindfulness", 
-            "defusion techniques", "acceptance strategies"
-        ],
-        "suitable_for": ["chronic pain", "anxiety", "depression", "trauma"]
+# initialize analytics backing store (no-op if already set up)
+init_db()
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
+LLM = ChatOpenAI(
+    model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+    temperature=float(os.getenv("OPENAI_TEMPERATURE", "0.7")),
+    model_kwargs={"max_tokens": 450},  # set via model_kwargs for compatibility with this LC version
+)
+
+ANX = {"panic","panicked","panicking","anxious","nervous","worried","overwhelmed","fear","dread","on edge","edgy"}
+ANG = {"angry","mad","furious","irritated","frustrated","resentful"}
+SAD = {"sad","down","depressed","empty","tired","numb","lonely"}
+FRUITS = {"anxious":"Jittery Banana","angry":"Spicy Chili","sad":"Gentle Blueberry","calm":"Cool Melon","happy":"Sunny Mango","neutral":"Fresh Cucumber"}
+
+def _norm(lbl: str):
+    l = (lbl or "neutral").lower()
+    if l in {"panic","panicked","panicking"}: return "anxious"
+    if l in {"irritated"}: return "angry"
+    if l in {"tired","numb"}: return "sad"
+    return l
+
+def emotion_intensity(text: str) -> Tuple[str, float]:
+    import torch
+    inputs = _emo_tok(text, return_tensors="pt", truncation=True)
+    probs = torch.softmax(_emo_model(**inputs).logits, dim=1)[0]
+    idx = int(probs.argmax()); label = _norm(_emo_model.config.id2label[int(idx)])
+    return label, float(probs[idx])
+
+def fruit_for(em: str):
+    return FRUITS.get(em, "Fresh Cucumber")
+
+def _guess_emotion(txt: str) -> Optional[str]:
+    t = txt.lower()
+    if any(w in t for w in ANX): return "anxious"
+    if any(w in t for w in ANG): return "angry"
+    if any(w in t for w in SAD): return "sad"
+    if "calm" in t: return "calm"
+    if "happy" in t or "glad" in t: return "happy"
+    return None
+
+def _themes(msg: str, memories: List[str]) -> List[str]:
+    t = msg.lower(); out = []
+    K = {
+      "anxiety":["anxious","panic","fear","worry","overwhelm"],
+      "depression":["depressed","sad","empty","hopeless","numb"],
+      "anger":["angry","furious","irritated","resent"],
+      "relationships":["partner","relationship","family","parent","friend","breakup"],
+      "work_stress":["work","job","boss","deadline","career"],
+      "self_esteem":["confidence","worth","insecure"],
+      "trauma":["trauma","ptsd","flashback","trigger"],
+      "grief":["loss","death","grieve","miss"],
     }
-}
+    for k, kws in K.items():
+        if any(kw in t for kw in kws): out.append(k)
+    if memories:
+        mem = " ".join(memories).lower()
+        for k, kws in K.items():
+            if any(kw in mem for kw in kws) and k not in out: out.append("ongoing_"+k)
+    return out
 
-# Mental health assessment questions (evidence-based)
-ASSESSMENT_FRAMEWORKS = {
-    "phq9_depression": [
-        "Over the past two weeks, how often have you felt down, depressed, or hopeless?",
-        "How often have you had little interest or pleasure in doing things?",
-        "How has your sleep been affected?",
-        "How have your energy levels been?"
-    ],
-    "gad7_anxiety": [
-        "Over the past two weeks, how often have you felt nervous, anxious, or on edge?", 
-        "How often have you been unable to stop or control worrying?",
-        "How often have you had trouble relaxing?"
-    ],
-    "trauma_screening": [
-        "Have you experienced any overwhelming or distressing events?",
-        "Do you ever have unwanted memories or flashbacks?", 
-        "How has your sleep been affected by difficult experiences?"
-    ]
-}
+def _history_str(hist: History):
+    if not hist: return "(start)"
+    L = []
+    for u,a,_ in list(hist)[-6:]:
+        L.append(f"User: {u}\nSlurpy: {a}")
+    return "\n".join(L)
 
-# Crisis intervention protocols
-CRISIS_LEVELS = {
-    "immediate": {
-        "indicators": ["kill myself", "suicide", "end my life", "not worth living", "want to die"],
-        "response": "immediate_intervention",
-        "resources": {
-            "us": "988 - Suicide & Crisis Lifeline",
-            "text": "Text HOME to 741741 - Crisis Text Line", 
-            "emergency": "911 or go to nearest emergency room"
-        }
-    },
-    "elevated": {
-        "indicators": ["hurt myself", "self-harm", "cutting", "can't cope", "overwhelmed"],
-        "response": "safety_planning",
-        "resources": {
-            "warmline": "1-855-771-HELP (4357)",
-            "online": "suicidepreventionlifeline.org/chat"
-        }
-    }
-}
+# ---------- response cleaner ----------
+# - strip "Slurpy:" prefix if model hallucinates it
+# - remove boilerplate like "That sounds heavy. I'm here with you." at the start
+# - drop any hallucinated "— Care Kit —" block entirely
+_HEAVY_RX = re.compile(
+    r"^\s*(that\s+sounds\s+heavy\.?\s*i[’']?m\s+here\s+with\s+you\.?)\s*",
+    re.IGNORECASE,
+)
+def _clean(resp: str):
+    if not isinstance(resp, str): return ""
+    r = resp.strip()
 
-# Therapeutic exercises and homework
-THERAPEUTIC_EXERCISES = {
-    "anxiety": {
-        "grounding_5_4_3_2_1": "Name 5 things you can see, 4 you can touch, 3 you can hear, 2 you can smell, 1 you can taste",
-        "box_breathing": "Breathe in for 4, hold for 4, out for 4, hold for 4",
-        "thought_challenging": "Ask: Is this thought helpful? Is it realistic? What would I tell a friend?"
-    },
-    "depression": {
-        "behavioral_activation": "Schedule one small meaningful activity each day",
-        "gratitude_practice": "Write down 3 specific things you're grateful for",
-        "activity_monitoring": "Track your mood and activities to identify patterns"
-    },
-    "trauma": {
-        "safe_place_visualization": "Imagine a place where you feel completely safe and calm",
-        "grounding_techniques": "Focus on physical sensations to stay present",
-        "container_exercise": "Visualize putting difficult memories in a strong container"
-    }
-}
+    # remove leading "Slurpy:" if present
+    r = re.sub(r"^\s*slurpy\s*:\s*", "", r, flags=re.I)
 
-class TherapyBot:
-    def __init__(self):
-        self.llm = ChatOpenAI(
-            model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
-            temperature=0.7,
-            model_kwargs={"max_tokens": 500},
+    # remove boilerplate "That sounds heavy..." if it sneaks in
+    r = _HEAVY_RX.sub("", r)
+
+    # remove "As an AI..." style openers
+    r = re.sub(r"^(as an ai|i (can|understand|see))[:,]?\s*", "", r, flags=re.I).strip()
+
+    # strip any hallucinated Care Kit block (we don't render Care Kit anymore)
+    ck = re.search(r"^\s*—\s*Care\s*Kit\s*—.*$", r, flags=re.I | re.M | re.S)
+    if ck:
+        r = r[:ck.start()].rstrip()
+
+    return r
+
+def get_available_modes():
+    return modes_available()
+
+# ---------- intent detection for guidance/insight requests ----------
+_GUIDE_PATTERNS = [
+    r"\bwhy\s+am\s+i\b", r"\bwhy\s+do\s+i\b", r"\bhelp me (understand|figure|make sense)",
+    r"\bguide me\b", r"\bwalk me through\b", r"\bcan you (explain|walk me through|guide me)\b",
+    r"\bwhat(?:'s| is)\s+going on with me\b", r"\bwhy do i feel\b", r"\bhow do i deal\b",
+    r"\bhow can i (cope|handle|work with)\b"
+]
+_GUIDE_RX = re.compile("|".join(_GUIDE_PATTERNS), re.IGNORECASE)
+
+def _is_guidance_seek(msg: str) -> bool:
+    return bool(_GUIDE_RX.search(msg or ""))
+
+def build_stream_prompt(msg: str, hist: History, user_id: Optional[str] = None, mode: str = DEFAULT_MODE) -> Dict[str,Any]:
+    user_id = user_id or "anonymous"
+    label, prob = emotion_intensity(msg)
+    guess = _guess_emotion(msg) or label
+    mems = recall(user_id, msg, k=5)
+    th = _themes(msg, mems)
+    sys = mode_config(mode)["system_prompt"]
+
+    style_rules = (
+        "Write like a present, caring human. Use specific validations. Plain language. "
+        "Short paragraphs. Avoid generic disclaimers. Use 'we' and 'you' when helpful."
+    )
+
+    ctx = []
+    if mems: ctx.append("Relevant memories:\n- " + "\n- ".join(mems[:3]))
+    if th: ctx.append("Themes: " + ", ".join(th))
+    ctx_block = ("\n\n".join(ctx)) if ctx else ''
+    mode_block = f"Mode: {mode}\nStyle rules: {style_rules}"
+
+    if _is_guidance_seek(msg):
+        guidance = (
+            "User is asking for guidance/meaning-making. Do NOT reply with a question first. "
+            "Respond with (1) a brief, concrete validation; (2) 2–3 plausible explanations or frames "
+            "rooted in evidence-based therapy; (3) an optional tiny step we could try now; "
+            "then (4) end with one gentle invite to expand (e.g., 'does any of that land?' or "
+            "'want to unpack the second piece together?'). Keep it collaborative and two-sided."
         )
-        self.init_therapeutic_db()
-    
-    @contextmanager
-    def get_db(self):
-        conn = sqlite3.connect('therapy_bot.db')
-        conn.row_factory = sqlite3.Row
-        try:
-            yield conn
-        finally:
-            conn.close()
-    
-    def init_therapeutic_db(self):
-        """Initialize database with therapeutic tracking"""
-        with self.get_db() as conn:
-            # Therapeutic progress tracking
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS therapeutic_progress (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id TEXT NOT NULL,
-                    session_date DATE NOT NULL,
-                    presenting_concerns TEXT,
-                    therapeutic_approach TEXT,
-                    techniques_used TEXT,
-                    homework_assigned TEXT,
-                    progress_notes TEXT,
-                    mood_rating INTEGER,
-                    goals TEXT,
-                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-                )
-            ''')
-            
-            # Crisis interventions log
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS crisis_interventions (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id TEXT NOT NULL,
-                    crisis_level TEXT NOT NULL,
-                    intervention_provided TEXT,
-                    resources_given TEXT,
-                    follow_up_needed BOOLEAN,
-                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-                )
-            ''')
-            
-            # Therapeutic goals and outcomes
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS therapeutic_goals (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id TEXT NOT NULL,
-                    goal_description TEXT NOT NULL,
-                    target_date DATE,
-                    progress_rating INTEGER,
-                    status TEXT DEFAULT 'active',
-                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-                )
-            ''')
-            
-            conn.commit()
-    
-    def assess_crisis_level(self, message: str) -> Optional[str]:
-        """Assess crisis level using clinical indicators"""
-        message_lower = message.lower()
-        
-        for level, config in CRISIS_LEVELS.items():
-            for indicator in config["indicators"]:
-                if indicator in message_lower:
-                    return level
-        return None
-    
-    def provide_crisis_intervention(self, user_id: str, message: str, crisis_level: str) -> str:
-        """Provide appropriate crisis intervention"""
-        config = CRISIS_LEVELS[crisis_level]
-        
-        if crisis_level == "immediate":
-            response = (
-                "I'm very concerned about you right now. Your safety is the most important thing.\n\n"
-                "IMMEDIATE HELP:\n"
-                f"• {config['resources']['us']}\n"
-                f"• {config['resources']['text']}\n"
-                f"• {config['resources']['emergency']}\n\n"
-                "Please reach out to one of these resources right now. You don't have to go through this alone."
-            )
-        else:
-            response = (
-                "I can hear that you're really struggling right now. Let's work on keeping you safe.\n\n"
-                "SUPPORT RESOURCES:\n"
-                f"• {config['resources']['warmline']}\n"
-                f"• {config['resources']['online']}\n\n"
-                "Would you like to work on a safety plan together?"
-            )
-        
-        # Log crisis intervention
-        with self.get_db() as conn:
-            conn.execute(
-                '''INSERT INTO crisis_interventions 
-                   (user_id, crisis_level, intervention_provided, resources_given, follow_up_needed)
-                   VALUES (?, ?, ?, ?, ?)''',
-                (user_id, crisis_level, response, json.dumps(config['resources']), True)
-            )
-            conn.commit()
-        
-        return response
-    
-    def identify_therapeutic_needs(self, message: str, history: List[str]) -> Dict[str, Any]:
-        """Identify what therapeutic approach might be helpful"""
-        message_lower = message.lower()
-        all_text = (message + " " + " ".join(history)).lower()
-        
-        needs = {
-            "approaches": [],
-            "assessment_needed": [],
-            "exercises": []
-        }
-        
-        # Identify suitable therapeutic approaches
-        if any(word in all_text for word in ["anxious", "worry", "panic", "fear"]):
-            needs["approaches"].append("cbt")
-            needs["assessment_needed"].append("gad7_anxiety")
-            needs["exercises"].extend(THERAPEUTIC_EXERCISES["anxiety"].keys())
-        
-        if any(word in all_text for word in ["depressed", "sad", "hopeless", "empty"]):
-            needs["approaches"].append("cbt")
-            needs["assessment_needed"].append("phq9_depression") 
-            needs["exercises"].extend(THERAPEUTIC_EXERCISES["depression"].keys())
-        
-        if any(word in all_text for word in ["trauma", "flashback", "triggered", "abuse"]):
-            needs["approaches"].append("act")
-            needs["assessment_needed"].append("trauma_screening")
-            needs["exercises"].extend(THERAPEUTIC_EXERCISES["trauma"].keys())
-        
-        return needs
-    
-    def suggest_therapeutic_exercise(self, concern_type: str) -> str:
-        """Suggest specific therapeutic exercise"""
-        if concern_type not in THERAPEUTIC_EXERCISES:
-            return "Let's work on some mindfulness techniques together."
-        
-        exercises = THERAPEUTIC_EXERCISES[concern_type]
-        # Pick the most appropriate exercise (simplified selection)
-        exercise_name = list(exercises.keys())[0]
-        exercise_description = exercises[exercise_name]
-        
-        return f"Let's try a {exercise_name.replace('_', ' ')} exercise: {exercise_description}"
-    
-    def build_therapeutic_prompt(self, message: str, history: History, user_id: str, therapeutic_needs: Dict) -> str:
-        """Build prompt with therapeutic expertise"""
-        
-        # Get relevant therapeutic context
-        relevant_memories = recall(user_id, message, k=3)
-        memory_context = ""
-        if relevant_memories:
-            memory_context = f"Previous therapeutic context: {' | '.join(relevant_memories[:2])}\n\n"
-        
-        # Build conversation history
-        recent_history = ""
-        if history:
-            recent = list(history)[-3:]
-            for user_msg, bot_msg, _ in recent:
-                recent_history += f"Client: {user_msg}\nTherapist: {bot_msg}\n"
-        
-        # Therapeutic approach guidance
-        approach_guidance = ""
-        if therapeutic_needs["approaches"]:
-            approaches = [THERAPEUTIC_APPROACHES[app]["name"] for app in therapeutic_needs["approaches"]]
-            approach_guidance = f"Consider using techniques from: {', '.join(approaches)}\n"
-        
-        prompt = f"""You are a specialized mental health support chatbot with training in evidence-based therapeutic approaches.
+    else:
+        guidance = "Be concise and grounded. Validate specifically. Offer a single thoughtful question at most."
 
-THERAPEUTIC CONTEXT:
-{memory_context}{approach_guidance}
+    full = f"""
+{sys}
 
-RECENT SESSION:
-{recent_history}
+{mode_block}
 
-CURRENT CLIENT MESSAGE: "{message}"
+{ctx_block}
+Conversation:
+{_history_str(hist)}
 
-THERAPEUTIC GUIDELINES:
-1. Use evidence-based therapeutic techniques when appropriate
-2. Maintain therapeutic boundaries while being warm and supportive  
-3. Assess for therapeutic needs and suggest relevant interventions
-4. Never diagnose, but help clients understand their experiences
-5. Provide psychoeducation when helpful
-6. Suggest therapeutic exercises or homework when appropriate
-7. Build therapeutic rapport and track progress over time
-8. Respond to what the client actually shares - no assumptions
-9. Use reflective listening and therapeutic questioning techniques
-10. Maintain hope while validating difficulties
+Message: {msg}
+Emotion: {guess} ({prob:.2f})
+Guidance: {guidance}
+""".strip()
+    return {"full_prompt": full, "user_emotion": guess, "intensity": prob, "fruit": fruit_for(guess), "themes": th}
 
-SPECIALIZATION: You have expertise in CBT, DBT, ACT, trauma-informed care, crisis intervention, and mental health assessment.
+def _safe_plan_ctx(road: Dict[str, Any]) -> str:
+    if not isinstance(road, dict):
+        return "Plan: forming"
+    approach = road.get("approach") or "forming"
+    phase = road.get("phase") or "init"
+    steps = road.get("steps") or []
+    if not isinstance(steps, list):
+        steps = []
+    steps_txt = ", ".join([str(s) for s in steps[:2]]) if steps else "—"
+    return f"Plan: {approach} | Phase: {phase} | Steps: {steps_txt}"
 
-Respond as a skilled mental health professional would:"""
-        
-        return prompt
-    
-    def generate_therapeutic_response(self, message: str, history: History, user_id: str) -> Tuple[str, str, str]:
-        """Generate response with therapeutic specialization"""
-        
-        # Crisis assessment first (safety priority)
-        crisis_level = self.assess_crisis_level(message)
-        if crisis_level:
-            crisis_response = self.provide_crisis_intervention(user_id, message, crisis_level)
-            history.append((message, crisis_response, "crisis"))
-            return crisis_response, "crisis", "emergency"
-        
-        # Identify therapeutic needs
-        recent_messages = [msg for msg, _, _ in list(history)[-5:]]
-        therapeutic_needs = self.identify_therapeutic_needs(message, recent_messages)
-        
-        # Build therapeutic prompt
-        prompt = self.build_therapeutic_prompt(message, history, user_id, therapeutic_needs)
-        
-        try:
-            response = str(self.llm.invoke(prompt).content).strip()
-            
-            # Add therapeutic exercise if appropriate
-            if therapeutic_needs["exercises"] and any(word in message.lower() for word in ["help", "what can i do", "suggestions"]):
-                main_concern = therapeutic_needs["exercises"][0].split("_")[0]  # Extract main concern
-                exercise = self.suggest_therapeutic_exercise(main_concern)
-                response += f"\n\n{exercise}"
-            
-            # Log therapeutic progress
-            self.log_therapeutic_progress(user_id, message, response, therapeutic_needs)
-            
-            history.append((message, response, "therapeutic"))
-            if len(history) > 8:
-                history.popleft()
-            
-            return response, "therapeutic", "therapy"
-            
-        except Exception as e:
-            fallback = "I'm experiencing some technical difficulties. How are you feeling right now, and what would be most helpful?"
-            history.append((message, fallback, "neutral"))
-            return fallback, "neutral", "neutral"
-    
-    def log_therapeutic_progress(self, user_id: str, message: str, response: str, needs: Dict):
-        """Log therapeutic session for progress tracking"""
-        with self.get_db() as conn:
-            conn.execute(
-                '''INSERT INTO therapeutic_progress 
-                   (user_id, session_date, presenting_concerns, therapeutic_approach, techniques_used, progress_notes)
-                   VALUES (?, ?, ?, ?, ?, ?)''',
-                (user_id, datetime.date.today(), message, 
-                 json.dumps(needs["approaches"]), json.dumps(needs["exercises"]), response[:500])
-            )
-            conn.commit()
+def slurpy_answer(
+    msg: str,
+    hist: History,
+    user_id: Optional[str] = None,
+    mode: str = DEFAULT_MODE,
+    session_id: Optional[str] = None
+) -> Optional[Tuple[str, str, str]]:
+    user_id = user_id or "anonymous"
+    session_id = session_id or str(uuid.uuid4())
+    upsert_session(session_id, user_id)
 
-# Streaming support for API
-def build_therapeutic_stream_prompt(message: str, history: History, user_id: str) -> Dict[str, Any]:
-    """Build streaming prompt with therapeutic specialization"""
-    bot = TherapyBot()
-    
-    crisis_level = bot.assess_crisis_level(message)
-    if crisis_level:
-        return {
-            "is_crisis": True,
-            "crisis_level": crisis_level,
-            "crisis_response": bot.provide_crisis_intervention(user_id, message, crisis_level)
-        }
-    
-    recent_messages = [msg for msg, _, _ in list(history)[-5:]]
-    therapeutic_needs = bot.identify_therapeutic_needs(message, recent_messages)
-    prompt = bot.build_therapeutic_prompt(message, history, user_id, therapeutic_needs)
-    
-    return {
-        "is_crisis": False,
-        "full_prompt": prompt,
-        "therapeutic_needs": therapeutic_needs,
-        "user_id": user_id
-    }
+    label, prob = emotion_intensity(msg)
+    guess = _guess_emotion(msg) or label
+    mems = recall(user_id, msg, k=5)
 
-# Main interface
-def therapeutic_response(message: str, history: History, user_id: str = "anonymous") -> Tuple[str, str, str]:
-    """Main function for therapeutic chat responses"""
-    bot = TherapyBot()
-    return bot.generate_therapeutic_response(message, history, user_id)
+    # Crisis routing
+    level, _ = safety_classify(msg)
+    if level:
+        text = crisis_message(mems)
+        hist.append((msg, text, guess))
+        add_msg(session_id, user_id, "user", msg, guess, prob, _themes(msg, mems))
+        add_msg(session_id, user_id, "assistant", text, "crisis", 1.0, ["crisis"])
+        kv_add(user_id, msg, guess, fruit_for(guess), prob)
+        # Roleplay record both sides if in persona mode
+        if mode in PERSONAS:
+            turn = len(hist)
+            rp_record(session_id, mode, "user", msg, turn)
+            rp_record(session_id, mode, "assistant", text, turn + 1)
+        return text, guess, fruit_for(guess)
+
+    th = _themes(msg, mems)
+    ufm_update(user_id, msg, guess, th)
+    plan = plans_vote(user_id, th) or {}
+    road = plans_roadmap(user_id) or {}
+
+    # choose system prompt; swap if persona roleplay
+    sys = mode_config(mode)["system_prompt"]
+    roleplay = mode in PERSONAS
+    if roleplay:
+        sys = PERSONAS[mode]["system"]
+
+    # shared style rules
+    style_rules = (
+        "Write like a present, caring human. Use specific validations. Plain language. "
+        "Short paragraphs. Avoid generic disclaimers. Use 'we' and 'you' when helpful."
+    )
+
+    ctx_lines = []
+    if mems: ctx_lines.append("Relevant memories:\n- " + "\n- ".join(mems[:3]))
+    if th: ctx_lines.append("Themes: " + ", ".join(th))
+    ctx_lines.append(_safe_plan_ctx(road))
+    ctx_block = "\n\n".join(ctx_lines) if ctx_lines else ""
+
+    if _is_guidance_seek(msg):
+        guidance = (
+            "User is asking for guidance/meaning-making. Do NOT start with a question. "
+            "Respond with (1) brief, concrete validation; (2) 2–3 plausible explanations or frames "
+            "rooted in evidence-based therapy; (3) optionally one tiny thing we could try now; "
+            "then (4) end with a single gentle invite to expand (e.g., 'does any of that land?' "
+            "or 'want to unpack the second piece together?')."
+        )
+    else:
+        guidance = "Validate specifically, be concise, and ask at most one thoughtful question."
+
+    # Build messages for LLM
+    user_block = f"""\
+Style rules: {style_rules}
+
+{ctx_block}
+Conversation:
+{_history_str(hist)}
+
+Message: {msg}
+Emotion: {guess} ({prob:.2f})
+Instruction: {guidance}"""
+    messages = [SystemMessage(content=sys), HumanMessage(content=user_block)]
+
+    try:
+        out = str(LLM.invoke(messages).content).strip()
+        out = _clean(out)
+        if not out:
+            out = "Got you. Want to pick one thread to start with?"
+    except Exception:
+        out = "Got you. Want to pick one thread to start with?"
+
+    final = out  # no Care Kit
+
+    # update rolling history
+    hist.append((msg, final, guess))
+    if len(hist) > 10:
+        hist.popleft()
+
+    # analytics + memory
+    add_msg(session_id, user_id, "user", msg, guess, prob, th)
+    add_msg(session_id, user_id, "assistant", final, "support", 0.8, th)
+    kv_add(user_id, msg, guess, fruit_for(guess), prob)
+
+    # record roleplay turn (record both user and assistant when in persona)
+    if roleplay:
+        turn = len(hist)
+        rp_record(session_id, mode, "user", msg, turn - 1)       # previous append means user is turn-1
+        rp_record(session_id, mode, "assistant", final, turn)
+
+    set_session_fields(session_id, themes=th, locked_plan=plan.get("locked_plan"))
+    return final, guess, fruit_for(guess)
 
 if __name__ == "__main__":
-    print("Therapeutic Mental Health Chatbot")
-    print("Specialized in evidence-based therapeutic approaches")
-    
-    bot = TherapyBot()
-    history: History = deque()
-    user_id = "test_user"
-    
-    while True:
-        try:
-            user_input = input("\nYou: ").strip()
-            
-            if user_input.lower() in ["quit", "exit"]:
-                break
-            
-            response, emotion, category = bot.generate_therapeutic_response(user_input, history, user_id)
-            print(f"\nTherapist: {response}")
-            
-        except KeyboardInterrupt:
-            break
-    
-    print("\nThank you for the session. Take care of yourself.")
+    from collections import deque
+    hist = deque(maxlen=6)
+    msg = input("User> ")
+    out = slurpy_answer(msg, hist, user_id="local_test", mode=DEFAULT_MODE)
+    print("\nAssistant>", out)

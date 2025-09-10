@@ -1,23 +1,41 @@
-import { createClient } from "@supabase/supabase-js"
+// lib/supabase.ts
+import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 
-const SUPABASE_URL = process.env.SUPABASE_URL
-const SUPABASE_SERVICE_ROLE = process.env.SUPABASE_SERVICE_ROLE
+type Client = SupabaseClient<any, 'public', any>
 
-if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE) {
-  // Don't leak secrets—just say what's missing
-  console.error(
-    "[Supabase] Missing env:",
-    !SUPABASE_URL ? "SUPABASE_URL" : "",
-    !SUPABASE_SERVICE_ROLE ? "SUPABASE_SERVICE_ROLE" : ""
-  )
-  // Keep going so the app boots, but your API route will 500 with a clear message
+/** Auto-picks admin (server) or anon (browser) safely. */
+export function createSupabase(): Client {
+  return typeof window === 'undefined'
+    ? createServerSupabase()
+    : createBrowserSupabase()
 }
 
-export const supabaseAdmin = createClient(
-  SUPABASE_URL ?? "",
-  SUPABASE_SERVICE_ROLE ?? "",
-  {
-    auth: { autoRefreshToken: false, persistSession: false },
-    global: { fetch: fetch as any },
+/** Server-only admin client (uses SERVICE_ROLE). */
+export function createServerSupabase(): Client {
+  if (typeof window !== 'undefined') {
+    throw new Error('createServerSupabase() must run on the server')
   }
-)
+  const url = process.env.SUPABASE_URL
+  const key = process.env.SUPABASE_SERVICE_ROLE
+  if (!url || !key) {
+    throw new Error('Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE')
+  }
+  return createClient(url, key, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  })
+}
+
+/** Browser client (uses public anon key). */
+export function createBrowserSupabase(): Client {
+  if (typeof window === 'undefined') {
+    throw new Error('createBrowserSupabase() must run in the browser')
+  }
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL!
+  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  if (!url || !key) {
+    throw new Error('Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY')
+  }
+  return createClient(url, key, {
+    auth: { persistSession: true, autoRefreshToken: true },
+  })
+}

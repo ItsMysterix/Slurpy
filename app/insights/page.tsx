@@ -1,61 +1,31 @@
 "use client"
 
-import React, { useEffect, useMemo, useState } from "react"
-import { motion } from "framer-motion"
+import React, { useEffect, useMemo, useState, useCallback, useRef } from "react"
+import { motion, AnimatePresence } from "framer-motion"
+import { useTheme } from "next-themes"
+import { useAuth, useUser } from "@clerk/nextjs"
+import { useInsightsStream } from "@/lib/use-insights-stream"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import {
-  BarChart3, TrendingUp, Heart, Brain, Calendar as CalendarIcon,
-  Sun, Moon, Activity, Loader2
-} from "lucide-react"
-import { useTheme } from "next-themes"
-import { useAuth, useUser } from "@clerk/nextjs"
+import { Loader2, TrendingUp, Brain, Heart, Calendar as CalendarIcon, Activity, Sun, Moon } from "lucide-react"
+
 import SlideDrawer from "@/components/slide-drawer"
+import MoodTrendChart from "@/components/insights/MoodTrendChart"
+import ValencePill from "@/components/insights/ValencePill"
 
-// ---------------- Types ----------------
-interface SessionData {
-  duration: string
-  messagesExchanged: number
-  dominantEmotion: string
-  emotionIntensity: number
-  fruit: string
-  topics: string[]
-}
-interface WeeklyTrend {
-  day: string
-  mood: number
-  sessions: number
-  date: string
-}
-interface EmotionBreakdown {
-  emotion: string
-  count: number
-  percentage: number
-  color: string
-}
-interface Insight {
-  title: string
-  description: string
-  icon: string
-  trend: "positive" | "negative" | "neutral"
-}
-interface InsightsData {
-  currentSession: SessionData
-  weeklyTrends: WeeklyTrend[]
-  emotionBreakdown: EmotionBreakdown[]
-  insights: Insight[]
-}
+import {
+  InsightsResponse,
+  normalizeInsights,
+  iconForEmotion,
+} from "@/lib/insights-types"
 
-// Map icon string → component
-const iconMap: Record<string, React.ElementType> = {
-  MessageCircle: CalendarIcon, // fallback mapping not used here, kept for completeness
-  TrendingUp,
-  Heart,
-  Brain,
-  Calendar: CalendarIcon,
-}
+/* ---------------- Config: throttling / polling ---------------- */
+const MIN_REFRESH_MS = 4000;      // ignore SSE bursts faster than this
+const DAY_POLL_MS = 15000;        // gentle fallback polling for "day"
+const MAX_PARALLEL_FETCH = 1;     // block overlapping fetches
 
+/* ---------------- Theme toggle ---------------- */
 function ThemeToggle() {
   const { theme, setTheme } = useTheme()
   const [mounted, setMounted] = useState(false)
@@ -79,170 +49,139 @@ function ThemeToggle() {
   )
 }
 
+/* ---------------- Icon map for insights list ---------------- */
+const iconMap: Record<string, React.ElementType> = {
+  TrendingUp,
+  Heart,
+  Brain,
+  Calendar: CalendarIcon,
+}
+
+/* ---------------- Period label helpers (client) ---------------- */
+function periodLabelFor(timeframe: "day" | "week" | "month" | "year") {
+  const today = new Date()
+  if (timeframe === "day") {
+    return today.toLocaleDateString("en-US", {
+      weekday: "long", month: "long", day: "numeric", year: "numeric",
+    })
+  }
+  if (timeframe === "week") {
+    const start = new Date(today); start.setDate(today.getDate() - today.getDay())
+    const end = new Date(start); end.setDate(start.getDate() + 6)
+    const sameYear = start.getFullYear() === end.getFullYear()
+    const startFmt = start.toLocaleDateString("en-US", {
+      month: "short", day: "numeric", year: sameYear ? undefined : "numeric",
+    })
+    const endFmt = end.toLocaleDateString("en-US", {
+      month: "short", day: "numeric", year: "numeric",
+    })
+    return `${startFmt} – ${endFmt}`
+  }
+  if (timeframe === "month") {
+    return today.toLocaleDateString("en-US", { month: "long", year: "numeric" })
+  }
+  return String(today.getFullYear())
+}
+
+/* ============================== Page ============================== */
+
 export default function InsightsPage() {
   const { userId } = useAuth()
   const { user } = useUser()
 
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [selectedTimeframe, setSelectedTimeframe] = useState<"day" | "week" | "month" | "year">("week")
-  const [insightsData, setInsightsData] = useState<InsightsData | null>(null)
   const [initialLoading, setInitialLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [insights, setInsights] = useState<InsightsResponse | null>(null)
 
-  const timeframes = [
-    { id: "day", label: "Today" },
-    { id: "week", label: "This Week" },
-    { id: "month", label: "This Month" },
-    { id: "year", label: "This Year" },
-  ] as const
+  // --- refs for throttling / dedupe / abort ---
+  const lastRefreshAtRef = useRef<number>(0)
+  const inFlightCountRef = useRef(0)
+  const currentAbortRef = useRef<AbortController | null>(null)
 
-  // ---------- Helpers for header date ----------
-  const today = new Date()
-  const formatHeaderPeriod = () => {
-    if (selectedTimeframe === "day") {
-      return today.toLocaleDateString("en-US", {
-        weekday: "long",
-        month: "long",
-        day: "numeric",
-        year: "numeric",
-      })
-    }
-    if (selectedTimeframe === "week") {
-      const start = new Date(today)
-      start.setDate(today.getDate() - today.getDay()) // Sunday start
-      const end = new Date(start)
-      end.setDate(start.getDate() + 6)
-      const sameYear = start.getFullYear() === end.getFullYear()
-      const startFmt = start.toLocaleDateString("en-US", {
-        month: "short",
-        day: "numeric",
-        year: sameYear ? undefined : "numeric",
-      })
-      const endFmt = end.toLocaleDateString("en-US", {
-        month: "short",
-        day: "numeric",
-        year: "numeric",
-      })
-      return `${startFmt} – ${endFmt}`
-    }
-    if (selectedTimeframe === "month") {
-      return today.toLocaleDateString("en-US", { month: "long", year: "numeric" })
-    }
-    return String(today.getFullYear())
-  }
+  // Stable fetch with dedupe + abort + background spinner control
+  const fetchInsights = useCallback(
+    async (timeframe: "day" | "week" | "month" | "year", opts: { background?: boolean } = {}) => {
+      if (!userId) return
+      if (inFlightCountRef.current >= MAX_PARALLEL_FETCH) return
 
-  // ---------- Data fetch ----------
-  const fetchInsights = async (timeframe: string, opts: { background?: boolean } = {}) => {
-    if (!userId) return
-    try {
       setError(null)
       if (opts.background) setRefreshing(true)
       else setInitialLoading(true)
 
-      const res = await fetch(`/api/insights?userId=${userId}&timeframe=${timeframe}`, {
-        cache: "no-store",
-      })
-      if (!res.ok) throw new Error(`Failed to fetch insights: ${res.status}`)
-      const data: InsightsData = await res.json()
-      setInsightsData(data)
-    } catch (err) {
-      console.error(err)
-      setError(err instanceof Error ? err.message : "Failed to load insights")
-    } finally {
-      if (opts.background) setRefreshing(false)
-      else setInitialLoading(false)
-    }
-  }
+      // Abort any slow previous background fetch for the same timeframe
+      if (opts.background && currentAbortRef.current) {
+        currentAbortRef.current.abort()
+      }
+      const ac = new AbortController()
+      currentAbortRef.current = ac
+      inFlightCountRef.current += 1
 
+      try {
+        const res = await fetch(`/api/insights?userId=${userId}&timeframe=${timeframe}`, {
+          cache: "no-store",
+          signal: ac.signal,
+        })
+        if (!res.ok) throw new Error(`Failed to fetch insights: ${res.status}`)
+        const raw = await res.json()
+        const norm = normalizeInsights(raw)
+        // Use the timeframe we actually fetched, not the (possibly changed) state
+        norm.header.periodLabel = periodLabelFor(timeframe)
+        setInsights(norm)
+        lastRefreshAtRef.current = Date.now()
+      } catch (err: any) {
+        if (err?.name === "AbortError") {
+          // swallow aborted fetches
+        } else {
+          console.error(err)
+          setError(err instanceof Error ? err.message : "Failed to load insights")
+        }
+      } finally {
+        if (opts.background) setRefreshing(false)
+        else setInitialLoading(false)
+        inFlightCountRef.current = Math.max(0, inFlightCountRef.current - 1)
+      }
+    },
+    [userId]
+  )
+
+  // initial + on timeframe change
   useEffect(() => {
     if (userId) fetchInsights(selectedTimeframe)
-  }, [userId, selectedTimeframe])
+  }, [userId, selectedTimeframe, fetchInsights])
 
-  // Light polling only for "day"
+  // ✅ Throttled SSE refresh: ignore bursts faster than MIN_REFRESH_MS
+  useInsightsStream(selectedTimeframe, () => {
+    const now = Date.now()
+    if (now - lastRefreshAtRef.current < MIN_REFRESH_MS) return
+    fetchInsights(selectedTimeframe, { background: true })
+  })
+
+  // Gentle fallback polling for "day" only
   useEffect(() => {
     if (!userId || selectedTimeframe !== "day") return
-    let ticks = 0
     const poll = () => {
       if (document.visibilityState === "visible") {
-        fetchInsights(selectedTimeframe, { background: true })
-        ticks += 1
-        if (ticks >= 60) clearInterval(id)
+        const now = Date.now()
+        if (now - lastRefreshAtRef.current >= MIN_REFRESH_MS) {
+          fetchInsights("day", { background: true })
+        }
       }
     }
-    const id = setInterval(poll, 5000)
+    const id = setInterval(poll, DAY_POLL_MS)
     window.addEventListener("focus", poll)
     return () => {
       clearInterval(id)
       window.removeEventListener("focus", poll)
     }
-  }, [userId, selectedTimeframe])
+  }, [userId, selectedTimeframe, fetchInsights])
 
-  const getEmotionColor = (emotion: string) => {
-    const map: Record<string, string> = {
-      happy: "bg-yellow-100 text-yellow-700 border-yellow-300 dark:bg-yellow-900/30 dark:text-yellow-300",
-      sad: "bg-blue-100 text-blue-700 border-blue-300 dark:bg-blue-900/30 dark:text-blue-300",
-      angry: "bg-red-100 text-red-700 border-red-300 dark:bg-red-900/30 dark:text-red-300",
-      anxious: "bg-orange-100 text-orange-700 border-orange-300 dark:bg-orange-900/30 dark:text-orange-300",
-      excited: "bg-pink-100 text-pink-700 border-pink-300 dark:bg-pink-900/30 dark:text-pink-300",
-      peaceful: "bg-green-100 text-green-700 border-green-300 dark:bg-green-900/30 dark:text-green-300",
-      stressed: "bg-red-100 text-red-700 border-red-300 dark:bg-red-900/30 dark:text-red-300",
-      curious: "bg-purple-100 text-purple-700 border-purple-300 dark:bg-purple-900/30 dark:text-purple-300",
-      grateful: "bg-emerald-100 text-emerald-700 border-emerald-300 dark:bg-emerald-900/30 dark:text-emerald-300",
-      frustrated: "bg-orange-100 text-orange-700 border-orange-300 dark:bg-orange-900/30 dark:text-orange-300",
-      neutral: "bg-gray-100 text-gray-700 border-gray-300 dark:bg-gray-800 dark:text-gray-300",
-    }
-    return map[emotion.toLowerCase()] || map.neutral
-  }
+  const trendData = useMemo(() => insights?.trends.last7Days ?? [], [insights?.trends.last7Days])
 
-  // ---------- Aggregate and de-duplicate trends (unique keys) ----------
-  const dailyTrends = useMemo(() => {
-    const rows = insightsData?.weeklyTrends ?? []
-    const dayKey = (d: string) => {
-      try {
-        // normalize to YYYY-MM-DD even if 'date' has time
-        return new Date(d).toISOString().slice(0, 10)
-      } catch {
-        return (d || "").slice(0, 10)
-      }
-    }
+  /* -------------------------- Loading / Error -------------------------- */
 
-    const map = new Map<
-      string,
-      { date: string; dayLabel: string; moodTotal: number; sessionsTotal: number; n: number }
-    >()
-
-    for (const t of rows) {
-      const key = dayKey(t.date || t.day)
-      const curr = map.get(key)
-      const mood = Number(t.mood) || 0
-      const sessions = Number(t.sessions) || 0
-      if (curr) {
-        curr.moodTotal += mood
-        curr.sessionsTotal += sessions
-        curr.n += 1
-      } else {
-        map.set(key, {
-          date: key,
-          dayLabel: t.day || key,
-          moodTotal: mood,
-          sessionsTotal: sessions,
-          n: 1,
-        })
-      }
-    }
-
-    return Array.from(map.values())
-      .map((x) => ({
-        date: x.date,
-        day: x.dayLabel,
-        mood: x.n ? x.moodTotal / x.n : 0,
-        sessions: x.sessionsTotal,
-      }))
-      .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0))
-  }, [insightsData?.weeklyTrends])
-
-  // ---------- UI states ----------
   if (initialLoading) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-sand-50 via-sage-25 to-clay-50 dark:from-gray-950 dark:via-gray-900 dark:to-gray-950">
@@ -259,7 +198,7 @@ export default function InsightsPage() {
     )
   }
 
-  if (error) {
+  if (error || !insights) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-sand-50 via-sage-25 to-clay-50 dark:from-gray-950 dark:via-gray-900 dark:to-gray-950">
         <SlideDrawer onSidebarToggle={setSidebarOpen} />
@@ -267,10 +206,10 @@ export default function InsightsPage() {
           <div className="flex-1 flex items-center justify-center">
             <div className="text-center">
               <div className="w-12 h-12 bg-red-100 dark:bg-red-900/30 rounded-full flex items-center justify-center mx-auto mb-4">
-                <BarChart3 className="w-6 h-6 text-red-600 dark:text-red-400" />
+                <TrendingUp className="w-6 h-6 text-red-600 dark:text-red-400" />
               </div>
               <h2 className="text-xl font-display text-clay-700 dark:text-sand-200 mb-2">Unable to Load Insights</h2>
-              <p className="text-clay-500 dark:text-sand-400 mb-4">{error}</p>
+              <p className="text-clay-500 dark:text-sand-400 mb-4">{error ?? "Unknown error"}</p>
               <Button onClick={() => fetchInsights(selectedTimeframe)} className="bg-gradient-to-r from-sage-500 via-clay-500 to-sand-500 text-white">
                 Try Again
               </Button>
@@ -281,7 +220,10 @@ export default function InsightsPage() {
     )
   }
 
-  if (!insightsData) return null
+  const { header, breakdown, insights: keyInsights, topics: topicsRaw } = insights
+  const topics = Array.isArray(topicsRaw) ? topicsRaw : [] // guard
+
+  /* ============================== UI ============================== */
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-sand-50 via-sage-25 to-clay-50 dark:from-gray-950 dark:via-gray-900 dark:to-gray-950">
@@ -296,7 +238,7 @@ export default function InsightsPage() {
               animate={{ opacity: 1, x: 0 }}
               transition={{ duration: 0.5 }}
             >
-              <BarChart3 className="w-6 h-6" />
+              <TrendingUp className="w-6 h-6" />
               Session Insights
               {user && <span className="text-sm text-clay-500 dark:text-sand-400">- {user.firstName}'s analytics</span>}
             </motion.h1>
@@ -304,39 +246,37 @@ export default function InsightsPage() {
             <div className="flex items-center gap-3">
               {/* timeframe buttons */}
               <div className="flex bg-white/50 dark:bg-gray-800/50 rounded-xl p-1 border border-sage-200/50 dark:border-gray-700/50">
-                {timeframes.map((t) => (
+                {(["day","week","month","year"] as const).map((id) => (
                   <Button
-                    key={t.id}
-                    onClick={() => setSelectedTimeframe(t.id)}
-                    variant={selectedTimeframe === t.id ? "default" : "ghost"}
+                    key={id}
+                    onClick={() => setSelectedTimeframe(id)}
+                    variant={selectedTimeframe === id ? "default" : "ghost"}
                     size="sm"
                     className={`rounded-lg text-xs ${
-                      selectedTimeframe === t.id
+                      selectedTimeframe === id
                         ? "bg-gradient-to-r from-sage-500 via-clay-500 to-sand-500 text-white"
                         : "text-clay-600 hover:text-clay-700 dark:text-sand-300 dark:hover:text-sand-200 hover:bg-sage-100 dark:hover:bg-gray-700/50"
                     }`}
                   >
-                    {t.label}
+                    {id === "day" ? "Today" : id === "week" ? "This Week" : id === "month" ? "This Month" : "This Year"}
                   </Button>
                 ))}
               </div>
 
-              {/* period label */}
               <Badge variant="secondary" className="bg-sage-100 text-sage-700 dark:bg-gray-800 dark:text-sand-300 border-sage-200 dark:border-gray-700">
-                {formatHeaderPeriod()}
+                {header.periodLabel || periodLabelFor(selectedTimeframe)}
               </Badge>
 
               {/* background refresh spinner */}
-              {refreshing && <Loader2 className="w-4 h-4 animate-spin text-sage-600 dark:text-sand-300" />}
-
+              <AnimatePresence>{refreshing && <Loader2 className="w-4 h-4 animate-spin text-sage-600 dark:text-sand-300" />}</AnimatePresence>
               <ThemeToggle />
             </div>
           </div>
 
-          {/* Main Content */}
+          {/* Main */}
           <div className="flex-1 overflow-y-auto p-6">
             <div className="max-w-6xl mx-auto space-y-6">
-              {/* Current Session Overview */}
+              {/* Summary Card */}
               <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6 }}>
                 <Card className="bg-gradient-to-br from-white/70 via-sage-50/50 to-sand-50/70 dark:from-gray-900/70 dark:via-gray-800/50 dark:to-gray-900/70 border border-sage-100/30 dark:border-gray-700/30">
                   <CardContent className="p-6">
@@ -344,7 +284,7 @@ export default function InsightsPage() {
                       <h3 className="font-display text-lg text-clay-700 dark:text-sand-200 flex items-center gap-2">
                         <Activity className="w-5 h-5" />
                         {selectedTimeframe === "day"
-                          ? "Today's Activity"
+                          ? "Today's Summary"
                           : selectedTimeframe === "week"
                           ? "This Week's Summary"
                           : selectedTimeframe === "month"
@@ -359,30 +299,34 @@ export default function InsightsPage() {
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                       <div className="text-center">
                         <div className="text-2xl font-bold text-clay-700 dark:text-sand-200">
-                          {insightsData.currentSession.duration}
+                          {header.totalMinutes < 60
+                            ? `${header.totalMinutes} minutes`
+                            : `${Math.floor(header.totalMinutes / 60)}h ${header.totalMinutes % 60}m`}
                         </div>
-                        <div className="text-sm text-clay-500 dark:text-sand-400">
-                          {selectedTimeframe === "day" ? "Duration" : "Total Time"}
-                        </div>
+                        <div className="text-sm text-clay-500 dark:text-sand-400">Total Time</div>
                       </div>
+
                       <div className="text-center">
-                        <div className="text-2xl font-bold text-clay-700 dark:text-sand-200">
-                          {insightsData.currentSession.messagesExchanged}
-                        </div>
+                        <div className="text-2xl font-bold text-clay-700 dark:text-sand-200">{header.totalMessages}</div>
                         <div className="text-sm text-clay-500 dark:text-sand-400">Messages</div>
                       </div>
-                      <div className="text-center">
-                        <div className="text-2xl font-bold text-clay-700 dark:text-sand-200 flex items-center justify-center gap-1">
-                          {insightsData.currentSession.fruit}
-                          {insightsData.currentSession.emotionIntensity}/10
+
+                      {/* Valence (−1..1) with emotion icon */}
+                      <div className="text-center flex flex-col items-center gap-1">
+                        <div className="flex items-center gap-2">
+                          <img
+                            src={iconForEmotion(header.currentEmotion)}
+                            alt={header.currentEmotion}
+                            className="w-6 h-6 rounded"
+                          />
+                          <ValencePill valence={header.currentValenceNeg1To1} />
                         </div>
-                        <div className="text-sm text-clay-500 dark:text-sand-400 capitalize">
-                          {insightsData.currentSession.dominantEmotion}
-                        </div>
+                        <div className="text-sm text-clay-500 dark:text-sand-400 capitalize">{header.currentEmotion}</div>
                       </div>
+
                       <div className="text-center">
-                        <div className="text-2xl font-bold text-clay-700 dark:text-sand-200">
-                          {insightsData.currentSession.topics.length}
+                        <div className="text-base md:text-lg text-clay-700 dark:text-sand-200">
+                          {header.topicSentence}
                         </div>
                         <div className="text-sm text-clay-500 dark:text-sand-400">Topics</div>
                       </div>
@@ -391,46 +335,26 @@ export default function InsightsPage() {
                 </Card>
               </motion.div>
 
-              {/* Trends */}
-              <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6, delay: 0.2 }}>
+              {/* Weekly Mood Trends */}
+              <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6, delay: 0.1 }}>
                 <Card className="bg-gradient-to-br from-white/70 via-sage-50/50 to-sand-50/70 dark:from-gray-900/70 dark:via-gray-800/50 dark:to-gray-900/70 border border-sage-100/30 dark:border-gray-700/30">
                   <CardContent className="p-6">
                     <h3 className="font-display text-lg text-clay-700 dark:text-sand-200 mb-4 flex items-center gap-2">
                       <TrendingUp className="w-5 h-5" />
-                      {selectedTimeframe === "day"
-                        ? "Today's Mood"
-                        : selectedTimeframe === "week"
-                        ? "Weekly Mood Trends"
-                        : selectedTimeframe === "month"
-                        ? "Monthly Mood Trends"
-                        : "Yearly Mood Trends"}
+                      Weekly Mood Trends
                     </h3>
-
-                    <div className="flex items-end justify-between h-40 gap-2">
-                      {dailyTrends.map((t) => {
-                        const pct = Math.max(0, Math.min(1, (t.mood ?? 0) / 10)) * 100
-                        return (
-                          <div key={t.date} className="flex flex-col items-center flex-1">
-                            <div
-                              className="w-full bg-gradient-to-t from-sage-400 to-clay-500 dark:from-sage-600 dark:to-clay-600 rounded-t-lg transition-all duration-300 hover:from-sage-500 hover:to-clay-600 dark:hover:from-sage-700 dark:hover:to-clay-700 cursor-pointer"
-                              style={{ height: `${pct}%` }}
-                              title={`${t.day}: Mood ${Math.round((t.mood ?? 0) * 10) / 10}/10, ${t.sessions} sessions`}
-                            />
-                            <div className="text-xs text-clay-500 dark:text-sand-400 mt-2">{t.day}</div>
-                            <div className="text-xs text-clay-600 dark:text-sand-300 font-medium">
-                              {Math.round((t.mood ?? 0) * 10) / 10}
-                            </div>
-                          </div>
-                        )
-                      })}
-                    </div>
+                    <MoodTrendChart
+                      data={(trendData || []).map((t) => ({ label: t.label, valence: Number(t.valence || 0) }))}
+                      height={280}
+                    />
                   </CardContent>
                 </Card>
               </motion.div>
 
               {/* Breakdown & Insights */}
               <div className="grid md:grid-cols-2 gap-6">
-                <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6, delay: 0.3 }}>
+                {/* Emotion Breakdown */}
+                <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6, delay: 0.2 }}>
                   <Card className="bg-gradient-to-br from-white/70 via-sage-50/50 to-sand-50/70 dark:from-gray-900/70 dark:via-gray-800/50 dark:to-gray-900/70 border border-sage-100/30 dark:border-gray-700/30">
                     <CardContent className="p-6">
                       <h3 className="font-display text-lg text-clay-700 dark:text-sand-200 mb-4 flex items-center gap-2">
@@ -438,16 +362,23 @@ export default function InsightsPage() {
                         Emotion Breakdown
                       </h3>
                       <div className="space-y-3">
-                        {insightsData.emotionBreakdown.map((emotion) => {
+                        {(breakdown.emotions || []).map((emotion) => {
                           const widthPct = Math.max(0, Math.min(100, emotion.percentage))
                           return (
                             <div key={emotion.emotion} className="flex items-center justify-between">
                               <div className="flex items-center gap-3">
-                                <Badge className={`text-xs border ${getEmotionColor(emotion.emotion)}`}>{emotion.emotion}</Badge>
-                                <span className="text-sm text-clay-600 dark:text-sand-300">{emotion.count} times</span>
+                                <img
+                                  src={iconForEmotion(emotion.emotion)}
+                                  alt={emotion.emotion}
+                                  className="w-5 h-5 rounded"
+                                />
+                                <Badge className="text-xs bg-slate-800/60 text-slate-300 border-slate-700/50 capitalize">
+                                  {emotion.emotion}
+                                </Badge>
+                                <span className="text-sm text-clay-600 dark:text-sand-300">{emotion.count}</span>
                               </div>
                               <div className="flex items-center gap-2">
-                                <div className="w-20 h-2 bg-sage-200 dark:bg-gray-700 rounded-full overflow-hidden">
+                                <div className="w-28 h-2 bg-sage-200 dark:bg-gray-700 rounded-full overflow-hidden">
                                   <div
                                     className="h-full bg-gradient-to-r from-sage-400 to-clay-500 dark:from-sage-500 dark:to-clay-600 rounded-full transition-all duration-300"
                                     style={{ width: `${widthPct}%` }}
@@ -463,7 +394,8 @@ export default function InsightsPage() {
                   </Card>
                 </motion.div>
 
-                <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6, delay: 0.4 }}>
+                {/* Key Insights */}
+                <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6, delay: 0.25 }}>
                   <Card className="bg-gradient-to-br from-white/70 via-sage-50/50 to-sand-50/70 dark:from-gray-900/70 dark:via-gray-800/50 dark:to-gray-900/70 border border-sage-100/30 dark:border-gray-700/30">
                     <CardContent className="p-6">
                       <h3 className="font-display text-lg text-clay-700 dark:text-sand-200 mb-4 flex items-center gap-2">
@@ -471,15 +403,15 @@ export default function InsightsPage() {
                         Key Insights
                       </h3>
                       <div className="space-y-4">
-                        {insightsData.insights.map((insight, idx) => {
-                          const Icon = iconMap[insight.icon] || Brain
+                        {keyInsights.map((ins, idx) => {
+                          const Icon = iconMap[ins.icon] || Brain
                           return (
-                            <div key={`${insight.title}-${idx}`} className="flex items-start gap-3">
+                            <div key={`${ins.title}-${idx}`} className="flex items-start gap-3">
                               <div
                                 className={`w-8 h-8 rounded-lg bg-gradient-to-br flex items-center justify-center ${
-                                  insight.trend === "positive"
+                                  ins.trend === "positive"
                                     ? "from-green-400 to-green-500"
-                                    : insight.trend === "negative"
+                                    : ins.trend === "negative"
                                     ? "from-red-400 to-red-500"
                                     : "from-sage-400 to-clay-500"
                                 }`}
@@ -487,14 +419,19 @@ export default function InsightsPage() {
                                 <Icon className="w-4 h-4 text-white" />
                               </div>
                               <div className="flex-1">
-                                <h4 className="font-medium text-clay-700 dark:text-sand-200 mb-1">{insight.title}</h4>
+                                <h4 className="font-medium text-clay-700 dark:text-sand-200 mb-1">{ins.title}</h4>
                                 <p className="text-sm text-clay-500 dark:text-sand-400 leading-relaxed">
-                                  {insight.description}
+                                  {ins.description}
                                 </p>
                               </div>
                             </div>
                           )
                         })}
+                        {!keyInsights.length && (
+                          <div className="text-sm text-clay-500 dark:text-sand-400">
+                            Getting Started — Chat more to unlock personalized insights.
+                          </div>
+                        )}
                       </div>
                     </CardContent>
                   </Card>
@@ -502,53 +439,27 @@ export default function InsightsPage() {
               </div>
 
               {/* Topics */}
-              <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6, delay: 0.5 }}>
+              <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6, delay: 0.35 }}>
                 <Card className="bg-gradient-to-br from-white/70 via-sage-50/50 to-sand-50/70 dark:from-gray-900/70 dark:via-gray-800/50 dark:to-gray-900/70 border border-sage-100/30 dark:border-gray-700/30">
                   <CardContent className="p-6">
                     <h3 className="font-display text-lg text-clay-700 dark:text-sand-200 mb-4">
                       {selectedTimeframe === "day" ? "Today's Topics" : "Recent Topics Discussed"}
                     </h3>
                     <div className="flex flex-wrap gap-2">
-                      {insightsData.currentSession.topics.length > 0 ? (
-                        insightsData.currentSession.topics.map((topic) => (
-                          <Badge key={topic} variant="secondary" className="bg-sage-100 dark:bg-gray-800 text-clay-600 dark:text-sand-300">
-                            {topic}
-                          </Badge>
+                      {topics.length > 0 ? (
+                        topics.map((t) => (
+                          <a key={`${t.topic}-${t.lastSeenISO}`} href={t.href} className="cursor-pointer">
+                            <Badge
+                              variant="secondary"
+                              className="bg-sage-100 dark:bg-gray-800 text-clay-600 dark:text-sand-300 hover:bg-sage-200 dark:hover:bg-gray-700 transition-colors"
+                            >
+                              {t.topic}
+                            </Badge>
+                          </a>
                         ))
                       ) : (
                         <p className="text-clay-500 dark:text-sand-400 text-sm">No topics identified yet.</p>
                       )}
-                    </div>
-                  </CardContent>
-                </Card>
-              </motion.div>
-
-              {/* Quick Actions (restored) */}
-              <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6, delay: 0.6 }}>
-                <Card className="bg-gradient-to-br from-white/70 via-sage-50/50 to-sand-50/70 dark:from-gray-900/70 dark:via-gray-800/50 dark:to-gray-900/70 border border-sage-100/30 dark:border-gray-700/30">
-                  <CardContent className="p-6">
-                    <h3 className="font-display text-lg text-clay-700 dark:text-sand-200 mb-4">Quick Actions</h3>
-                    <div className="flex flex-col sm:flex-row gap-3">
-                      <Button
-                        onClick={() => (window.location.href = "/chat")}
-                        className="flex-1 bg-gradient-to-r from-sage-600 via-clay-600 to-sand-600 hover:from-sage-700 hover:via-clay-700 hover:to-sand-700 text-white"
-                      >
-                        Start Chat
-                      </Button>
-                      <Button
-                        onClick={() => (window.location.href = "/journal")}
-                        variant="outline"
-                        className="flex-1 border-sage-200/50 dark:border-gray-600/50 hover:bg-sage-100 dark:hover:bg-gray-700 text-clay-600 dark:text-sand-300 bg-white/60 dark:bg-gray-700/60"
-                      >
-                        Write Journal
-                      </Button>
-                      <Button
-                        onClick={() => (window.location.href = "/calendar")}
-                        variant="outline"
-                        className="flex-1 border-sage-200/50 dark:border-gray-600/50 hover:bg-sage-100 dark:hover:bg-gray-700 text-clay-600 dark:text-sand-300 bg-white/60 dark:bg-gray-700/60"
-                      >
-                        Open Calendar
-                      </Button>
                     </div>
                   </CardContent>
                 </Card>

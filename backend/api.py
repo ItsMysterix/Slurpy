@@ -196,13 +196,31 @@ async def chat_endpoint(payload: ChatRequest, req: Request):
         dbg("💬 Calling slurpy_answer...")
 
         # Ensure rag_core uses the SAME session_id we use here
-        answer, emotion, fruit = slurpy_answer(
+        result = slurpy_answer(
             payload.text,
             hist,
             user_id=user_id,
             mode=mode,
             session_id=sid,  # ← pass through session id
         )
+
+        # Handle cases where slurpy_answer might return None or an unexpected shape.
+        # We prefer explicit fallbacks over letting the server raise a confusing
+        # "None is not iterable" error when unpacking.
+        if result is None:
+            dbg("⚠️ slurpy_answer returned None; using fallback values.")
+            answer = "(no response)"
+            emotion = "neutral"
+            fruit = "🍋"
+        else:
+            try:
+                answer, emotion, fruit = result
+            except Exception as _e:
+                dbg("⚠️ slurpy_answer returned unexpected value; using fallback:", _e)
+                # Coerce to a string for the answer and sensible defaults for others.
+                answer = str(result)
+                emotion = "neutral"
+                fruit = "🍋"
 
         dbg("✅ Slurpy replied:", answer)
 

@@ -9,8 +9,11 @@ function toSSE(data: string) {
   return new TextEncoder().encode(data.endsWith("\n\n") ? data : data + "\n\n")
 }
 
+// simple per-connection cooldown
+const MIN_PUSH_MS = 2000
+
 export async function GET(req: NextRequest) {
-  const { userId } = await auth()          
+  const { userId } = await auth()
   if (!userId) return new Response("Unauthorized", { status: 401 })
 
   const { searchParams } = new URL(req.url)
@@ -20,16 +23,22 @@ export async function GET(req: NextRequest) {
   const stream = new ReadableStream({
     start(controller) {
       const send = (chunk: string) => controller.enqueue(toSSE(chunk))
+      let lastPush = 0
 
       // open + heartbeat
       send(`event: open\ndata: {"timeframe":"${timeframe}"}\n`)
       const ping = setInterval(() => {
         send(`event: ping\ndata: {"ts":${Date.now()}}\n`)
-      }, 15000)
+      }, 20000) // 20s heartbeat
 
       const onUpdate = (payload: InsightsUpdate) => {
         if (payload.userId !== userId) return
-        send(`event: update\ndata: ${JSON.stringify({ ...payload, ts: Date.now() })}\n`)
+        const now = Date.now()
+        if (now - lastPush < MIN_PUSH_MS) return
+        lastPush = now
+        send(
+          `event: update\ndata: ${JSON.stringify({ ...payload, ts: now })}\n`
+        )
       }
       sseBus.on("insights:update", onUpdate)
 

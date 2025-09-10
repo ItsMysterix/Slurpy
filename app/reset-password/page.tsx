@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useSignIn } from "@clerk/nextjs";
 import { motion } from "framer-motion";
@@ -10,12 +10,9 @@ import { Label } from "@/components/ui/label";
 import Link from "next/link";
 import { Loader2, Lock, ArrowLeft, Eye, EyeOff, CheckCircle, AlertCircle } from "lucide-react";
 
-export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const revalidate = 0;
-export const fetchCache = "default-no-store";
 
-export default function ResetPasswordPage() {
+function ResetPasswordContent() {
   const router = useRouter();
   const search = useSearchParams();
   const { isLoaded, signIn, setActive } = useSignIn();
@@ -246,5 +243,22 @@ export default function ResetPasswordPage() {
         </div>
       </motion.div>
     </div>
+  );
+}
+
+export default function ResetPasswordPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen bg-gradient-to-br from-sand-50 via-sage-50 to-clay-400/10 flex items-center justify-center p-4">
+        <div className="w-full max-w-md bg-sand-50/70 backdrop-blur-lg rounded-3xl p-8 shadow-soft border border-white/20">
+          <div className="flex items-center justify-center gap-3 text-sage-600">
+            <Loader2 className="h-5 w-5 animate-spin" />
+            <span className="font-sans">Loading...</span>
+          </div>
+        </div>
+      </div>
+    }>
+      <ResetPasswordContent />
+    </Suspense>
   );
 }

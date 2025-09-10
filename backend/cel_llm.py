@@ -1,15 +1,13 @@
-# cel_llm.py
 import os, re, json
 from typing import Optional, Dict, Any
 
-# OpenAI SDK optional: only used if OPENAI_API_KEY exists
 try:
     from openai import OpenAI
 except Exception:
     OpenAI = None  # type: ignore
 
 _ALLOWED = ["anxious","angry","sad","foggy","meaning","neutral"]
-_TOOL_HINT = {"anxious":"Breathing","angry":"ConflictStyle","sad":"Stretch"}
+TOOL_HINT = {"anxious":"Breathing","angry":"ConflictStyle","sad":"Stretch"}
 
 def _redact(text: str) -> str:
     """Light redaction to avoid sending obvious identifiers."""
@@ -27,7 +25,7 @@ def _client():
     except Exception:
         return None
 
-_JSON_SCHEMA = {
+JSON_SCHEMA = {
     "name": "emotion_label_schema",
     "schema": {
         "type": "object",
@@ -49,8 +47,9 @@ def llm_semantic_emotion(text: str) -> Optional[Dict[str, Any]]:
     """
     cli = _client()
     if cli is None:
+        print("⚠️ [cel_llm] No OpenAI client available")
         return None
-
+    
     model = os.getenv("OPENAI_ROUTER_MODEL", "gpt-4o-mini")
     prompt_sys = (
         "You are a concise emotion router. "
@@ -60,10 +59,9 @@ def llm_semantic_emotion(text: str) -> Optional[Dict[str, Any]]:
         "Return strict JSON only."
     )
     red = _redact(text)
-
+    
     try:
-        # Use chat completion without the unsupported `response_format` argument,
-        # then extract the content and parse JSON manually.
+        print(f"🔍 [cel_llm] Calling OpenAI with model: {model}")
         resp = cli.chat.completions.create(
             model=model,
             messages=[
@@ -72,14 +70,12 @@ def llm_semantic_emotion(text: str) -> Optional[Dict[str, Any]]:
             ],
             max_tokens=150,
         )
-
-        # Extract the raw text from the response in a robust way that works
-        # whether the SDK returns dicts or objects.
+        
+        # Extract the raw text from the response
         raw = None
         if isinstance(resp, dict):
             choices = resp.get("choices") or []
             if choices:
-                # attempt to support both "message":{"content": ...} and legacy "text"
                 msg = choices[0].get("message") or {}
                 raw = msg.get("content") or choices[0].get("text")
         else:
@@ -91,15 +87,42 @@ def llm_semantic_emotion(text: str) -> Optional[Dict[str, Any]]:
                     raw = message.get("content")
                 else:
                     raw = getattr(message, "content", None) or getattr(first, "text", None)
-
+        
         if not raw:
+            print("⚠️ [cel_llm] OpenAI returned empty response")
             return None
-
-        data = json.loads(raw)
+            
+        print(f"🔍 [cel_llm] Raw response: {repr(raw)}")
+        
+        # Clean the response (remove markdown if present)
+        clean_raw = raw.strip()
+        if clean_raw.startswith('```json'):
+            clean_raw = clean_raw.replace('```json', '').replace('```', '').strip()
+        elif clean_raw.startswith('```'):
+            clean_raw = clean_raw.replace('```', '').strip()
+            
+        print(f"🔍 [cel_llm] Cleaned response: {repr(clean_raw)}")
+        
+        # Parse JSON
+        try:
+            data = json.loads(clean_raw)
+        except json.JSONDecodeError as e:
+            print(f"❌ [cel_llm] JSON decode error: {e}")
+            print(f"❌ [cel_llm] Raw content was: {repr(clean_raw)}")
+            return None
+        
         label = data.get("label")
         conf = float(data.get("confidence", 0.0) or 0.0)
+        
         if label not in _ALLOWED:
+            print(f"⚠️ [cel_llm] Invalid label '{label}', expected one of: {_ALLOWED}")
             return None
+            
+        print(f"✅ [cel_llm] Success: {label} ({conf})")
         return {"label": label, "confidence": conf, "reason": data.get("reason")}
-    except Exception:
+        
+    except Exception as e:
+        print(f"❌ [cel_llm] Exception: {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
         return None

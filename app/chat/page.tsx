@@ -16,64 +16,44 @@ import { InterventionCard } from "@/components/interventions/InterventionCard"
 import BreathingInline from "@/components/interventions/BreathingInline"
 
 /* ------------------------------------------------------------------ */
-/* 🎭 Enhanced Personality Modes with Therapeutic Depth               */
+/* 🎭 Roleplay Personas ONLY (mirrors backend/roleplay.py)            */
 /* ------------------------------------------------------------------ */
-const PERSONALITY_MODES = [
-  { id: "therapist", emoji: "🧘", name: "Therapist", description: "evidence-based, validating, emotionally curious", color: "from-slate-400 to-slate-500", prompt_style: "Use CBT and humanistic therapy techniques. Ask open-ended questions, reflect emotions, validate experiences, and guide gentle exploration of feelings and thoughts." },
-  { id: "coach",     emoji: "🥊", name: "Coach",     description: "solution-focused, motivating, action-oriented",   color: "from-zinc-400 to-zinc-500",  prompt_style: "Focus on strengths, set actionable goals, provide encouragement, and help break down challenges into manageable steps." },
-  { id: "friend",    emoji: "🧑‍🤝‍🧑", name: "Friend",    description: "casual, empathetic, relatable",                color: "from-stone-400 to-stone-500", prompt_style: "Be warm and relatable, share appropriate experiences, use casual language while being genuinely supportive." },
-  { id: "poet",      emoji: "🎭", name: "Poet",      description: "metaphorical, aesthetic, emotionally rich",       color: "from-gray-400 to-gray-500",  prompt_style: "Use metaphors, imagery, and poetic language to help reframe experiences and find beauty in struggle." },
-  { id: "monk",      emoji: "🧙", name: "Monk",      description: "mindful, philosophical, grounded",                color: "from-neutral-400 to-neutral-500", prompt_style: "Offer mindfulness techniques, philosophical perspectives, and grounding practices for finding inner peace." },
-  { id: "lover",     emoji: "❤️", name: "Lover",     description: "compassionate, nurturing, heart-centered",       color: "from-slate-500 to-zinc-500",  prompt_style: "Provide deep emotional support, focus on self-love and healing, speak from the heart with unconditional acceptance." },
-]
+const PERSONA_MODES = [
+  { id: "parent",          name: "Parent",          system: "You are the user's parent. Speak in first-person as their parent with warmth and realism." },
+  { id: "partner",         name: "Partner",         system: "You are the user's partner. Be supportive and kind." },
+  { id: "boss",            name: "Boss",            system: "You are the user's manager. Be clear and constructive." },
+  { id: "inner_critic",    name: "Inner Critic",    system: "You are the user's inner critic, softened into helpful guidance." },
+  { id: "self_compassion", name: "Self-Compassion", system: "You are the user's compassionate self. Speak gently." },
+] as const
+
+type ModeId = (typeof PERSONA_MODES)[number]["id"]
 
 /* ------------------------------------------------------------------ */
-/* 🔌 Model call helper                                               */
+/* 🔌 Model call helper + Session Finalize                             */
 /* ------------------------------------------------------------------ */
 async function sendToSlurpy(
   text: string,
   sessionId?: string | null,
-  modes: string[] = [],
+  modes: ModeId[] = [],
 ): Promise<{
   session_id: string
   message: string
   emotion: string
   fruit: string
-  modes: string[]
+  modes: ModeId[]
 }> {
-  let enhancedPrompt = text
-  if (modes.includes("therapist")) {
-    enhancedPrompt = `
-Context: You are a skilled, warm therapist having a session with a client. Use evidence-based therapeutic techniques.
-
-Core Principles:
-- Ask open-ended questions to explore deeper
-- Reflect emotions back to validate feelings
-- Normalize their experience without minimizing
-- Invite elaboration gently: "Can you tell me more about..."
-- Use active listening: "It sounds like..." "I'm hearing that..."
-- Avoid generic comfort phrases or quick fixes
-- Create psychological safety for vulnerability
-
-Client message: "${text}"
-
-Respond as a therapist would - with curiosity, validation, and gentle exploration. Ask follow-up questions that help them process their feelings.`
-  }
+  // pick first selected persona for backend roleplay mode (backend expects a single persona id)
+  const roleplayPersona = modes.find(Boolean) ?? null
 
   const res = await fetch("/api/proxy-chat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      text: enhancedPrompt,
+      text,
       session_id: sessionId,
       modes,
-      therapeutic_context: modes.includes("therapist")
-        ? {
-            style: "evidence_based_therapy",
-            techniques: ["active_listening", "validation", "open_ended_questions", "emotional_reflection"],
-            avoid: ["generic_comfort", "quick_fixes", "advice_giving"],
-          }
-        : null,
+      roleplay: roleplayPersona, // hints backend to swap to PERSONAS[roleplayPersona]
+      therapeutic_context: null, // no style modes; roleplay only
     }),
   })
 
@@ -92,32 +72,23 @@ Respond as a therapist would - with curiosity, validation, and gentle exploratio
   }
 }
 
-/* ------------------------------------------------------------------ */
-/* 🧾 Persist each message for Insights                               */
-/* ------------------------------------------------------------------ */
-async function persistMessage(opts: {
-  sessionId: string
-  message: string
-  role: "user" | "assistant"
-  emotion?: string | null
-  intensity?: number | null
-  topics?: string[]
-}) {
+// Session finalization (fires on tab close/logout)
+function finalizeSession(sessionId: string, meta: { lastEmotions?: Array<{label:string; score?:number}> } = {}) {
   try {
-    await fetch("/api/insights", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        sessionId: opts.sessionId,
-        message: opts.message,
-        role: opts.role,
-        emotion: opts.emotion ?? null,
-        intensity: typeof opts.intensity === "number" ? Math.min(1, Math.max(0, opts.intensity)) : null,
-        topics: Array.isArray(opts.topics) ? opts.topics : [],
-      }),
+    const url = "/api/insights/finalize"
+    const payload = JSON.stringify({
+      sessionId,
+      hints: meta.lastEmotions ?? [],
+      endedAt: new Date().toISOString(),
     })
-  } catch (e) {
-    console.warn("persistMessage failed:", e)
+    if (typeof navigator !== "undefined" && "sendBeacon" in navigator) {
+      const blob = new Blob([payload], { type: "application/json" })
+      navigator.sendBeacon(url, blob)
+    } else {
+      void fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: payload, keepalive: true })
+    }
+  } catch {
+    /* noop */
   }
 }
 
@@ -161,6 +132,8 @@ function SendButton({ onClick, disabled }: { onClick: () => void; disabled: bool
 }
 
 /* ------------------------------------------------------------------ */
+/* Suggestions                                                         */
+/* ------------------------------------------------------------------ */
 function FloatingSuggestionButtons({ onSuggestionClick }: { onSuggestionClick: (text: string) => void }) {
   const suggestions = ["What makes Slurpy special?", "Help me feel better today", "I want to share my thoughts", "Guide me through this challenge"]
   return (
@@ -191,18 +164,17 @@ function TypingIndicator() {
   return (
     <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="flex items-center gap-2 px-4 py-3 bg-slate-100 dark:bg-slate-800 rounded-2xl max-w-20">
       {[0, 1, 2].map((i) => (
-        <motion.div key={i} className="w-2 h-2 bg-slate-400 dark:bg-slate-400 rounded-full" animate={{ y: [0, -4, 0] }} transition={{ duration: 0.6, repeat: Number.POSITIVE_INFINITY, delay: i * 0.2 }} />
+        <motion.div key={i} className="w-2 h-2 rounded-full bg-slate-400 dark:bg-slate-400" animate={{ y: [0, -4, 0] }} transition={{ duration: 0.6, repeat: Number.POSITIVE_INFINITY, delay: i * 0.2 }} />
       ))}
     </motion.div>
   )
 }
 
 /* ------------------------------------------------------------------ */
-/* Mode Change Popup Component */
+/* “Mode updated” popup                                                */
 /* ------------------------------------------------------------------ */
 function ModeChangePopup({ modes }: { modes: string[] }) {
-  const modeNames = modes.map((id) => PERSONALITY_MODES.find((m) => m.id === id)?.name).join(" + ")
-  
+  const modeNames = modes.map((id) => PERSONA_MODES.find((m) => m.id === id)?.name ?? id).join(" + ")
   return (
     <motion.div
       initial={{ opacity: 0, scale: 0.8, y: 20 }}
@@ -222,14 +194,58 @@ function ModeChangePopup({ modes }: { modes: string[] }) {
   )
 }
 
+/* ------------------------------------------------------------------ */
+/* Parse Care Kit out of the LLM text                                  */
+/* ------------------------------------------------------------------ */
+type CareKit = { skill?: string; micro_goal?: string; psychoedu?: string; question?: string }
+function parseCareKit(raw: string): { main: string; care?: CareKit } {
+  if (!raw) return { main: "" }
+  const lines = raw.split("\n")
+  const startIdx = lines.findIndex(l => /—\s*Care Kit\s*—/i.test(l))
+  if (startIdx === -1) return { main: raw.trim() }
+
+  const main = lines.slice(0, startIdx).join("\n").trim()
+  const careLines = lines.slice(startIdx + 1)
+
+  const care: CareKit = {}
+  for (const l of careLines) {
+    const m = l.replace(/^[-•]\s*/,"").trim()
+    if (/^try:/i.test(m)) care.skill = m.replace(/^try:\s*/i,"").trim()
+    else if (/^micro:/i.test(m)) care.micro_goal = m.replace(/^micro:\s*/i,"").trim()
+    else if (/^note:/i.test(m)) care.psychoedu = m.replace(/^note:\s*/i,"").trim()
+    else if (/^question:/i.test(m)) care.question = m.replace(/^question:\s*/i,"").trim()
+  }
+  const hasAny = care.skill || care.micro_goal || care.psychoedu || care.question
+  return { main, care: hasAny ? care : undefined }
+}
+
+/* ------------------------------------------------------------------ */
+function CareKitCard({ care }: { care: CareKit }) {
+  if (!care) return null
+  return (
+    <div className="mt-3 w-full max-w-[560px] rounded-2xl border border-slate-200/60 dark:border-slate-700/60 bg-white/80 dark:bg-slate-900/70 backdrop-blur p-4">
+      <div className="text-xs tracking-wide uppercase text-slate-500 dark:text-slate-400 mb-2">Care Kit</div>
+      <ul className="space-y-1.5 text-sm text-slate-700 dark:text-slate-200">
+        {care.skill && <li><span className="opacity-70 mr-1.5">Try:</span>{care.skill}</li>}
+        {care.micro_goal && <li><span className="opacity-70 mr-1.5">Micro:</span>{care.micro_goal}</li>}
+        {care.psychoedu && <li><span className="opacity-70 mr-1.5">Note:</span>{care.psychoedu}</li>}
+        {care.question && <li><span className="opacity-70 mr-1.5">Question:</span>{care.question}</li>}
+      </ul>
+    </div>
+  )
+}
+
+/* ------------------------------------------------------------------ */
 function MessageBubble({ message }: { message: Message }) {
   const { user } = useUser()
   const isUser = message.sender === "user"
 
-  const getSlurpyDisplay = () => {
-    // Always use Bot icon instead of emojis
-    return <Bot className="w-4 h-4 text-white" />
-  }
+  const getSlurpyDisplay = () => <Bot className="w-4 h-4 text-white" />
+
+  const { main, care } = useMemo(() => {
+    if (!isUser && typeof message.content === "string") return parseCareKit(message.content)
+    return { main: message.content as string, care: undefined }
+  }, [isUser, message.content])
 
   return (
     <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }} className={`flex gap-3 ${isUser ? "justify-end" : "justify-start"} mb-6`}>
@@ -247,7 +263,8 @@ function MessageBubble({ message }: { message: Message }) {
               : "bg-slate-50/90 dark:bg-slate-900/90 text-slate-800 dark:text-slate-100 backdrop-blur-sm"
           }`}
         >
-          <p className="font-rubik leading-relaxed whitespace-pre-wrap">{message.content}</p>
+          <p className="font-rubik leading-relaxed whitespace-pre-wrap">{main}</p>
+          {!isUser && care && <CareKitCard care={care} />}
         </div>
         <div className="flex items-center gap-2 mt-1 px-2">
           <span className="text-xs text-slate-400 dark:text-slate-400 font-rubik">
@@ -255,7 +272,7 @@ function MessageBubble({ message }: { message: Message }) {
           </span>
           {!isUser && message.modes && message.modes.length > 0 && (
             <span className="text-xs text-slate-400 dark:text-slate-400 font-rubik">
-              • {message.modes.map((id) => PERSONALITY_MODES.find((m) => m.id === id)?.name).join(" + ")}
+              • {message.modes.map((id) => PERSONA_MODES.find((m) => m.id === id)?.name).join(" + ")}
             </span>
           )}
         </div>
@@ -263,7 +280,7 @@ function MessageBubble({ message }: { message: Message }) {
 
       {isUser && (
         <div className="w-8 h-8 bg-gradient-to-br from-zinc-400 via-stone-400 to-slate-400 dark:from-zinc-500 dark:via-stone-500 dark:to-slate-500 flex-shrink-0 rounded-full flex items-center justify-center overflow-hidden shadow-lg">
-          {user?.imageUrl ? <img src={user.imageUrl} alt="Profile" className="w-full h-full object-cover" /> : <User className="w-4 h-4 text-white" />}
+          {user?.imageUrl ? <img src={user.imageUrl} alt="" className="w-full h-full object-cover" /> : <User className="w-4 h-4 text-white" />}
         </div>
       )}
     </motion.div>
@@ -279,15 +296,15 @@ function ChatInputArea({
   isTyping: boolean
   handleSend: () => void
   onKeyDown: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void
-  currentModes: string[]
-  onModesChange: (modes: string[]) => void
+  currentModes: ModeId[]
+  onModesChange: (modes: ModeId[]) => void
 }) {
   const [modesOpen, setModesOpen] = useState(false)
 
-  const toggleMode = (modeId: string) => {
+  const toggleMode = (modeId: ModeId) => {
     const newModes = currentModes.includes(modeId)
-      ? currentModes.filter((id) => id !== modeId)
-      : [...currentModes, modeId]
+      ? (currentModes.filter((id) => id !== modeId) as ModeId[])
+      : ([...currentModes, modeId] as ModeId[])
     onModesChange(newModes)
   }
 
@@ -318,7 +335,7 @@ function ChatInputArea({
               <AnimatePresence>
                 {modesOpen && (
                   <motion.div className="flex gap-2" initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} transition={{ duration: 0.3, ease: "easeOut" }}>
-                    {PERSONALITY_MODES.map((mode) => (
+                    {PERSONA_MODES.map((mode) => (
                       <motion.button
                         key={mode.id}
                         onClick={() => toggleMode(mode.id)}
@@ -409,8 +426,8 @@ export default function SlurpyChatPage() {
   const addMessage = useChatStore((s) => s.addMessage)
   const sessionId = useChatStore((s) => s.sessionId)
   const setSessionId = useChatStore((s) => s.setSessionId)
-  const currentModes = useChatStore((s) => s.currentModes)
-  const setCurrentModes = useChatStore((s) => s.setCurrentModes)
+  const currentModes = useChatStore((s) => s.currentModes) as ModeId[]
+  const setCurrentModes = useChatStore((s) => s.setCurrentModes as (m: ModeId[]) => void)
   const hasStartedChat = useChatStore((s) => s.hasStartedChat)
   const setHasStartedChat = useChatStore((s) => s.setHasStartedChat)
   const resetForUser = useChatStore((s) => s.resetForUser)
@@ -425,38 +442,48 @@ export default function SlurpyChatPage() {
     resetForUser(user?.id ?? null)
   }, [user?.id, resetForUser])
 
+  // finalize session on unload
+  useEffect(() => {
+    const sid = sessionId
+    if (!sid) return
+    const handler = () => {
+      // collect last 3 emotion hints from assistant
+      const hints = messages
+        .filter(m => m.sender !== "user" && m.emotion)
+        .slice(-3)
+        .map(m => ({ label: m.emotion as string }))
+      finalizeSession(sid, { lastEmotions: hints })
+    }
+    window.addEventListener("beforeunload", handler)
+    return () => window.removeEventListener("beforeunload", handler)
+  }, [sessionId, messages])
+
   const handleSuggestionClick = (suggestion: string) => {
     setInput(suggestion)
     handleSend(suggestion)
   }
 
-  const handleModesChange = (newModes: string[]) => {
+  const handleModesChange = (newModes: ModeId[]) => {
     setCurrentModes(newModes)
     if (hasStartedChat && newModes.length > 0) {
-      // Show popup instead of adding message to chat
       setPopupModes(newModes)
       setShowModePopup(true)
-      
-      // Auto-hide after 4 seconds
-      setTimeout(() => {
-        setShowModePopup(false)
-      }, 4000)
+      setTimeout(() => setShowModePopup(false), 4000)
     }
   }
 
   // Typewriter that stays local, then commits a final message to the store
-  const typewriterCommit = (finalText: string, meta: { emotion?: string; modes?: string[] }) =>
+  const typewriterCommit = (finalText: string, meta: { emotion?: string; modes?: ModeId[] }) =>
     new Promise<void>((resolve) => {
       const text = cleanLLMText(finalText)
       setLiveText("") // show live bubble
       let i = 0
       const tick = () => {
-        i += Math.max(1, Math.floor(text.length / 80)) // faster for longer text
+        i += Math.max(1, Math.floor(text.length / 80))
         setLiveText(text.slice(0, i))
         if (i < text.length) {
-          setTimeout(tick, 18) // ~55 cps
+          setTimeout(tick, 18)
         } else {
-          // commit to store
           addMessage({
             id: `${Date.now()}-${Math.random()}`,
             content: text,
@@ -482,27 +509,14 @@ export default function SlurpyChatPage() {
       (typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`)
     if (!sessionId) setSessionId(sid)
 
-    // Auto-support mode if empty
-    const supportKeywords = ["help me", "feel better", "sad", "depressed", "anxious", "stressed", "tired", "overwhelmed", "angry", "mad", "furious"]
-    const needsSupport = typeof textToSend === "string" && supportKeywords.some((k) => textToSend.toLowerCase().includes(k))
-    let modesToUse = currentModes
-    if (currentModes.length === 0 && needsSupport) {
-      modesToUse = ["friend"]
-      setCurrentModes(["friend"])
-    }
-
     setIsTyping(true)
 
     // Persist user message (non-blocking)
     void persistMessage({ sessionId: sid, message: textToSend, role: "user" })
 
     try {
-      const data = await sendToSlurpy(textToSend, sid, modesToUse)
-
-      // Typewriter live bubble, then commit final message
+      const data = await sendToSlurpy(textToSend, sid, currentModes)
       await typewriterCommit(data.message, { emotion: data.emotion, modes: data.modes })
-
-      // Persist assistant (best effort)
       void persistMessage({ sessionId: sid, message: data.message, role: "assistant", emotion: data.emotion ?? null })
     } catch (err) {
       console.error(err)
@@ -515,6 +529,32 @@ export default function SlurpyChatPage() {
       })
     } finally {
       setIsTyping(false)
+    }
+  }
+
+  async function persistMessage(opts: {
+    sessionId: string
+    message: string
+    role: "user" | "assistant"
+    emotion?: string | null
+    intensity?: number | null
+    topics?: string[]
+  }) {
+    try {
+      await fetch("/api/insights", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sessionId: opts.sessionId,
+          message: opts.message,
+          role: opts.role,
+          emotion: opts.emotion ?? null,
+          intensity: typeof opts.intensity === "number" ? Math.min(1, Math.max(0, opts.intensity)) : null,
+          topics: Array.isArray(opts.topics) ? opts.topics : [],
+        }),
+      })
+    } catch (e) {
+      console.warn("persistMessage failed:", e)
     }
   }
 
@@ -538,8 +578,8 @@ export default function SlurpyChatPage() {
     })
     setInput("")
 
-    // JITAI detection for anxiety & anger lanes with short cooldown
-    const state = detectState(textToSend) // "anxious" | "heated" | ...
+    // JITAI detection with cooldown
+    const state = detectState(textToSend)
     const COOLDOWN_MS = 30_000
     const now = Date.now()
     const dropAllowedLocally = !lastDropAt || now - lastDropAt > COOLDOWN_MS
@@ -547,11 +587,9 @@ export default function SlurpyChatPage() {
       setDrop({ state, phase: "offer" })
       setPendingText(textToSend)
       setLastDropAt(now)
-      // Do NOT call the model yet — wait for Start or Skip
       return
     }
 
-    // Otherwise proceed normally
     await proceedSend(textToSend)
   }
 
@@ -577,8 +615,7 @@ export default function SlurpyChatPage() {
     const text = pendingText
     setDrop(null)
     setPendingText(null)
-    // brief check-in from assistant, then send original
-    await typewriterCommit("nice. what feels 1% lighter right now?", { modes: ["therapist"] })
+    await typewriterCommit("nice. what feels 1% lighter right now?", { modes: [] as ModeId[]})
     if (text) await proceedSend(text)
   }
 
@@ -588,9 +625,7 @@ export default function SlurpyChatPage() {
       
       {/* Mode Change Popup */}
       <AnimatePresence>
-        {showModePopup && (
-          <ModeChangePopup modes={popupModes} />
-        )}
+        {showModePopup && <ModeChangePopup modes={popupModes} />}
       </AnimatePresence>
 
       <div className={`flex h-screen transition-all duration-300 ${sidebarOpen ? "ml-64" : "ml-16"}`}>
@@ -603,7 +638,7 @@ export default function SlurpyChatPage() {
             <ThemeToggle />
           </div>
 
-          {/* Main content — left aligned lane (not centered) */}
+          {/* Main content — left aligned lane */}
           <div className="flex-1 flex flex-col justify-start px-6 overflow-hidden">
             {!hasStartedChat ? (
               <div className="max-w-4xl mx-auto text-center my-auto">
@@ -645,7 +680,6 @@ export default function SlurpyChatPage() {
                   {drop && drop.phase === "exercise" && (
                     <div className="flex justify-start mb-6">
                       <div className="relative max-w-[720px] w-full rounded-2xl overflow-hidden">
-                        {/* top-left controls */}
                         <div className="absolute left-4 top-4 z-10 flex items-center gap-2">
                           <Button
                             size="sm"
@@ -667,7 +701,6 @@ export default function SlurpyChatPage() {
                           </Button>
                         </div>
 
-                        {/* exercise content */}
                         <BreathingInline
                           onDone={() => { void finishExercise() }}
                           onCancel={() => { void skipExercise() }}
