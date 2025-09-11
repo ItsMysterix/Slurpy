@@ -16,51 +16,67 @@ function sb() {
 }
 
 /* --------------------------------- types -------------------------------- */
+// NOTE: These match your DB (snake_case)
 type DateRange = { start: Date; end: Date };
 type WeeklyTrend = { day: string; mood: number; sessions: number; date: string };
 type EmotionBreakdown = { emotion: string; count: number; percentage: number; color: string };
 type Insight = { title: string; description: string; icon: string; trend: "positive" | "neutral" | "negative" };
+
 type CurrentSession = {
-  duration: string;
-  messagesExchanged: number;
+  duration: string;               // aggregated mins across sessions in window (approx.)
+  messagesExchanged: number;      // total msgs in window
   dominantEmotion: string;
-  emotionIntensity: number;
+  emotionIntensity: number;       // 0..1 normalized then rounded to 0.1
   fruit: string;
   topics: string[];
 };
 
+// chat_messages columns
 type ChatMessageRow = {
-  sessionId: string;
-  userId: string;
+  session_id: string;
+  user_id: string;
   role: string;
   content: string;
   emotion: string | null;
-  intensity: number | null;
-  timestamp: string; // ISO
-  topics: string[] | null;
+  intensity: number | null;       // may be 0..1 or 1..10
+  created_at: string;             // ISO
+  themes: unknown | null;         // jsonb (array/object/nullable)
 };
 
+// chat_sessions columns
 type ChatSessionRow = {
-  id: string;
-  sessionId: string;
-  userId: string;
-  startTime: string; // ISO
-  endTime: string | null; // ISO
-  duration: number | null; // minutes
-  messageCount: number;
+  session_id: string;
+  user_id: string;
+  started_at: string;             // ISO (timestamptz)
+  last_emotion: string | null;
+  themes: unknown | null;         // jsonb
+  message_count: number | null;
 };
 
 /* -------------------------------- helpers -------------------------------- */
-function parseTopics(topics: unknown): string[] {
-  if (Array.isArray(topics)) return topics.filter((t): t is string => typeof t === "string");
-  if (typeof topics === "string") {
+function parseTopics(themes: unknown): string[] {
+  // Accept arrays of strings, stringified JSON, or objects with "topics" array
+  if (Array.isArray(themes)) return themes.filter((t): t is string => typeof t === "string");
+
+  if (typeof themes === "string") {
     try {
-      const parsed = JSON.parse(topics);
-      return Array.isArray(parsed) ? parsed.filter((t): t is string => typeof t === "string") : [];
+      const parsed = JSON.parse(themes);
+      return parseTopics(parsed);
     } catch {
       return [];
     }
   }
+
+  if (themes && typeof themes === "object") {
+    const maybeTopics = (themes as any).topics;
+    if (Array.isArray(maybeTopics)) {
+      return maybeTopics.filter((t: any): t is string => typeof t === "string");
+    }
+    // Also accept an object of {tag: weight} → keys as topics
+    const keys = Object.keys(themes as object);
+    if (keys.length && keys.every((k) => typeof k === "string")) return keys.slice(0, 20);
+  }
+
   return [];
 }
 
@@ -80,7 +96,7 @@ function getDateRange(timeframe: string): DateRange {
     case "day":
       return { start: today, end: addDays(today, 1) };
     case "week": {
-      const start = addDays(today, -today.getDay()); // Sun
+      const start = addDays(today, -today.getDay()); // Sunday
       return { start, end: addDays(start, 7) };
     }
     case "month": {
@@ -159,7 +175,7 @@ function generateHeuristicInsights(messages: ChatMessageRow[], sessions: ChatSes
     }
   }
 
-  const topics = [...new Set(messages.flatMap((m) => parseTopics(m.topics)))];
+  const topics = [...new Set(messages.flatMap((m) => parseTopics(m.themes)))];
   if (topics.length >= 6) {
     out.push({ title: "Diverse Topics", description: `Covered ${topics.length} topics recently.`, icon: "Brain", trend: "positive" });
   }
@@ -183,83 +199,84 @@ export async function GET(req: NextRequest) {
     const startISO = start.toISOString();
     const endISO = end.toISOString();
 
-    // Sessions within window
+    // Sessions within window (match YOUR schema)
     const { data: sessions, error: sessErr } = await supabase
-      .from("ChatSession")
-      .select("id,sessionId,userId,startTime,endTime,duration,messageCount")
-      .eq("userId", userId)
-      .gte("startTime", startISO)
-      .lt("startTime", endISO)
-      .order("startTime", { ascending: false });
+      .from("chat_sessions")
+      .select("session_id,user_id,started_at,last_emotion,themes,message_count")
+      .eq("user_id", userId)
+      .gte("started_at", startISO)
+      .lt("started_at", endISO)
+      .order("started_at", { ascending: false });
+
     if (sessErr) throw sessErr;
 
-    // Messages within window (filter by timestamp)
+    // Messages within window (created_at filter)
     const { data: messages, error: msgErr } = await supabase
-      .from("ChatMessage")
-      .select("sessionId,userId,role,content,emotion,intensity,timestamp,topics")
-      .eq("userId", userId)
-      .gte("timestamp", startISO)
-      .lt("timestamp", endISO)
-      .order("timestamp", { ascending: false });
+      .from("chat_messages")
+      .select("session_id,user_id,role,content,emotion,intensity,created_at,themes")
+      .eq("user_id", userId)
+      .gte("created_at", startISO)
+      .lt("created_at", endISO)
+      .order("created_at", { ascending: false });
+
     if (msgErr) throw msgErr;
 
     const msgs: ChatMessageRow[] = (messages || []) as ChatMessageRow[];
     const sess: ChatSessionRow[] = (sessions || []) as ChatSessionRow[];
 
     /* ---------------------- Current session summary ---------------------- */
-    let currentSession: CurrentSession = {
-      duration: "0 minutes",
-      messagesExchanged: 0,
-      dominantEmotion: "neutral",
-      emotionIntensity: 5,
-      fruit: "🍋",
-      topics: [],
-    };
-
-    if (sess.length || msgs.length) {
-      // total duration
-      const totalDuration: number = sess.reduce<number>((acc: number, s: ChatSessionRow) => {
-        if (typeof s.duration === "number") return acc + s.duration;
-        const endTime = s.endTime ? new Date(s.endTime) : new Date();
-        const mins = Math.max(0, Math.round((+endTime - +new Date(s.startTime)) / 60000));
-        return acc + mins;
-      }, 0);
-
-      // dominant emotion
-      const emotionList: string[] = msgs
-        .map((m) => m.emotion)
-        .filter((e): e is string => typeof e === "string");
-      const counts = emotionList.reduce<Record<string, number>>((a, e) => {
-        a[e] = (a[e] || 0) + 1;
-        return a;
-      }, {});
-      const dominantEmotion = Object.entries(counts).sort(([, a], [, b]) => (b as number) - (a as number))[0]?.[0] || "neutral";
-
-      // average intensity for dominant emotion (normalize to 0..1 if needed)
-      const intensities: number[] = msgs
-        .filter((m) => m.emotion === dominantEmotion && typeof m.intensity === "number")
-        .map((m) => {
-          const v = m.intensity as number;
-          // if looks like 1..10, normalize
-          return v > 1.0001 ? Math.max(1, Math.min(10, v)) / 10 : Math.max(0, Math.min(1, v));
-        });
-
-      const avgIntensity01 =
-        intensities.length > 0
-          ? intensities.reduce<number>((a: number, b: number) => a + b, 0) / intensities.length
-          : 0.5;
-
-      const topics: string[] = [...new Set(msgs.flatMap((m) => parseTopics(m.topics)))].slice(0, 8);
-
-      currentSession = {
-        duration: totalDuration > 60 ? `${Math.floor(totalDuration / 60)}h ${totalDuration % 60}m` : `${totalDuration} minutes`,
-        messagesExchanged: msgs.length,
-        dominantEmotion,
-        emotionIntensity: Math.round(avgIntensity01 * 10) / 10,
-        fruit: getFruitForEmotion(dominantEmotion),
-        topics,
-      };
+    // We'll approximate "duration" by grouping messages per session and summing (max(created_at) - min(created_at)).
+    // If a session has only a start and no messages, we treat duration as 0 for this window.
+    let totalMinutes = 0;
+    if (msgs.length) {
+      const bySession = new Map<string, ChatMessageRow[]>();
+      for (const m of msgs) {
+        const arr = bySession.get(m.session_id) || [];
+        arr.push(m);
+        bySession.set(m.session_id, arr);
+      }
+      for (const arr of bySession.values()) {
+        const times = arr.map((m) => +new Date(m.created_at)).sort((a, b) => a - b);
+        if (times.length >= 2) {
+          totalMinutes += Math.max(0, Math.round((times[times.length - 1] - times[0]) / 60000));
+        }
+      }
     }
+
+    // dominant emotion from messages in window
+    const emotionList: string[] = msgs
+      .map((m) => m.emotion)
+      .filter((e): e is string => typeof e === "string");
+    const counts = emotionList.reduce<Record<string, number>>((a, e) => {
+      a[e] = (a[e] || 0) + 1;
+      return a;
+    }, {});
+    const dominantEmotion = Object.entries(counts).sort(([, a], [, b]) => (b as number) - (a as number))[0]?.[0] || "neutral";
+
+    // average intensity for dominant emotion (normalize to 0..1 if needed)
+    const intensities: number[] = msgs
+      .filter((m) => m.emotion === dominantEmotion && typeof m.intensity === "number")
+      .map((m) => {
+        const v = m.intensity as number;
+        // normalize 1..10 → 0..1 if needed
+        return v > 1.0001 ? Math.max(1, Math.min(10, v)) / 10 : Math.max(0, Math.min(1, v));
+      });
+
+    const avgIntensity01 =
+      intensities.length > 0
+        ? intensities.reduce<number>((a: number, b: number) => a + b, 0) / intensities.length
+        : 0.5;
+
+    const topics: string[] = [...new Set(msgs.flatMap((m) => parseTopics(m.themes)))].slice(0, 8);
+
+    const currentSession: CurrentSession = {
+      duration: totalMinutes > 60 ? `${Math.floor(totalMinutes / 60)}h ${totalMinutes % 60}m` : `${totalMinutes} minutes`,
+      messagesExchanged: msgs.length,
+      dominantEmotion,
+      emotionIntensity: Math.round(avgIntensity01 * 10) / 10,
+      fruit: getFruitForEmotion(dominantEmotion),
+      topics,
+    };
 
     /* ----------------------------- Trends ------------------------------- */
     const weeklyTrends: WeeklyTrend[] = [];
@@ -270,11 +287,11 @@ export async function GET(req: NextRequest) {
         const dayEnd = addDays(dayStart, 1);
 
         const dayMsgs = msgs.filter((m) => {
-          const t = new Date(m.timestamp);
+          const t = new Date(m.created_at);
           return t >= dayStart && t < dayEnd;
         });
         const daySessions = sess.filter((s) => {
-          const t = new Date(s.startTime);
+          const t = new Date(s.started_at);
           return t >= dayStart && t < dayEnd;
         });
 
@@ -300,7 +317,7 @@ export async function GET(req: NextRequest) {
         });
       }
     } else {
-      // coarse for month/year
+      // coarse buckets for month/year
       const buckets = timeframe === "month" ? 4 : 12;
       for (let i = 0; i < buckets; i++) {
         const segStart =
@@ -313,7 +330,7 @@ export async function GET(req: NextRequest) {
             : new Date(start.getFullYear(), i + 1, 1);
 
         const segMsgs = msgs.filter((m) => {
-          const t = new Date(m.timestamp);
+          const t = new Date(m.created_at);
           return t >= segStart && t < segEnd;
         });
         const scored = segMsgs
@@ -334,7 +351,7 @@ export async function GET(req: NextRequest) {
             : new Date(start.getFullYear(), i).toLocaleDateString("en-US", { month: "short" }),
           mood: Math.round(segScore),
           sessions: sess.filter((s) => {
-            const t = new Date(s.startTime);
+            const t = new Date(s.started_at);
             return t >= segStart && t < segEnd;
           }).length,
           date: segStart.toISOString().split("T")[0],
@@ -349,7 +366,7 @@ export async function GET(req: NextRequest) {
       }
       return acc;
     }, {});
-    const totalEmotionMsgs = (Object.values(emotionCounts) as number[]).reduce((a, b) => a + b, 0);
+    const totalEmotionMsgs = Object.values(emotionCounts).reduce((a, b) => a + b, 0);
 
     const emotionBreakdown: EmotionBreakdown[] = Object.entries(emotionCounts)
       .map(([emotion, count]) => ({
@@ -379,7 +396,7 @@ export async function GET(req: NextRequest) {
         counts: { sessions: sess.length, messages: msgs.length },
         sample: {
           message: msgs[0] ?? null,
-          session: sess[0]?.sessionId ?? null,
+          session: sess[0]?.session_id ?? null,
         },
       };
     }

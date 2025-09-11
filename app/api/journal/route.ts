@@ -12,41 +12,75 @@ import { randomUUID } from "crypto";
 function sb() {
   const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE; // server-only
-  console.log("[journal/sb] url?", !!url, "service?", !!key);
   if (!url || !key) throw new Error("Missing SUPABASE_URL / SUPABASE_SERVICE_ROLE env");
   return createClient(url, key, { auth: { persistSession: false } });
 }
 
 /* ----------------------------- helpers -------------------------------- */
+type Flavor = "snake" | "camel";
+type TableInfo = { name: "journal_entries" | "JournalEntry"; flavor: Flavor };
+
+async function detectTable(client: ReturnType<typeof sb>): Promise<TableInfo> {
+  // Prefer snake_case; fallback to CamelCase
+  const trySelect = async (table: string) =>
+    client.from(table).select("id").limit(1);
+
+  let r = await trySelect("journal_entries");
+  if (!r.error) return { name: "journal_entries", flavor: "snake" };
+
+  r = await trySelect("JournalEntry");
+  if (!r.error) return { name: "JournalEntry", flavor: "camel" };
+
+  throw new Error("Neither journal_entries nor JournalEntry table exists");
+}
+
 function normalizeTags(input: unknown): string[] {
   if (Array.isArray(input)) return input.map(String).map(t => t.trim()).filter(Boolean);
   if (typeof input === "string") return input.split(",").map(t => t.trim()).filter(Boolean);
   return [];
 }
 
-function shape(entry: any) {
+function shapeOut(row: any) {
+  // Normalize DB row (either schema) → API shape
   return {
-    id: entry.id,
-    title: entry.title,
-    content: entry.content,
-    mood: entry.mood ?? null,
-    fruit: entry.fruit ?? null,
-    tags: Array.isArray(entry.tags) ? entry.tags : [],
-    userId: entry.userId,
-    createdAt: entry.createdAt ? new Date(entry.createdAt) : null,
-    updatedAt: entry.updatedAt ? new Date(entry.updatedAt) : null,
-    date: entry.date ? new Date(entry.date) : (entry.createdAt ? new Date(entry.createdAt) : null),
+    id: row.id,
+    title: row.title ?? null,
+    content: row.content ?? null,
+    mood: row.mood ?? null,
+    fruit: row.fruit ?? null,
+    tags: Array.isArray(row.tags) ? row.tags : [],
+    userId: row.userId ?? row.user_id ?? null,
+    createdAt: row.createdAt ? new Date(row.createdAt) :
+               row.created_at ? new Date(row.created_at) : null,
+    updatedAt: row.updatedAt ? new Date(row.updatedAt) :
+               row.updated_at ? new Date(row.updated_at) : null,
+    date: row.date ? new Date(row.date) :
+          row.createdAt ? new Date(row.createdAt) :
+          row.created_at ? new Date(row.created_at) : null,
   };
 }
 
-async function findEntryByIdForUser(client: ReturnType<typeof sb>, id: string, userId: string) {
+async function findEntryByIdForUser(
+  client: ReturnType<typeof sb>,
+  table: TableInfo,
+  id: string,
+  userId: string
+) {
+  const cols =
+    table.flavor === "snake"
+      ? "id,title,content,mood,fruit,tags,user_id,created_at,updated_at,date"
+      : "id,title,content,mood,fruit,tags,userId,createdAt,updatedAt,date";
+
+  const userCol = table.flavor === "snake" ? "user_id" : "userId";
+
   const { data, error } = await client
-    .from("JournalEntry")
-    .select("id,title,content,mood,fruit,tags,userId,createdAt,updatedAt,date")
-    .eq("userId", userId)
+    .from(table.name)
+    .select(cols)
+    .eq(userCol, userId)
     .eq("id", id)
-    .single();
-  if (error) return null;
+    .maybeSingle();
+
+  if (error || !data) return null;
   return data;
 }
 
@@ -58,6 +92,8 @@ export async function GET(req: NextRequest) {
     if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     const client = sb();
+    const table = await detectTable(client);
+
     const url = new URL(req.url);
     const id = url.searchParams.get("id");
     const requestedUserId = url.searchParams.get("userId");
@@ -66,21 +102,29 @@ export async function GET(req: NextRequest) {
     }
 
     if (id) {
-      const row = await findEntryByIdForUser(client, id, userId);
+      const row = await findEntryByIdForUser(client, table, id, userId);
       if (!row) return NextResponse.json({ error: "Not found" }, { status: 404 });
-      return NextResponse.json(shape(row));
+      return NextResponse.json(shapeOut(row));
     }
 
-    // Prefer DB ordering; fall back to JS sort safety
+    const cols =
+      table.flavor === "snake"
+        ? "id,title,content,mood,fruit,tags,user_id,created_at,updated_at,date"
+        : "id,title,content,mood,fruit,tags,userId,createdAt,updatedAt,date";
+
+    const userCol = table.flavor === "snake" ? "user_id" : "userId";
+    const createdCol = table.flavor === "snake" ? "created_at" : "createdAt";
+
     const { data, error } = await client
-      .from("JournalEntry")
-      .select("id,title,content,mood,fruit,tags,userId,createdAt,updatedAt,date")
-      .eq("userId", userId)
+      .from(table.name)
+      .select(cols)
+      .eq(userCol, userId)
       .order("date", { ascending: false, nullsFirst: false })
-      .order("createdAt", { ascending: false, nullsFirst: false });
+      .order(createdCol, { ascending: false, nullsFirst: false });
+
     if (error) throw error;
 
-    return NextResponse.json((data ?? []).map(shape));
+    return NextResponse.json((data ?? []).map(shapeOut));
   } catch (e) {
     console.error("GET /api/journal error:", e);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
@@ -95,6 +139,7 @@ export async function POST(req: NextRequest) {
     if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     const client = sb();
+    const table = await detectTable(client);
     const body = await req.json();
 
     const title = String(body?.title ?? "").trim();
@@ -103,7 +148,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "title and content are required" }, { status: 400 });
     }
 
-    // JournalEntry.date is NOT NULL → provide one
+    // Provide a date (column is NOT NULL in your camel schema)
     let dateVal: Date = new Date();
     if (body?.date) {
       const maybe = new Date(body.date);
@@ -111,29 +156,50 @@ export async function POST(req: NextRequest) {
     }
 
     const nowIso = new Date().toISOString();
-    const id = randomUUID(); // <-- REQUIRED: table id is TEXT NOT NULL
+    const id = randomUUID(); // <-- REQUIRED: id is TEXT (no default) in your schema
+
+    const payload =
+      table.flavor === "snake"
+        ? {
+            id,
+            user_id: userId,
+            title,
+            content,
+            mood: body?.mood ? String(body.mood) : null,
+            fruit: body?.fruit ? String(body.fruit) : null,
+            tags: normalizeTags(body?.tags),
+            date: dateVal.toISOString(),
+            created_at: nowIso,
+            updated_at: nowIso,
+            // is_private?: true  // add if your snake table has it
+          }
+        : {
+            id,
+            userId,
+            title,
+            content,
+            mood: body?.mood ? String(body.mood) : null,
+            fruit: body?.fruit ? String(body.fruit) : null,
+            tags: normalizeTags(body?.tags),
+            date: dateVal.toISOString(),
+            createdAt: nowIso,
+            updatedAt: nowIso,
+            isPrivate: true,
+          };
+
+    const cols =
+      table.flavor === "snake"
+        ? "id,title,content,mood,fruit,tags,user_id,created_at,updated_at,date"
+        : "id,title,content,mood,fruit,tags,userId,createdAt,updatedAt,date";
 
     const { data, error } = await client
-      .from("JournalEntry")
-      .insert([
-        {
-          userId,
-          title,
-          content,
-          mood: body?.mood ? String(body.mood) : null,
-          fruit: body?.fruit ? String(body.fruit) : null,
-          tags: normalizeTags(body?.tags),
-          date: dateVal.toISOString(),
-          createdAt: nowIso,
-          updatedAt: nowIso,
-          isPrivate: true,
-        },
-      ])
-      .select("id,title,content,mood,fruit,tags,userId,createdAt,updatedAt,date")
+      .from(table.name)
+      .insert([payload])
+      .select(cols)
       .single();
 
     if (error) throw error;
-    return NextResponse.json(shape(data), { status: 201 });
+    return NextResponse.json(shapeOut(data), { status: 201 });
   } catch (e) {
     console.error("POST /api/journal error:", e);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
@@ -148,11 +214,12 @@ export async function PUT(req: NextRequest) {
     if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     const client = sb();
+    const table = await detectTable(client);
     const body = await req.json();
     const id = String(body?.id ?? "").trim();
     if (!id) return NextResponse.json({ error: "id is required" }, { status: 400 });
 
-    const existing = await findEntryByIdForUser(client, id, userId);
+    const existing = await findEntryByIdForUser(client, table, id, userId);
     if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
     const title = body?.title !== undefined ? String(body.title).trim() : existing.title;
@@ -167,26 +234,44 @@ export async function PUT(req: NextRequest) {
       if (!isNaN(d.getTime())) datePatch = d.toISOString();
     }
 
-    const updatePayload: any = {
-      title,
-      content,
-      mood: body?.mood !== undefined ? (body.mood ? String(body.mood) : null) : existing.mood,
-      fruit: body?.fruit !== undefined ? (body.fruit ? String(body.fruit) : null) : existing.fruit,
-      tags: body?.tags !== undefined ? normalizeTags(body.tags) : existing.tags,
-      updatedAt: new Date().toISOString(),
-      ...(datePatch ? { date: datePatch } : {}),
-    };
+    const nowIso = new Date().toISOString();
+    const updatePayload =
+      table.flavor === "snake"
+        ? {
+            title,
+            content,
+            mood: body?.mood !== undefined ? (body.mood ? String(body.mood) : null) : existing.mood,
+            fruit: body?.fruit !== undefined ? (body.fruit ? String(body.fruit) : null) : existing.fruit,
+            tags: body?.tags !== undefined ? normalizeTags(body.tags) : (existing.tags ?? []),
+            updated_at: nowIso,
+            ...(datePatch ? { date: datePatch } : {}),
+          }
+        : {
+            title,
+            content,
+            mood: body?.mood !== undefined ? (body.mood ? String(body.mood) : null) : existing.mood,
+            fruit: body?.fruit !== undefined ? (body.fruit ? String(body.fruit) : null) : existing.fruit,
+            tags: body?.tags !== undefined ? normalizeTags(body.tags) : (existing.tags ?? []),
+            updatedAt: nowIso,
+            ...(datePatch ? { date: datePatch } : {}),
+          };
+
+    const userCol = table.flavor === "snake" ? "user_id" : "userId";
+    const cols =
+      table.flavor === "snake"
+        ? "id,title,content,mood,fruit,tags,user_id,created_at,updated_at,date"
+        : "id,title,content,mood,fruit,tags,userId,createdAt,updatedAt,date";
 
     const { data, error } = await client
-      .from("JournalEntry")
-      .update(updatePayload)
+      .from(table.name)
+      .update(updatePayload as any)
       .eq("id", id)
-      .eq("userId", userId)
-      .select("id,title,content,mood,fruit,tags,userId,createdAt,updatedAt,date")
+      .eq(userCol, userId)
+      .select(cols)
       .single();
 
     if (error) throw error;
-    return NextResponse.json(shape(data));
+    return NextResponse.json(shapeOut(data));
   } catch (e) {
     console.error("PUT /api/journal error:", e);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
@@ -201,14 +286,16 @@ export async function DELETE(req: NextRequest) {
     if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     const client = sb();
+    const table = await detectTable(client);
     const url = new URL(req.url);
     const id = url.searchParams.get("id");
     if (!id) return NextResponse.json({ error: "id is required" }, { status: 400 });
 
-    const existing = await findEntryByIdForUser(client, id, userId);
+    const existing = await findEntryByIdForUser(client, table, id, userId);
     if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-    const { error } = await client.from("JournalEntry").delete().eq("id", id).eq("userId", userId);
+    const userCol = table.flavor === "snake" ? "user_id" : "userId";
+    const { error } = await client.from(table.name).delete().eq("id", id).eq(userCol, userId);
     if (error) throw error;
 
     return NextResponse.json({ success: true });

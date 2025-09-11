@@ -87,26 +87,27 @@ export async function POST(_req: NextRequest) {
 
     // 1) Purge app data in Supabase
     const supabase = sb();
-    const supabaseTables = [
-      "ChatMessage",
-      "ChatSession",
-      "DailyMood",
-      "Journal",
-      "Plans",
-      "RoleplayTurns",
-      "RoleplayLog",
-      "KVMemory",
-      "UserMemory",
-      "EmotionQuadrant",
-      "Quadrant",
-      "QuadrantLog",
-      "MoodQuadrant",
-      "Analytics",
-    ];
-    const sbResults = [];
-    for (const t of supabaseTables) {
-      sbResults.push(await tryDeleteAll(supabase, t, userId));
-    }
+const supabaseTables = [
+  "chat_messages",
+  "chat_sessions",
+  "daily_mood",
+  "journal_entries",
+  "plans",
+  "roleplay",
+  "reports",
+  "ufm",
+];
+const sbResults = [];
+for (const t of supabaseTables) {
+  try {
+    const { error } = await supabase.from(t).delete().eq("user_id", userId);
+    if (error) sbResults.push({ table: t, error: error.message });
+    else sbResults.push({ table: t, ok: true });
+  } catch (e: any) {
+    sbResults.push({ table: t, error: e?.message || "delete failed" });
+  }
+}
+
 
     // Optional: Supabase Storage (if you keep user files by folder userId/)
     // try { await supabase.storage.from("user-uploads").remove([`${userId}`]); } catch {}

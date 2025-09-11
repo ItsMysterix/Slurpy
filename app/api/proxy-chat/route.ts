@@ -1,4 +1,8 @@
 // app/api/proxy-chat/route.ts
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { cookies, headers } from "next/headers";
@@ -7,88 +11,79 @@ import { askRag } from "@/lib/rag";
 type ProxyChatBody = {
   text?: string;
   message?: string;
+  content?: string;
   session_id?: string;
-  mode?: string; // optional; backend has a default
+  sessionId?: string;
+  mode?: string; // optional; backend can default
 };
+
+function bad(status: number, error: string) {
+  return NextResponse.json({ error }, { status, headers: { "Cache-Control": "no-store" } });
+}
 
 export async function POST(req: NextRequest) {
   try {
-    // 1) Auth gate (must be signed in)
+    // 1) Auth gate
     const { userId, getToken } = await auth();
-    if (!userId) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    if (!userId) return bad(401, "Unauthorized");
 
     // 2) Parse body
-    let body: ProxyChatBody;
+    let body: ProxyChatBody | null = null;
     try {
       body = await req.json();
     } catch {
-      return NextResponse.json({ error: "Bad JSON" }, { status: 400 });
+      return bad(400, "Bad JSON");
     }
 
-    const text =
-      typeof body?.text === "string"
-        ? body.text
-        : typeof body?.message === "string"
-          ? body.message
-          : null;
+    const rawText =
+      (typeof body?.text === "string" ? body.text : undefined) ??
+      (typeof body?.message === "string" ? body.message : undefined) ??
+      (typeof body?.content === "string" ? body.content : undefined) ??
+      "";
 
-    if (!text || !text.trim()) {
-      return NextResponse.json({ error: "Field 'text' is required" }, { status: 400 });
-    }
+    const text = rawText.trim();
+    if (!text) return bad(400, "Field 'text' is required");
 
-    // 3) Resolve a Clerk session JWT to forward to the backend
+    const sessionId = (body?.session_id || body?.sessionId || "").trim() || undefined;
+
+    // 3) Resolve a Clerk session JWT to forward to backend
     // Priority: Authorization header → __session cookie → auth().getToken()
     const hdrs = await headers();
-    const authzHeader = hdrs.get("authorization") || hdrs.get("Authorization");
-
+    const authz = hdrs.get("authorization") || hdrs.get("Authorization");
     let clerkJwt = "";
-    if (authzHeader?.startsWith("Bearer ")) {
-      clerkJwt = authzHeader.slice("Bearer ".length);
-    } else {
-      const cookieStore = await cookies();
-      clerkJwt = cookieStore.get("__session")?.value ?? "";
-    }
 
+    if (authz?.startsWith("Bearer ")) {
+      clerkJwt = authz.slice("Bearer ".length).trim();
+    }
     if (!clerkJwt) {
-      // fallback: ask Clerk for a session token
+      const jar = await cookies();
+      clerkJwt = jar.get("__session")?.value ?? "";
+    }
+    if (!clerkJwt) {
       try {
         clerkJwt = (await getToken()) || "";
       } catch {
-        // ignore; we’ll handle if still empty below
+        // ignore
       }
     }
+    if (!clerkJwt) return bad(401, "Missing Clerk session token");
 
-    if (!clerkJwt) {
-      return NextResponse.json({ error: "Missing Clerk session token" }, { status: 401 });
-    }
-
-    // 4) Call backend via RAG helper (body.mode is optional; backend has a default)
-    // askRag(text, sessionId, clerkJwt)
-    const rag = await askRag(text, body.session_id, clerkJwt);
+    // 4) Call backend via RAG helper
+    // askRag(text, sessionId, clerkJwt)  // keep signature aligned with your helper
+    const ragResponse = await askRag(text, sessionId, clerkJwt /*, body?.mode */);
 
     // 5) Success
-    return NextResponse.json(rag);
+    return NextResponse.json(ragResponse, { headers: { "Cache-Control": "no-store" } });
   } catch (err: any) {
-    // Try to surface useful info without leaking secrets
-    const msg =
-      typeof err?.message === "string"
-        ? err.message
-        : "Internal error";
-
-    // If this is our wrapped backend error, it’ll look like:
-    // "[rag] backend error <code>: <json or text>"
+    const msg = typeof err?.message === "string" ? err.message : "Internal error";
     console.error("proxy-chat error:", msg);
-
     return NextResponse.json(
       {
         success: false,
         error: "Server error",
-        message:
-          "I'm sorry, I'm having trouble responding right now. Please try again.",
+        message: "I'm having trouble responding right now. Please try again.",
       },
-      { status: 500 }
+      { status: 500, headers: { "Cache-Control": "no-store" } }
     );
   }
 }

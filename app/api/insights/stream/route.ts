@@ -1,55 +1,62 @@
-import { NextRequest } from "next/server"
-import { auth } from "@clerk/nextjs/server"
-import { sseBus, InsightsUpdate } from "@/lib/sse-bus"
+// app/api/insights/stream/route.ts
+import { NextRequest } from "next/server";
+import { auth } from "@clerk/nextjs/server";
+import { sseBus, InsightsUpdate } from "@/lib/sse-bus";
 
-export const runtime = "nodejs"
-export const dynamic = "force-dynamic"
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
-function toSSE(data: string) {
-  return new TextEncoder().encode(data.endsWith("\n\n") ? data : data + "\n\n")
+const encoder = new TextEncoder();
+const MIN_PUSH_MS = 2000; // simple per-connection cooldown
+
+function toSSE(event: string, data: unknown) {
+  const payload = typeof data === "string" ? data : JSON.stringify(data);
+  return encoder.encode(`event: ${event}\ndata: ${payload}\n\n`);
 }
 
-// simple per-connection cooldown
-const MIN_PUSH_MS = 2000
-
 export async function GET(req: NextRequest) {
-  const { userId } = await auth()
-  if (!userId) return new Response("Unauthorized", { status: 401 })
+  const { userId } = await auth();
+  if (!userId) return new Response("Unauthorized", { status: 401 });
 
-  const { searchParams } = new URL(req.url)
+  const { searchParams } = new URL(req.url);
   const timeframe = (searchParams.get("timeframe") || "week") as
-    | "day" | "week" | "month" | "year"
+    | "day" | "week" | "month" | "year";
 
-  const stream = new ReadableStream({
+  const stream = new ReadableStream<Uint8Array>({
     start(controller) {
-      const send = (chunk: string) => controller.enqueue(toSSE(chunk))
-      let lastPush = 0
+      let lastPush = 0;
 
-      // open + heartbeat
-      send(`event: open\ndata: {"timeframe":"${timeframe}"}\n`)
+      // Open + heartbeat
+      controller.enqueue(toSSE("open", { timeframe }));
       const ping = setInterval(() => {
-        send(`event: ping\ndata: {"ts":${Date.now()}}\n`)
-      }, 20000) // 20s heartbeat
+        controller.enqueue(toSSE("ping", { ts: Date.now() }));
+      }, 20_000);
 
       const onUpdate = (payload: InsightsUpdate) => {
-        if (payload.userId !== userId) return
-        const now = Date.now()
-        if (now - lastPush < MIN_PUSH_MS) return
-        lastPush = now
-        send(
-          `event: update\ndata: ${JSON.stringify({ ...payload, ts: now })}\n`
-        )
-      }
-      sseBus.on("insights:update", onUpdate)
+        // user filter
+        if (payload.userId !== userId) return;
+        // timeframe filter if present on payload
+        if (payload.timeframe && payload.timeframe !== timeframe) return;
+
+        const now = Date.now();
+        if (now - lastPush < MIN_PUSH_MS) return;
+        lastPush = now;
+
+        controller.enqueue(toSSE("update", { ...payload, ts: now }));
+      };
+
+      sseBus.on("insights:update", onUpdate);
 
       const cleanup = () => {
-        clearInterval(ping)
-        sseBus.off("insights:update", onUpdate)
-        try { controller.close() } catch {}
-      }
-      req.signal?.addEventListener("abort", cleanup)
+        try { sseBus.off("insights:update", onUpdate); } catch {}
+        try { clearInterval(ping); } catch {}
+        try { controller.close(); } catch {}
+      };
+
+      // Close when the client disconnects
+      req.signal?.addEventListener("abort", cleanup);
     },
-  })
+  });
 
   return new Response(stream, {
     headers: {
@@ -57,6 +64,8 @@ export async function GET(req: NextRequest) {
       "Cache-Control": "no-cache, no-transform",
       Connection: "keep-alive",
       "X-Accel-Buffering": "no",
+      // If you need cross-origin SSE, uncomment and set your domain:
+      // "Access-Control-Allow-Origin": "https://slurpy.life",
     },
-  })
+  });
 }

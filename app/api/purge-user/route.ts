@@ -16,15 +16,17 @@ function sb() {
 // Best-effort delete that tolerates missing tables/columns.
 async function tryDeleteAll(client: ReturnType<typeof sb>, table: string, userId: string) {
   try {
-    const { error } = await client.from(table)
+    const { error } = await client
+      .from(table)
       .delete()
       .or(`user_id.eq.${userId},userId.eq.${userId}`);
+
     if (error) {
       const msg = (error.message || "").toLowerCase();
       if (msg.includes("does not exist")) return { table, skipped: true };
-      // retry direct columns as fallback
+      // fallback attempts with either column name
       try { await client.from(table).delete().eq("user_id", userId); return { table, ok: true }; } catch {}
-      try { await client.from(table).delete().eq("userId", userId); return { table, ok: true }; } catch {}
+      try { await client.from(table).delete().eq("userId", userId);  return { table, ok: true }; } catch {}
       return { table, error: msg };
     }
     return { table, ok: true };
@@ -37,39 +39,33 @@ async function tryDeleteAll(client: ReturnType<typeof sb>, table: string, userId
 
 /** Delete all Qdrant points with payload.userId == current user */
 async function qdrantDeleteByUser(userId: string) {
-  const base = process.env.QDRANT_URL;               // e.g. https://qdrant.example.com:6333
-  if (!base) return { skipped: true, reason: "QDRANT_URL not set" };
-
-  const apiKey = process.env.QDRANT_API_KEY || "";
-  const collections = (process.env.QDRANT_COLLECTIONS || "slurpy_messages")
-    .split(",").map(s => s.trim()).filter(Boolean);
+  const base = process.env.QDRANT_URL; // e.g. https://qdrant.example.com:6333
+  const collections = (process.env.QDRANT_COLLECTIONS || "").split(",").map(s => s.trim()).filter(Boolean);
+  if (!base || collections.length === 0) return { skipped: true };
 
   const headers: Record<string, string> = { "content-type": "application/json" };
+  const apiKey = process.env.QDRANT_API_KEY;
   if (apiKey) headers["api-key"] = apiKey;
 
-  const body = JSON.stringify({
-    filter: { must: [{ key: "userId", match: { value: userId } }] },
-  });
-
   const results: any[] = [];
-  for (const col of collections) {
+  for (const c of collections) {
     try {
-      const resp = await fetch(`${base}/collections/${encodeURIComponent(col)}/points/delete`, {
+      const res = await fetch(`${base}/collections/${encodeURIComponent(c)}/points/delete`, {
         method: "POST",
         headers,
-        body,
+        body: JSON.stringify({
+          filter: { must: [{ key: "userId", match: { value: userId } }] },
+          wait: true,
+        }),
       });
-      if (!resp.ok) {
-        const txt = await resp.text().catch(() => "");
-        results.push({ collection: col, ok: false, status: resp.status, error: txt });
-      } else {
-        results.push({ collection: col, ok: true });
-      }
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) results.push({ collection: c, error: json?.status || res.statusText || "delete failed" });
+      else results.push({ collection: c, ok: true });
     } catch (e: any) {
-      results.push({ collection: col, ok: false, error: String(e?.message || e) });
+      results.push({ collection: c, error: e?.message || "network error" });
     }
   }
-  return { collections: results };
+  return { ok: true, results };
 }
 
 export async function POST(_req: NextRequest) {
@@ -79,31 +75,33 @@ export async function POST(_req: NextRequest) {
 
     const supabase = sb();
 
-    // Trim/extend this list to your schema
+    // Include canonical snake_case AND still-present CamelCase tables
     const tables = [
+      // canonical snake_case
+      "chat_messages",
+      "chat_sessions",
+      "plans",
+      "reports",
+      "roleplay",
+      "ufm",
+      // camel/legacy that your app still references
+      "DailyMood",
+      "JournalEntry",
       "ChatMessage",
       "ChatSession",
-      "DailyMood",
-      "Journal",
-      "Plans",
-      "RoleplayTurns",
-      "RoleplayLog",
-      "KVMemory",
-      "UserMemory",
-      "EmotionQuadrant",
-      "Quadrant",
-      "QuadrantLog",
-      "MoodQuadrant",
-      "Analytics",
+      "Plan",
+      "Report",
+      "Roleplay",
+      "Ufm",
     ];
 
     const sql = await Promise.all(tables.map(t => tryDeleteAll(supabase, t, userId)));
     const qdr = await qdrantDeleteByUser(userId);
 
-    // Optional: Supabase Storage cleanup example
+    // Optional: Supabase Storage cleanup (if you store by userId/)
     // try { await supabase.storage.from("user-uploads").remove([`${userId}`]); } catch {}
 
-    return NextResponse.json({ ok: true, sql, qdr });
+    return NextResponse.json({ ok: true, supabase: sql, qdrant: qdr });
   } catch (e: any) {
     console.error("purge-user failed:", e?.message || e);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });

@@ -6,28 +6,30 @@ import uuid
 from typing import Any, Dict, List, Optional
 from datetime import datetime, timezone
 
-from .supa import supa  # NOTE: in your project this is a function returning the client
+from .supa import supa  # function returning the client
 
-# ---------- Configuration ----------
-SESSION_TABLE = "ChatSession"
-MESSAGE_TABLE = "ChatMessage"
-# We'll auto-detect an analysis table if one exists:
+# ─────────────────────────────────────────────────────────────────────────────
+# Table names (we’ll auto-detect which style exists on each call)
+SNAKE_SESSION_TABLE = "chat_sessions"
+SNAKE_MESSAGE_TABLE = "chat_messages"
+LEGACY_SESSION_TABLE = "ChatSession"
+LEGACY_MESSAGE_TABLE = "ChatMessage"
+
+# Candidates for a dedicated analysis-blob table (NOT your 'analytics' aggregates)
 ANALYSIS_TABLE_CANDIDATES = ["Analysis", "SessionAnalysis", "ChatAnalysis", "analysis"]
 
-# ---------- Regex for PostgREST "missing column" ----------
+# Regex helpers
 MISSING_COL_RE = re.compile(r"Could not find the '([^']+)' column", re.IGNORECASE)
+REL_MISSING_RE = re.compile(r"relation .* does not exist", re.IGNORECASE)
 
-# ---------- Time helpers ----------
+# ─────────────────────────────────────────────────────────────────────────────
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
-# ---------- Client helpers ----------
 def _db():
-    """Return a usable Supabase/PostgREST client."""
     return supa() if callable(supa) else supa
 
 def _tbl(name: str):
-    """Return a table ref compatible with both .table() and .from_() clients."""
     client = _db()
     if hasattr(client, "table"):
         return client.table(name)
@@ -36,8 +38,18 @@ def _tbl(name: str):
     raise RuntimeError("Supabase/PostgREST client has neither .table nor .from_")
 
 def _exec(req):
-    """Execute a PostgREST request (sync)."""
     return req.execute()
+
+def _probe_table(name: str) -> bool:
+    try:
+        _tbl(name).select("*").limit(1).execute()
+        return True
+    except Exception:
+        return False
+
+def _use_snake() -> bool:
+    """True if snake_case tables exist; we check both to be safe."""
+    return _probe_table(SNAKE_SESSION_TABLE) and _probe_table(SNAKE_MESSAGE_TABLE)
 
 def _strip_missing_and_retry(
     action: str,
@@ -62,17 +74,17 @@ def _strip_missing_and_retry(
                     for k, v in where.items():
                         req = req.eq(k, v)
             elif action == "upsert":
-                if on_conflict:
-                    req = t.upsert(attempt, on_conflict=on_conflict)
-                else:
-                    req = t.upsert(attempt)
+                req = t.upsert(attempt, on_conflict=on_conflict) if on_conflict else t.upsert(attempt)
             else:
                 raise ValueError(f"Unsupported action: {action}")
             return _exec(req)
         except Exception as e:
-            m = MISSING_COL_RE.search(str(e))
+            s = str(e)
+            # If the table itself doesn't exist, bubble up (caller will fall back)
+            if REL_MISSING_RE.search(s):
+                raise
+            m = MISSING_COL_RE.search(s)
             if not m:
-                # Not a "missing column" error → bubble up
                 raise
             missing = m.group(1)
             if missing in attempt:
@@ -80,51 +92,82 @@ def _strip_missing_and_retry(
                 if not attempt:
                     return None
             else:
-                # Server complained about a column we didn't send (e.g., filter) → bubble up
                 raise
 
-# ---------- Discovery ----------
-def _probe_table(name: str) -> bool:
-    try:
-        _tbl(name).select("*").limit(1).execute()
-        return True
-    except Exception:
-        return False
-
-def _analysis_table() -> Optional[str]:
-    for t in ANALYSIS_TABLE_CANDIDATES:
-        if _probe_table(t):
-            return t
-    return None
-
-# ---------- Public API ----------
+# ─────────────────────────────────────────────────────────────────────────────
+# Public API expected by rag_core
 def init() -> None:
-    """Compatibility no-op; keep for callers that import init_db()."""
+    """Compatibility no-op."""
     return None
 
 def upsert_session(session_id: str, user_id: str) -> None:
     """
-    Create/update a session row.
-    Sends both snake_case and camelCase keys to satisfy legacy schemas.
-    Unknown columns get stripped automatically.
+    Create/update a session snapshot row.
+    Snake_case → chat_sessions(session_id,user_id,started_at,updated_at,...)
+    Legacy     → ChatSession(id,userId,sessionId,updatedAt,...)
     """
-    payload = {
-        # canonical
-        "id": session_id,
-        "user_id": user_id,
-        "updated_at": _now_iso(),
-        # legacy/camel (in case NOT NULL constraints exist on these)
-        "sessionId": session_id,
-        "userId": user_id,
-        "updatedAt": _now_iso(),
-        "createdAt": _now_iso(),
-        "messageCount": 0,  # harmless if exists; stripped if not
-    }
-    # Prefer on_conflict="id" if the API supports it
-    try:
-        _strip_missing_and_retry("upsert", SESSION_TABLE, payload, on_conflict="id")
-    except Exception:
-        _strip_missing_and_retry("upsert", SESSION_TABLE, payload)
+    now = _now_iso()
+    if _use_snake():
+        # Prefer upsert on session_id; if constraint missing, emulate.
+        payload = {
+            "session_id": session_id,
+            "user_id": user_id,
+            "updated_at": now,
+            # created_at/started_at: if it’s a new row, DB defaults may fill;
+            # including started_at is harmless if it exists.
+            "started_at": now,
+            "message_count": 0,   # harmless if exists; stripped if not
+            "last_emotion": None, # harmless; stripped if not
+            "last_intensity": None,
+        }
+        try:
+            _strip_missing_and_retry(
+                "upsert",
+                SNAKE_SESSION_TABLE,
+                payload,
+                on_conflict="session_id",
+            )
+        except Exception:
+            # Fallback: try update first; if 0 rows, insert.
+            try:
+                _strip_missing_and_retry(
+                    "update",
+                    SNAKE_SESSION_TABLE,
+                    {"updated_at": now},
+                    where={"session_id": session_id},
+                )
+            except Exception:
+                pass
+            try:
+                _strip_missing_and_retry("insert", SNAKE_SESSION_TABLE, payload)
+            except Exception:
+                # If both fail, give up silently (rag_core wraps this call)
+                pass
+    else:
+        # Legacy camelCase
+        payload = {
+            "id": session_id,
+            "sessionId": session_id,
+            "userId": user_id,
+            "updatedAt": now,
+            "createdAt": now,
+            "messageCount": 0,
+        }
+        try:
+            _strip_missing_and_retry("upsert", LEGACY_SESSION_TABLE, payload, on_conflict="id")
+        except Exception:
+            try:
+                _strip_missing_and_retry("upsert", LEGACY_SESSION_TABLE, payload)
+            except Exception:
+                # update then insert fallback
+                try:
+                    _strip_missing_and_retry("update", LEGACY_SESSION_TABLE, {"updatedAt": now}, where={"id": session_id})
+                except Exception:
+                    pass
+                try:
+                    _strip_missing_and_retry("insert", LEGACY_SESSION_TABLE, payload)
+                except Exception:
+                    pass
 
 def add_msg(
     session_id: str,
@@ -136,39 +179,71 @@ def add_msg(
     themes: List[str],
 ) -> None:
     """
-    Insert a message into ChatMessage and bump ChatSession counters.
-    Mirrors message text into multiple possible columns (content/text/message/body/msg/payload/value/*Text)
-    so NOT NULL constraints on legacy schemas don't explode.
+    Insert a message and bump session counters.
+    Snake_case → chat_messages (omit id: bigint auto), content NOT NULL.
+    Legacy     → ChatMessage with lots of synonyms to satisfy old NOT NULLs.
     """
-    msg_id = str(uuid.uuid4())
     now = _now_iso()
 
-    # 1) Insert the message
+    if _use_snake():
+        # 1) Insert message (no id → let DB auto-generate bigint)
+        msg_payload = {
+            "session_id": session_id,
+            "user_id": user_id,
+            "role": role,
+            "content": text,
+            "emotion": emotion,
+            "intensity": float(intensity),
+            "themes": themes,
+            "created_at": now,
+        }
+        try:
+            _strip_missing_and_retry("insert", SNAKE_MESSAGE_TABLE, msg_payload)
+        except Exception:
+            # swallow; rag_core treats analytics best-effort
+            return
+
+        # 2) Read current message_count
+        curr = 0
+        try:
+            resp = _tbl(SNAKE_SESSION_TABLE).select("message_count").eq("session_id", session_id).limit(1).execute()
+            if getattr(resp, "data", None):
+                row = resp.data[0] or {}
+                if row.get("message_count") is not None:
+                    curr = int(row["message_count"])
+        except Exception:
+            curr = 0
+
+        # 3) Update snapshot
+        sess_update = {
+            "message_count": curr + 1,
+            "last_emotion": emotion,
+            "last_intensity": float(intensity),
+            "updated_at": now,
+        }
+        try:
+            _strip_missing_and_retry("update", SNAKE_SESSION_TABLE, sess_update, where={"session_id": session_id})
+        except Exception:
+            pass
+        return
+
+    # Legacy path
+    msg_id = str(uuid.uuid4())
     msg_payload = {
-        # primary key (both styles)
         "id": msg_id,
         "messageId": msg_id,
-
-        # linkage (both styles)
         "session_id": session_id,
         "sessionId": session_id,
         "user_id": user_id,
         "userId": user_id,
-
-        # role & emotion
         "role": role,
         "emotion": emotion,
         "intensity": float(intensity),
-
-        # timestamps (both styles)
         "created_at": now,
         "createdAt": now,
-
-        # themes (strip if column missing)
         "themes": themes,
-
-        # ---- TEXT FIELD SYNONYMS ----
-        "content": text,        # many schemas enforce NOT NULL here
+        # TEXT synonyms (some old schemas require certain ones NOT NULL)
+        "content": text,
         "text": text,
         "message": text,
         "body": text,
@@ -178,55 +253,65 @@ def add_msg(
         "contentText": text,
         "messageText": text,
     }
-    _strip_missing_and_retry("insert", MESSAGE_TABLE, msg_payload)
-
-    # 2) Read current message count (support both columns)
-    curr_count = 0
     try:
-        resp = _tbl(SESSION_TABLE).select("message_count, messageCount").eq("id", session_id).limit(1).execute()
+        _strip_missing_and_retry("insert", LEGACY_MESSAGE_TABLE, msg_payload)
+    except Exception:
+        return
+
+    curr = 0
+    try:
+        resp = _tbl(LEGACY_SESSION_TABLE).select("message_count, messageCount").eq("id", session_id).limit(1).execute()
         if getattr(resp, "data", None):
             row = resp.data[0] or {}
             if row.get("message_count") is not None:
-                curr_count = int(row["message_count"])
+                curr = int(row["message_count"])
             elif row.get("messageCount") is not None:
-                curr_count = int(row["messageCount"])
+                curr = int(row["messageCount"])
     except Exception:
-        curr_count = 0
+        curr = 0
 
-    # 3) Update session snapshot/counters (both styles)
     sess_update = {
-        # canonical
-        "message_count": curr_count + 1,
+        "message_count": curr + 1,
         "last_emotion": emotion,
         "last_intensity": float(intensity),
         "updated_at": now,
-        # legacy
-        "messageCount": curr_count + 1,
+        "messageCount": curr + 1,
         "lastEmotion": emotion,
         "lastIntensity": float(intensity),
         "updatedAt": now,
     }
-    _strip_missing_and_retry("update", SESSION_TABLE, sess_update, where={"id": session_id})
+    try:
+        _strip_missing_and_retry("update", LEGACY_SESSION_TABLE, sess_update, where={"id": session_id})
+    except Exception:
+        pass
 
 def set_session_fields(session_id: str, **fields: Any) -> None:
-    """
-    Update arbitrary fields on ChatSession (snake_case preferred).
-    Unknown columns will be stripped and retried automatically.
-    """
+    """Update arbitrary fields on the session row."""
     if not fields:
         return
-    payload = dict(fields)
     now = _now_iso()
+    payload = dict(fields)
     payload["updated_at"] = now
-    payload["updatedAt"] = now  # legacy mirror
-    _strip_missing_and_retry("update", SESSION_TABLE, payload, where={"id": session_id})
+    payload["updatedAt"] = now
+
+    if _use_snake():
+        try:
+            _strip_missing_and_retry("update", SNAKE_SESSION_TABLE, payload, where={"session_id": session_id})
+        except Exception:
+            pass
+    else:
+        try:
+            _strip_missing_and_retry("update", LEGACY_SESSION_TABLE, payload, where={"id": session_id})
+        except Exception:
+            pass
 
 def get_session(session_id: str) -> Dict[str, Any]:
-    """
-    Convenience: fetch a session row (returns {} if absent).
-    """
+    """Fetch a session row ({} if absent)."""
     try:
-        resp = _tbl(SESSION_TABLE).select("*").eq("id", session_id).limit(1).execute()
+        if _use_snake():
+            resp = _tbl(SNAKE_SESSION_TABLE).select("*").eq("session_id", session_id).limit(1).execute()
+        else:
+            resp = _tbl(LEGACY_SESSION_TABLE).select("*").eq("id", session_id).limit(1).execute()
     except Exception:
         return {}
     data = getattr(resp, "data", None)
@@ -235,13 +320,15 @@ def get_session(session_id: str) -> Dict[str, Any]:
     row = data[0] or {}
     return row if isinstance(row, dict) else {}
 
-# ---------- Analysis storage ----------
+# ─────────────────────────────────────────────────────────────────────────────
+# Optional dedicated “analysis blob” storage (not your 'analytics' aggregates)
+def _analysis_table() -> Optional[str]:
+    for t in ANALYSIS_TABLE_CANDIDATES:
+        if _probe_table(t):
+            return t
+    return None
+
 def _read_analysis_row_from_table(table: str, session_id: str) -> Optional[Dict[str, Any]]:
-    """
-    Read from a dedicated analysis table with various plausible shapes.
-    Returns the inner analysis blob if found, else None.
-    """
-    # Try common key names for the foreign key/session id
     for key in ("session_id", "sessionId", "id"):
         try:
             resp = _tbl(table).select("*").eq(key, session_id).limit(1).execute()
@@ -250,30 +337,16 @@ def _read_analysis_row_from_table(table: str, session_id: str) -> Optional[Dict[
                 row = data[0] or {}
                 if not isinstance(row, dict):
                     continue
-                # Accept a variety of column names for the analysis blob
                 for col in ("analysis", "data", "blob", "payload"):
                     if isinstance(row.get(col), dict):
                         return row[col]
-                # Fallback: if the row itself looks like the analysis blob
                 return row
         except Exception:
             continue
     return None
 
 def _write_analysis_row_to_table(table: str, session_id: str, analysis: Dict[str, Any]) -> None:
-    """
-    Write to a dedicated analysis table. We support several plausible shapes:
-    - { session_id, analysis }
-    - { sessionId, analysis }
-    - { id, analysis }
-    Unknown columns are stripped automatically.
-    """
-    base = {
-        "analysis": analysis,
-        "updated_at": _now_iso(),
-        "updatedAt": _now_iso(),
-    }
-    # try several shapes in order of preference
+    base = {"analysis": analysis, "updated_at": _now_iso(), "updatedAt": _now_iso()}
     shapes = [
         {"session_id": session_id, **base},
         {"sessionId": session_id, **base},
@@ -284,36 +357,22 @@ def _write_analysis_row_to_table(table: str, session_id: str, analysis: Dict[str
             _strip_missing_and_retry("upsert", table, payload)
             return
         except Exception:
-            # Try next shape
             continue
-    # If all shapes failed, last resort: try update by eq filter
     _strip_missing_and_retry("update", table, base, where={"session_id": session_id})
 
 def get_analysis(session_id: str) -> Dict[str, Any]:
-    """
-    Read the analysis blob for this session.
-    Order:
-      1) dedicated analysis table (if available)
-      2) ChatSession.analysis JSONB field (or legacy report/roleplay aggregation)
-    Returns {} if nothing exists.
-    """
     table = _analysis_table()
     if table:
         row = _read_analysis_row_from_table(table, session_id)
         if isinstance(row, dict):
             return row
-
-    # Fallback: store analysis on the session row itself (JSONB)
+    # Fallback to a JSONB column on the session row, if present
     sess = get_session(session_id)
     if not sess:
         return {}
-
-    # Prefer 'analysis' field; else synthesize from legacy keys if present
     analysis = sess.get("analysis")
     if isinstance(analysis, dict):
         return analysis
-
-    # Build a minimal analysis view from legacy fields if available
     out: Dict[str, Any] = {}
     for k in ("report", "report_history", "roleplay", "summary"):
         if k in sess:
@@ -323,31 +382,20 @@ def get_analysis(session_id: str) -> Dict[str, Any]:
             out[k.lower()] = sess[k]
     return out or {}
 
-# Backwards-compat alias
+# Back-compat aliases (some older callers might import these)
 _get_analysis = get_analysis
-
 def update_analysis(session_id: str, analysis: Dict[str, Any]) -> None:
-    """
-    Write/update the analysis blob for this session.
-    If a dedicated analysis table exists, use it; otherwise write JSONB 'analysis'
-    to the ChatSession row.
-    """
     table = _analysis_table()
     if table:
         try:
             _write_analysis_row_to_table(table, session_id, analysis)
             return
         except Exception:
-            # fall through to session JSONB storage
             pass
+    payload = {"analysis": analysis, "updated_at": _now_iso(), "updatedAt": _now_iso()}
+    if _use_snake():
+        _strip_missing_and_retry("update", SNAKE_SESSION_TABLE, payload, where={"session_id": session_id})
+    else:
+        _strip_missing_and_retry("update", LEGACY_SESSION_TABLE, payload, where={"id": session_id})
 
-    # Store on the session row
-    payload = {
-        "analysis": analysis,
-        "updated_at": _now_iso(),
-        "updatedAt": _now_iso(),
-    }
-    _strip_missing_and_retry("update", SESSION_TABLE, payload, where={"id": session_id})
-
-# Backwards-compat alias
 _update_analysis = update_analysis

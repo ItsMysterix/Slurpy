@@ -5,38 +5,22 @@ export const revalidate = 0;
 
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
-import { createClient, PostgrestError } from "@supabase/supabase-js";
+import { createClient } from "@supabase/supabase-js";
 import { notifyInsightsUpdate } from "@/lib/sse-bus";
 
-/* ----------------------------- Types ----------------------------- */
-type DateRange = { start: Date; end: Date };
-type WeeklyTrend = { day: string; mood: number; sessions: number; date: string };
-type EmotionBreakdown = { emotion: string; count: number; percentage: number; color: string };
-type Insight = { title: string; description: string; icon: "TrendingUp" | "Heart" | "Brain" | "Calendar"; trend: "positive" | "neutral" | "negative" };
-type CurrentSession = {
-  duration: string;
-  messagesExchanged: number;
-  dominantEmotion: string;
-  emotionIntensity: number; // 0..1
-  fruit: string;
-  topics: string[];
-};
+/* ---------------- Supabase ---------------- */
+function sb() {
+  const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE;
+  if (!url || !key) throw new Error("Missing SUPABASE_URL / SUPABASE_SERVICE_ROLE env");
+  return createClient(url, key, { auth: { autoRefreshToken: false, persistSession: false } });
+}
 
-type HeaderShape = {
-  periodLabel: string;
-  totalMinutes: number;
-  totalMessages: number;
-  currentEmotion: string;
-  currentFruit: string;
-  currentIntensity01: number;
-  currentValenceNeg1To1: number; // -1..1
-  topicSentence: string;
-};
-
-/* ------------------------- Date (UTC) ------------------------- */
+/* ---------------- Time (UTC) ---------------- */
 const toUTCStartOfDay = (d: Date) => new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
 const addDaysUTC = (d: Date, n: number) => new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + n));
 
+type DateRange = { start: Date; end: Date };
 function getUTCDateRange(timeframe: string): DateRange {
   const now = new Date();
   const today = toUTCStartOfDay(now);
@@ -50,27 +34,24 @@ function getUTCDateRange(timeframe: string): DateRange {
     const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
     return { start, end };
   }
-  // year
   const start = new Date(Date.UTC(now.getUTCFullYear(), 0, 1));
   const end = new Date(Date.UTC(now.getUTCFullYear() + 1, 0, 1));
   return { start, end };
 }
-
 const weekdayShortUTC = (d: Date) =>
   new Intl.DateTimeFormat("en-US", { weekday: "short", timeZone: "UTC" }).format(d);
 
-/* -------------------------- Emotion helpers -------------------------- */
+/* ---------------- Emotion helpers ---------------- */
 const POS = new Set(["joy","excited","hopeful","content","energetic","happy","peaceful","grateful","calm"]);
 const NEG = new Set(["sad","angry","anxious","worried","stressed","fear","panic","resentful","frustrated"]);
 
 function emotionValence(emotion: string, intensity01: number) {
   const e = (emotion || "").toLowerCase();
   const i = Math.max(0, Math.min(1, Number(intensity01 ?? 0)));
-  if (POS.has(e)) return +i;   // +0..+1
-  if (NEG.has(e)) return -i;   // -1..0
-  return 0;                    // neutral
+  if (POS.has(e)) return +i;
+  if (NEG.has(e)) return -i;
+  return 0;
 }
-
 function getEmotionColor(emotion: string) {
   const map: Record<string, string> = {
     happy: "bg-yellow-100 text-yellow-700",
@@ -86,7 +67,6 @@ function getEmotionColor(emotion: string) {
   };
   return map[emotion?.toLowerCase()] || map.neutral;
 }
-
 function getFruitForEmotion(emotion: string) {
   const map: Record<string, string> = {
     joy: "🥭", happy: "🍊", grateful: "🍇", peaceful: "🌱", calm: "🍉",
@@ -95,17 +75,25 @@ function getFruitForEmotion(emotion: string) {
   };
   return map[emotion?.toLowerCase()] || "🍋";
 }
-
 /** 1..10 mood score from emotion + intensity01 (0..1) */
 function calculateMoodScore(emotion: string, intensity01: number) {
-  const pos = ["joy", "excited", "hopeful", "content", "energetic", "happy", "peaceful", "grateful", "calm"];
-  const neu = ["neutral", "focused", "thoughtful", "curious", "calm"];
+  const pos = ["joy","excited","hopeful","content","energetic","happy","peaceful","grateful","calm"];
+  const neu = ["neutral","focused","thoughtful","curious","calm"];
   const e = (emotion || "").toLowerCase();
-  if (pos.includes(e)) return Math.min(10, 5 + intensity01 * 5); // 5..10
-  if (neu.includes(e)) return 5 + (intensity01 - 0.5) * 2;      // ~4..6
-  return Math.max(1, 5 - intensity01 * 4);                       // 1..5
+  if (pos.includes(e)) return Math.min(10, 5 + intensity01 * 5);
+  if (neu.includes(e)) return 5 + (intensity01 - 0.5) * 2;
+  return Math.max(1, 5 - intensity01 * 4);
 }
-
+function parseTopics(topics: unknown): string[] {
+  if (Array.isArray(topics)) return topics.filter((t): t is string => typeof t === "string");
+  if (typeof topics === "string") {
+    try {
+      const parsed = JSON.parse(topics);
+      return Array.isArray(parsed) ? parsed.filter((t): t is string => typeof t === "string") : [];
+    } catch { return []; }
+  }
+  return [];
+}
 function summarizeTopics(ts: string[]) {
   const uniq = Array.from(new Set(ts)).slice(0, 3);
   if (!uniq.length) return "No topics identified yet.";
@@ -114,39 +102,31 @@ function summarizeTopics(ts: string[]) {
   return `About ${uniq[0]}, ${uniq[1]}, and ${uniq[2]}.`;
 }
 
-function parseTopics(topics: unknown): string[] {
-  if (Array.isArray(topics)) return topics.filter((t) => typeof t === "string");
-  if (typeof topics === "string") {
-    try {
-      const parsed = JSON.parse(topics);
-      return Array.isArray(parsed) ? parsed.filter((t) => typeof t === "string") : [];
-    } catch { return []; }
-  }
-  return [];
-}
-
-/* ------------------- Supabase (service role) ------------------- */
-function sb() {
-  const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE; // service key for server routes
-  if (!url || !key) throw new Error("Missing SUPABASE_URL / SUPABASE_SERVICE_ROLE env");
-  return createClient(url, key, { auth: { autoRefreshToken: false, persistSession: false } });
-}
-
-/* ----------------------- schema helpers & guards ----------------------- */
-function ok<T>(res: { data: T | null; error: PostgrestError | null }): res is { data: T; error: null } {
-  return !res.error && Array.isArray(res.data);
-}
-function emptyIfTableMissing<T>(res: { data: T | null; error: PostgrestError | null }): T | [] {
-  if (!res.error) return (res.data as any) ?? [];
-  const msg = (res.error.message || "").toLowerCase();
-  if (msg.includes("relation") && msg.includes("does not exist")) return [];
-  if (msg.includes("column") && msg.includes("does not exist")) return [];
-  return [];
-}
+/* ---------------- Types for response ---------------- */
+type WeeklyTrend = { day: string; mood: number; sessions: number; date: string };
+type EmotionBreakdown = { emotion: string; count: number; percentage: number; color: string };
+type Insight = { title: string; description: string; icon: "TrendingUp" | "Heart" | "Brain" | "Calendar"; trend: "positive" | "neutral" | "negative" };
+type CurrentSession = {
+  duration: string;
+  messagesExchanged: number;
+  dominantEmotion: string;
+  emotionIntensity: number; // 0..1
+  fruit: string;
+  topics: string[];
+};
+type HeaderShape = {
+  periodLabel: string;
+  totalMinutes: number;
+  totalMessages: number;
+  currentEmotion: string;
+  currentFruit: string;
+  currentIntensity01: number;
+  currentValenceNeg1To1: number;
+  topicSentence: string;
+};
 
 /* --------------------------------- POST ---------------------------------
-   Persist ONE chat message (called by your chat page), then nudge SSE clients
+   Persist ONE chat message (snake_case tables), then nudge SSE clients
 ---------------------------------------------------------------------------*/
 export async function POST(req: NextRequest) {
   try {
@@ -175,28 +155,32 @@ export async function POST(req: NextRequest) {
 
     const now = new Date().toISOString();
 
-    // Ensure a session row exists (schema tolerant)
-    await supabase.from("ChatSession").upsert({
-      id: sessionId,
-      userId: effectiveUserId, user_id: effectiveUserId,
-      sessionId, startTime: now, created_at: now, updatedAt: now, updated_at: now,
-      messageCount: 0, message_count: 0,
+    // Ensure a session row exists (snake_case)
+    await supabase
+      .from("chat_sessions")
+      .upsert(
+        { session_id: sessionId, user_id: effectiveUserId, started_at: now, message_count: 0 },
+        { onConflict: "session_id" }
+      );
+
+    // Insert message (snake_case)
+    await supabase.from("chat_messages").insert({
+      session_id: sessionId,
+      user_id: effectiveUserId,
+      role,
+      content: message,
+      emotion,
+      intensity,                 // expected 0..1
+      themes: topics,            // store under themes
+      created_at: now,
     });
 
-    // Insert message
-    await supabase.from("ChatMessage").insert({
-      id: globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`,
-      sessionId, session_id: sessionId,
-      userId: effectiveUserId, user_id: effectiveUserId,
-      role, content: message, text: message,
-      emotion, intensity, topics, themes: topics,
-      timestamp: now, created_at: now,
-    });
-
-    // Bump session timestamp
-    await supabase.from("ChatSession").update({
-      updatedAt: now, updated_at: now,
-    }).eq("id", sessionId);
+    // Optional: bump session snapshot (last_emotion, message_count)
+    // You can keep this simple; insights recomputes counts anyway.
+    await supabase
+      .from("chat_sessions")
+      .update({ last_emotion: emotion ?? null })
+      .eq("session_id", sessionId);
 
     // 🔔 Notify live insights clients to refetch
     notifyInsightsUpdate({ userId: effectiveUserId });
@@ -208,7 +192,7 @@ export async function POST(req: NextRequest) {
   }
 }
 
-/* --------------------------------- GET --------------------------------- */
+/* ---------------------------------- GET ---------------------------------- */
 export async function GET(req: NextRequest) {
   try {
     // Optional admin/testing bypass via header
@@ -228,126 +212,102 @@ export async function GET(req: NextRequest) {
     const startISO = start.toISOString();
     const endISO = end.toISOString();
 
-    /* -------- ChatSession -------- */
-    let sessions: any[] = [];
-    {
-      let r1 = await supabase.from("ChatSession")
-        .select("id,sessionId,userId,user_id,startTime,endTime,created_at,updated_at,updatedAt,duration,messageCount,message_count,analysis,last_emotion,last_intensity,dominantEmotion,avgIntensity,themes,topics")
-        .or(`user_id.eq.${effectiveUserId},userId.eq.${effectiveUserId}`)
-        .gte("created_at", startISO).lt("created_at", endISO);
-      sessions = emptyIfTableMissing(r1) as any[];
+    /* -------- chat_sessions (snake_case) -------- */
+    let { data: sessionsRaw } = await supabase
+      .from("chat_sessions")
+      .select("session_id,user_id,started_at,last_emotion,message_count,themes")
+      .eq("user_id", effectiveUserId)
+      .gte("started_at", startISO)
+      .lt("started_at", endISO);
 
-      if (!sessions.length) {
-        const r2 = await supabase.from("ChatSession")
-          .select("id,sessionId,userId,startTime,endTime,duration,messageCount,analysis,updatedAt,lastEmotion,lastIntensity,dominantEmotion,avgIntensity,themes,topics,created_at")
-          .eq("userId", effectiveUserId)
-          .gte("startTime", startISO).lt("startTime", endISO);
-        sessions = emptyIfTableMissing(r2) as any[];
-      }
-    }
+    const sessions = (sessionsRaw ?? []).map((s) => ({
+      id: s.session_id as string,
+      sessionId: s.session_id as string,
+      userId: s.user_id as string,
+      startTime: s.started_at as string,
+      // chat_sessions has no explicit end; we’ll derive duration from messages
+      duration: null as number | null,
+      messageCount: (s.message_count as number) ?? 0,
+      dominant: (s.last_emotion as string) ?? null,
+      avgIntensity: null as number | null, // will compute from messages if needed
+      topics: (s.themes as any) ?? null,
+    }));
 
-    /* -------- ChatMessage -------- */
-    let messages: any[] = [];
-    {
-      let r1 = await supabase.from("ChatMessage")
-        .select("id,session_id,sessionId,user_id,userId,role,text,content,emotion,intensity,created_at,timestamp,themes,topics")
-        .or(`user_id.eq.${effectiveUserId},userId.eq.${effectiveUserId}`)
-        .gte("created_at", startISO).lt("created_at", endISO)
-        .order("created_at", { ascending: true });
-      messages = emptyIfTableMissing(r1) as any[];
+    /* -------- chat_messages (snake_case) -------- */
+    let { data: messagesRaw } = await supabase
+      .from("chat_messages")
+      .select("id,session_id,user_id,role,content,emotion,intensity,themes,created_at")
+      .eq("user_id", effectiveUserId)
+      .gte("created_at", startISO)
+      .lt("created_at", endISO)
+      .order("created_at", { ascending: true });
 
-      if (!messages.length) {
-        const r2 = await supabase.from("ChatMessage")
-          .select("id,sessionId,userId,role,content,emotion,intensity,timestamp,topics,themes")
-          .eq("userId", effectiveUserId)
-          .gte("timestamp", startISO).lt("timestamp", endISO)
-          .order("timestamp", { ascending: true });
-        messages = emptyIfTableMissing(r2) as any[];
-      }
-    }
-
-    /* -------- DailyMood (optional) -------- */
-    let dailyMoods: any[] = [];
-    {
-      const r = await supabase
-        .from("DailyMood")
-        .select("id,userId,user_id,date,emotion,intensity,fruit,created_at")
-        .or(`userId.eq.${effectiveUserId},user_id.eq.${effectiveUserId}`)
-        .gte("date", startISO).lt("date", endISO)
-        .order("date", { ascending: true });
-      dailyMoods = emptyIfTableMissing(r) as any[];
-    }
-
-    /* -------------------- Normalize records -------------------- */
-    const normMsg = (m: any) => ({
+    const messages = (messagesRaw ?? []).map((m) => ({
       id: m.id,
-      sessionId: m.session_id ?? m.sessionId ?? null,
-      userId: m.user_id ?? m.userId ?? null,
-      role: m.role,
-      content: m.content ?? m.text ?? "",
-      emotion: m.emotion ?? "neutral",
+      sessionId: m.session_id as string,
+      userId: m.user_id as string,
+      role: m.role as string,
+      content: (m.content as string) ?? "",
+      emotion: (m.emotion as string) ?? "neutral",
       intensity: typeof m.intensity === "number" ? m.intensity : Number(m.intensity ?? 0),
-      timestamp: m.timestamp ?? m.created_at ?? null,
-      topics: m.topics ?? m.themes ?? [],
-    });
+      timestamp: m.created_at as string,
+      topics: (m.themes as any) ?? [],
+    }));
 
-    const normSess = (s: any) => ({
-      id: s.id,
-      sessionId: s.sessionId ?? s.id,
-      userId: s.userId ?? s.user_id ?? null,
-      startTime: s.startTime ?? s.created_at ?? null,
-      endTime: s.endTime ?? s.updated_at ?? s.updatedAt ?? null,
-      duration: typeof s.duration === "number" ? s.duration : null, // minutes if present
-      messageCount: s.messageCount ?? s.message_count ?? 0,
-      dominant: s.dominantEmotion ?? s.last_emotion ?? s.lastEmotion ?? null,
-      avgIntensity: typeof s.avgIntensity === "number" ? s.avgIntensity
-                 : (typeof s.last_intensity === "number" ? s.last_intensity
-                 : (typeof s.lastIntensity === "number" ? s.lastIntensity : null)),
-      topics: s.topics ?? s.themes ?? null,
-    });
+    /* -------- daily_mood (optional; OK if missing) -------- */
+    let moods: Array<{ userId: string; date: string; emotion: string; intensity: number; fruit: string }> = [];
+    try {
+      const r = await supabase
+        .from("daily_mood")
+        .select("user_id,date,emotion,intensity,fruit")
+        .eq("user_id", effectiveUserId)
+        .gte("date", startISO)
+        .lt("date", endISO)
+        .order("date", { ascending: true });
 
-    const normMood = (m: any) => ({
-      id: m.id,
-      userId: m.userId ?? m.user_id ?? null,
-      date: m.date ?? m.created_at ?? null,
-      emotion: m.emotion ?? "neutral",
-      intensity: typeof m.intensity === "number" ? m.intensity : Number(m.intensity ?? 0), // often 1..10
-      fruit: m.fruit ?? getFruitForEmotion(m.emotion ?? "neutral"),
-    });
+      moods =
+        (r.data ?? []).map((m: any) => ({
+          userId: m.user_id,
+          date: m.date,
+          emotion: m.emotion ?? "neutral",
+          intensity: Number(m.intensity ?? 5), // 1..10 if present
+          fruit: m.fruit ?? getFruitForEmotion(m.emotion ?? "neutral"),
+        })) ?? [];
+    } catch {
+      // table does not exist → ignore
+      moods = [];
+    }
 
-    const msgs = (messages.map(normMsg) as any[]).filter((m) => (m.userId ?? "") === effectiveUserId);
-    const sess = (sessions.map(normSess) as any[]).filter((s) => (s.userId ?? "") === effectiveUserId);
-    const moods = (dailyMoods.map(normMood) as any[]).filter((m) => (m.userId ?? "") === effectiveUserId);
-
-    // extra JS-side timeframe guard
-    const inRange = (iso: string | null) => {
-      if (!iso) return false;
-      const t = new Date(iso).getTime();
-      return t >= start.getTime() && t < end.getTime();
-    };
-    const msgsR = msgs.filter((m) => inRange(m.timestamp));
-    const sessR = sess.filter((s) => inRange(s.startTime || s.endTime));
-    const moodsR = moods.filter((m) => inRange(m.date));
-
-    /* ---------- Compute duration fallback from message timestamps ------- */
-    const bySession: Record<string, { first: number; last: number; count: number }> = {};
-    for (const m of msgsR) {
-      const sid = m.sessionId || "unknown";
-      if (!bySession[sid]) bySession[sid] = { first: Infinity, last: -Infinity, count: 0 };
-      const t = m.timestamp ? new Date(m.timestamp).getTime() : NaN;
-      if (!Number.isNaN(t)) {
+    /* ---------- Derive duration/messageCount from messages per session --------- */
+    const bySession: Record<
+      string,
+      { first: number; last: number; count: number; emo: Record<string, { sum: number; n: number }> }
+    > = {};
+    for (const m of messages) {
+      const sid = m.sessionId;
+      const t = new Date(m.timestamp).getTime();
+      if (!bySession[sid]) {
+        bySession[sid] = { first: t, last: t, count: 0, emo: {} };
+      } else {
         bySession[sid].first = Math.min(bySession[sid].first, t);
-        bySession[sid].last  = Math.max(bySession[sid].last, t);
+        bySession[sid].last = Math.max(bySession[sid].last, t);
       }
       bySession[sid].count += 1;
+
+      if (typeof m.intensity === "number") {
+        const e = (m.emotion || "neutral").toLowerCase();
+        const bucket = bySession[sid].emo[e] || { sum: 0, n: 0 };
+        bucket.sum += m.intensity;
+        bucket.n += 1;
+        bySession[sid].emo[e] = bucket;
+      }
     }
 
-    const sessionsWithDur = sessR.map((s) => {
-      if (typeof s.duration === "number" && s.duration >= 0) return s;
+    const sessionsWithDur = sessions.map((s) => {
       const agg = bySession[s.sessionId];
-      if (!agg || !Number.isFinite(agg.first) || !Number.isFinite(agg.last)) return { ...s, duration: 0 };
+      if (!agg) return { ...s, duration: 0, messageCount: s.messageCount ?? 0 };
       const mins = Math.max(0, Math.round((agg.last - agg.first) / 60000));
-      return { ...s, duration: mins, messageCount: agg.count || s.messageCount };
+      return { ...s, duration: mins, messageCount: agg.count };
     });
 
     /* --------------------- Current session summary --------------------- */
@@ -360,43 +320,36 @@ export async function GET(req: NextRequest) {
       topics: [],
     };
 
+    const msgsR = messages; // already in-range
     if (sessionsWithDur.length || msgsR.length) {
       const totalDuration = sessionsWithDur.reduce((acc, s) => acc + (s.duration || 0), 0);
 
-      // Prefer finalized values from the newest session if present
-      const latest = sessionsWithDur.sort((a, b) =>
-        (new Date(b.startTime || b.endTime || 0).getTime() - new Date(a.startTime || a.endTime || 0).getTime())
-      )[0] || {};
+      // Prefer latest session by startTime
+      const latest = sessionsWithDur
+        .slice()
+        .sort((a, b) => new Date(b.startTime || 0).getTime() - new Date(a.startTime || 0).getTime())[0];
 
-      let dominant: string =
-        (latest.dominant as string) || "neutral";
-
+      let dominant = (latest?.dominant as string) || "";
       if (!dominant) {
-        const emos = msgsR
-          .map((m) => m.emotion)
-          .filter((e): e is string => typeof e === "string" && e.length > 0);
+        const emos = msgsR.map((m) => m.emotion).filter((e) => typeof e === "string" && e.length > 0);
         const counts = emos.reduce((a: Record<string, number>, e: string) => {
-          a[e] = (a[e] || 0) + 1; return a;
+          a[e] = (a[e] || 0) + 1;
+          return a;
         }, {});
-        dominant = Object.entries(counts).sort(([,a],[,b]) => (b as number) - (a as number))[0]?.[0] || "neutral";
+        dominant = Object.entries(counts).sort(([, a], [, b]) => (b as number) - (a as number))[0]?.[0] || "neutral";
       }
 
-      let intensity01: number;
-      if (typeof latest.avgIntensity === "number") {
-        intensity01 = Math.max(0, Math.min(1, latest.avgIntensity));
-      } else {
-        const intensities = msgsR
-          .filter((m) => m.emotion === dominant && typeof m.intensity === "number")
-          .map((m) => Number(m.intensity));
-        intensity01 = intensities.length
-          ? Math.max(0, Math.min(1, intensities.reduce((a,b)=>a+b,0)/intensities.length))
-          : 0.5;
-      }
+      // avg intensity for dominant (0..1)
+      const ints = msgsR
+        .filter((m) => (m.emotion || "").toLowerCase() === (dominant || "neutral").toLowerCase())
+        .map((m) => Number(m.intensity))
+        .filter((n) => Number.isFinite(n));
+      const intensity01 = ints.length ? Math.max(0, Math.min(1, ints.reduce((a, b) => a + b, 0) / ints.length)) : 0.5;
 
-      const sessionTopicsRaw = latest.topics ?? [];
-      const sessionTopics = Array.isArray(sessionTopicsRaw)
-        ? sessionTopicsRaw.filter((x) => typeof x === "string")
-        : [...new Set(msgsR.flatMap((m) => parseTopics(m.topics)))];
+      const sessionTopics =
+        Array.isArray(latest?.topics) && latest.topics.length
+          ? (latest.topics as string[]).filter((x) => typeof x === "string")
+          : [...new Set(msgsR.flatMap((m) => parseTopics(m.topics)))];
 
       currentSession = {
         duration: totalDuration < 60 ? `${totalDuration} minutes` : `${Math.floor(totalDuration / 60)}h ${totalDuration % 60}m`,
@@ -410,8 +363,9 @@ export async function GET(req: NextRequest) {
 
     /* ------------------------ Weekly trends data ----------------------- */
     const weeklyTrends: WeeklyTrend[] = [];
-    if (timeframe === "day" || timeframe === "week") {
-      const days = timeframe === "day" ? 1 : 7;
+    const days = timeframe === "day" ? 1 : timeframe === "week" ? 7 : 0;
+
+    if (days) {
       const base = timeframe === "day"
         ? toUTCStartOfDay(new Date())
         : addDaysUTC(toUTCStartOfDay(new Date()), -new Date().getUTCDay());
@@ -421,32 +375,33 @@ export async function GET(req: NextRequest) {
         const dEnd = addDaysUTC(dStart, 1);
 
         const dayMsgs = msgsR.filter((m) => {
-          const t = m.timestamp ? new Date(m.timestamp) : null;
-          return t && t >= dStart && t < dEnd;
+          const t = new Date(m.timestamp);
+          return t >= dStart && t < dEnd;
         });
 
         const daySessions = sessionsWithDur.filter((s) => {
-          const t = s.startTime ? new Date(s.startTime) : s.endTime ? new Date(s.endTime) : null;
+          const t = s.startTime ? new Date(s.startTime) : null;
           return t && t >= dStart && t < dEnd;
         });
 
-        const dayMoods = moodsR.filter((m) => {
-          const t = m.date ? new Date(m.date) : null;
-          return t && t >= dStart && t < dEnd;
-        });
-
+        // Prefer message-derived score; else daily_mood if available
         let moodScore = 5;
         if (dayMsgs.length) {
           const scored = dayMsgs
             .filter((m) => typeof m.emotion === "string" && typeof m.intensity === "number")
             .map((m) => calculateMoodScore(m.emotion, Math.max(0, Math.min(1, Number(m.intensity)))));
           if (scored.length) moodScore = scored.reduce((a, b) => a + b, 0) / scored.length;
-        } else if (dayMoods.length) {
-          // DailyMood.intensity is 1..10 → scale to 0..1
-          const scored = dayMoods.map((m) =>
-            calculateMoodScore(m.emotion, Math.max(0, Math.min(1, Number(m.intensity) / 10)))
-          );
-          if (scored.length) moodScore = scored.reduce((a, b) => a + b, 0) / scored.length;
+        } else {
+          const dayMoods = moods.filter((m) => {
+            const t = new Date(m.date);
+            return t >= dStart && t < dEnd;
+          });
+          if (dayMoods.length) {
+            const scored = dayMoods.map((m) =>
+              calculateMoodScore(m.emotion, Math.max(0, Math.min(1, Number(m.intensity) / 10)))
+            );
+            if (scored.length) moodScore = scored.reduce((a, b) => a + b, 0) / scored.length;
+          }
         }
 
         weeklyTrends.push({
@@ -457,7 +412,7 @@ export async function GET(req: NextRequest) {
         });
       }
     } else {
-      // placeholders for month/year (still shown but less noisy)
+      // Month/Year placeholders (kept simple)
       const buckets = timeframe === "month" ? 4 : 12;
       for (let i = 0; i < buckets; i++) {
         weeklyTrends.push({
@@ -465,9 +420,10 @@ export async function GET(req: NextRequest) {
             timeframe === "month"
               ? `Week ${i + 1}`
               : new Date(Date.UTC(new Date().getUTCFullYear(), i)).toLocaleDateString("en-US", {
-                  month: "short", timeZone: "UTC",
+                  month: "short",
+                  timeZone: "UTC",
                 }),
-          mood: 6, // 6 → valence ~ 0.2
+          mood: 6,
           sessions: 1,
           date: new Date().toISOString().split("T")[0],
         });
@@ -480,7 +436,7 @@ export async function GET(req: NextRequest) {
       const e = m.emotion;
       if (typeof e === "string" && e) emotionCounts.set(e, (emotionCounts.get(e) || 0) + 1);
     }
-    for (const m of moodsR) {
+    for (const m of moods) {
       const e = m.emotion;
       if (typeof e === "string" && e) emotionCounts.set(e, (emotionCounts.get(e) || 0) + 1);
     }
@@ -532,19 +488,19 @@ export async function GET(req: NextRequest) {
     const totalMinutes = sessionsWithDur.reduce((a, s) => a + (s.duration || 0), 0);
     const totalMessages = msgsR.length;
 
-    // Aggregate valence over messages (preferred)
+    // Aggregate valence from messages
     const valencesFromMsgs = msgsR
       .map((m) => emotionValence(m.emotion, Number(m.intensity ?? 0)))
       .filter((v) => Number.isFinite(v));
 
+    // Current emotion/intensity from latest session or messages
     let currentEmotion = "neutral";
     let currentIntensity01 = 0.5;
 
-    // Prefer latest session snapshot; else compute from msgs
     if (sessionsWithDur.length) {
-      const latest = sessionsWithDur.sort(
-        (a, b) => new Date(b.startTime || b.endTime || 0).getTime() - new Date(a.startTime || a.endTime || 0).getTime()
-      )[0];
+      const latest = sessionsWithDur
+        .slice()
+        .sort((a, b) => new Date(b.startTime || 0).getTime() - new Date(a.startTime || 0).getTime())[0];
       if (latest?.dominant) currentEmotion = String(latest.dominant);
       if (typeof latest?.avgIntensity === "number") currentIntensity01 = Math.max(0, Math.min(1, Number(latest.avgIntensity)));
     }
@@ -554,20 +510,13 @@ export async function GET(req: NextRequest) {
         const e = (m.emotion || "neutral").toLowerCase();
         byEmo.set(e, (byEmo.get(e) || 0) + 1);
       });
-      currentEmotion = [...byEmo.entries()].sort((a,b) => b[1]-a[1])[0]?.[0] || "neutral";
+      currentEmotion = [...byEmo.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || "neutral";
 
-      const ints = msgsR.filter((m) => (m.emotion || "").toLowerCase() === currentEmotion)
-                        .map((m) => Number(m.intensity ?? 0))
-                        .filter((n) => Number.isFinite(n));
-      if (ints.length) currentIntensity01 = Math.max(0, Math.min(1, ints.reduce((a,b)=>a+b,0) / ints.length));
-    }
-
-    // Fallback: use last DailyMood if still nothing labeled
-    if (!msgsR.length && moodsR.length) {
-      const last = moodsR[moodsR.length - 1];
-      currentEmotion = (last.emotion || "neutral").toLowerCase();
-      // DailyMood intensity stored 1..10 → scale
-      currentIntensity01 = Math.max(0, Math.min(1, Number(last.intensity ?? 5) / 10));
+      const ints = msgsR
+        .filter((m) => (m.emotion || "").toLowerCase() === currentEmotion)
+        .map((m) => Number(m.intensity ?? 0))
+        .filter((n) => Number.isFinite(n));
+      if (ints.length) currentIntensity01 = Math.max(0, Math.min(1, ints.reduce((a, b) => a + b, 0) / ints.length));
     }
 
     const currentValenceNeg1To1 = valencesFromMsgs.length
@@ -587,7 +536,7 @@ export async function GET(req: NextRequest) {
     };
 
     return NextResponse.json({
-      // NEW primary shape (client will prefer this)
+      // NEW primary shape
       header,
       trends: {
         last7Days: weeklyTrends.map((w) => ({
@@ -599,12 +548,11 @@ export async function GET(req: NextRequest) {
       },
       breakdown: {
         emotions: emotionBreakdown.map((e) => ({ emotion: e.emotion, count: e.count, percentage: e.percentage })),
-        // client also builds valence buckets from trend points; leaving that client-side
         valence: [],
       },
       insights,
 
-      // Back-compat fields (don’t remove yet)
+      // Back-compat
       currentSession,
       weeklyTrends,
       emotionBreakdown,

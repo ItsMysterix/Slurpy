@@ -18,7 +18,7 @@ const nextConfig = {
 
   // Only expose public env vars
   env: {
-    CLERK_PUBLISHABLE_KEY: process.env.CLERK_PUBLISHABLE_KEY,
+    CLERK_PUBLISHABLE_KEY: process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY,
     // ❌ Do NOT expose CLERK_SECRET_KEY (keep server-side only)
   },
 

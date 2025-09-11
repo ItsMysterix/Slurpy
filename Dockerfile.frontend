@@ -2,7 +2,7 @@
 FROM node:20-bookworm-slim AS deps
 WORKDIR /app
 COPY package.json package-lock.json* ./
-# no prisma, so no postinstall scripts
+# Avoid peer dependency conflicts
 RUN npm ci --legacy-peer-deps
 
 # ---------- build ----------
@@ -11,7 +11,7 @@ WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-# Ensure Next outputs a standalone server (next.config should set: output: 'standalone')
+# Next.js standalone build
 RUN npm run build
 
 # ---------- runtime ----------
@@ -20,10 +20,11 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 
-# Copy the standalone server & static assets
+# Copy the standalone Next.js server and assets
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
 COPY --from=builder /app/public ./public
 
 EXPOSE 3000
+# Start the Next.js standalone server
 CMD ["node", "server.js"]

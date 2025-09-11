@@ -11,6 +11,7 @@ Env
 - API_DEBUG            (true/false)    → verbose logs
 - DEV_NO_AUTH          (true/false)    → bypass Clerk verification, use "dev_user"
 - FRONTEND_ORIGIN      (e.g. http://localhost:3000) → CORS allowlist
+- CORS_ALLOW_ALL       (true/false)    → allow all origins (debug only)
 - OPENAI_API_KEY       → used for /chat_stream (direct streaming)
 - OPENAI_MODEL         → defaults to gpt-4o-mini
 """
@@ -20,6 +21,8 @@ from __future__ import annotations
 import os
 import json
 import uuid
+import inspect
+import traceback
 from collections import deque
 from typing import Deque, Dict, Tuple, AsyncGenerator
 
@@ -69,13 +72,13 @@ app.add_middleware(
 
 # ─────────────────────────────────────────────────────────────────────────────
 def get_clerk_user_id(req: Request) -> str:
-    """Extract and verify Clerk token from Authorization header."""
+    """Extract and verify Clerk token from Authorization header. Returns 401 on any auth error."""
     # Local/dev bypass (optional)
     if os.getenv("DEV_NO_AUTH", "false").lower() in {"1", "true", "yes"}:
         return "dev_user"
 
-    auth_header = req.headers.get("Authorization", "")
-    dbg("🔐 Authorization Header:", auth_header)
+    auth_header = req.headers.get("authorization") or req.headers.get("Authorization") or ""
+    dbg("🔐 Authorization header present:", bool(auth_header))
 
     if not auth_header.startswith("Bearer "):
         dbg("❌ Missing or malformed token")
@@ -84,18 +87,23 @@ def get_clerk_user_id(req: Request) -> str:
             detail="Missing Clerk session token",
         )
 
-    token = auth_header.split(" ", 1)[1]
-    dbg("🔍 Verifying token...")
-    claims = verify_clerk_token(token)
-    dbg("✅ Token verified. User ID:", claims.get("sub"))
-
-    sub = claims.get("sub")
-    if not sub:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid Clerk token (no subject)",
-        )
-    return sub
+    token = auth_header.split(" ", 1)[1].strip()
+    try:
+        dbg("🔍 Verifying token...")
+        claims = verify_clerk_token(token)
+        sub = claims.get("sub") or claims.get("user_id")
+        dbg("✅ Token verified. User ID (sub):", sub)
+        if not sub:
+            raise HTTPException(status_code=401, detail="Invalid Clerk token (no subject)")
+        return sub
+    except HTTPException:
+        raise
+    except Exception as e:
+        # Never leak internal errors for auth; log and return 401
+        if DEBUG:
+            print("🔒 Clerk verify error:", repr(e))
+            traceback.print_exc()
+        raise HTTPException(status_code=401, detail="Invalid Clerk session token")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Models
@@ -141,12 +149,12 @@ def _sanitize_mode(requested: str) -> str:
         return DEFAULT_MODE
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Classic non-streaming endpoint (kept as-is)
+# Classic non-streaming endpoint
 @app.post("/chat", response_model=ChatResponse)
 async def chat_endpoint(payload: ChatRequest, req: Request):
     try:
         dbg("\n🌐 /chat endpoint hit!")
-        dbg("📝 Payload received:", payload.dict())
+        dbg("📝 Payload keys:", list(payload.dict().keys()))
 
         # Basic validation
         if not payload.text or not isinstance(payload.text, str):
@@ -175,9 +183,9 @@ async def chat_endpoint(payload: ChatRequest, req: Request):
             label, prob = ("neutral", 0.0)
 
         patch = make_patch(label, float(prob), mode, text=payload.text)
-        dbg(f"🧩 CEL patch → tool_hint={patch.tool_hint} safety={patch.safety}")
+        dbg(f"🧩 CEL patch → tool_hint={patch.tool_hint} safety={getattr(patch, 'safety', None)}")
 
-        # Optional early safety exit (expand as you add more policies)
+        # Optional early safety exit
         if getattr(patch, "safety", None) == "crisis":
             crisis_msg = (
                 "I’m concerned about your safety. Please reach out now: "
@@ -194,8 +202,6 @@ async def chat_endpoint(payload: ChatRequest, req: Request):
             )
 
         dbg("💬 Calling slurpy_answer...")
-
-        # Ensure rag_core uses the SAME session_id we use here
         result = slurpy_answer(
             payload.text,
             hist,
@@ -203,35 +209,33 @@ async def chat_endpoint(payload: ChatRequest, req: Request):
             mode=mode,
             session_id=sid,  # ← pass through session id
         )
+        # 🔧 Support async implementations
+        if inspect.isawaitable(result):
+            result = await result
 
-        # Handle cases where slurpy_answer might return None or an unexpected shape.
-        # We prefer explicit fallbacks over letting the server raise a confusing
-        # "None is not iterable" error when unpacking.
+        # Defensive handling of result shape
         if result is None:
             dbg("⚠️ slurpy_answer returned None; using fallback values.")
             answer = "(no response)"
-            emotion = "neutral"
+            answer_emotion = "neutral"
             fruit = "🍋"
         else:
             try:
-                answer, emotion, fruit = result
+                answer, answer_emotion, fruit = result
             except Exception as _e:
                 dbg("⚠️ slurpy_answer returned unexpected value; using fallback:", _e)
-                # Coerce to a string for the answer and sensible defaults for others.
                 answer = str(result)
-                emotion = "neutral"
+                answer_emotion = "neutral"
                 fruit = "🍋"
 
-        dbg("✅ Slurpy replied:", answer)
-
-        # ── CEL: apply empathy preface AFTER core response (prevents robotic "Got it." lead-ins)
-        final_message = f"{(getattr(patch, 'user_preface', '') or '').strip()}\n\n{answer}".strip() \
-                        if getattr(patch, "user_preface", None) else answer
+        # ── CEL: optional empathy preface AFTER core response
+        preface = (getattr(patch, "user_preface", "") or "").strip()
+        final_message = f"{preface}\n\n{answer}".strip() if preface else answer
 
         return ChatResponse(
             session_id=sid,
             message=final_message,
-            emotion=emotion or label or "neutral",
+            emotion=answer_emotion or label or "neutral",
             fruit=fruit,
             mode=mode,
             tool_hint=getattr(patch, "tool_hint", None),
@@ -240,18 +244,17 @@ async def chat_endpoint(payload: ChatRequest, req: Request):
         raise
     except Exception as e:
         # Keep internal details out of client; use server logs for debugging
-        print("🔥 INTERNAL ERROR:", str(e))
+        print("🔥 INTERNAL ERROR in /chat:", repr(e))
+        if DEBUG:
+            traceback.print_exc()
         raise HTTPException(status_code=500, detail="Server error")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Streaming NDJSON endpoint for typewriter UI
 #
-# Frontend can read each line and, when type=="delta", append `.text` to the
-# currently-rendering assistant bubble. When type=="done", finalize the bubble.
-#
 # Event shapes:
 #  { "type":"start", "session_id":"...", "mode":"...", "tool_hint": "Breathing" | null }
-#  { "type":"meta",  "emotion":"anxious", "fruit":"Jittery Banana" }
+#  { "type":"meta",  "emotion":"anxious", "fruit":"🍌" }
 #  { "type":"delta", "text":"<token-or-chunk>" }
 #  { "type":"done" }
 #
@@ -275,7 +278,7 @@ async def chat_stream(payload: ChatRequest, req: Request):
     try:
         label, prob = emotion_intensity(payload.text)
         patch = make_patch(label, float(prob), mode, text=payload.text)
-        dbg(f"🧩 [stream] CEL → hint={patch.tool_hint} safety={patch.safety}")
+        dbg(f"🧩 [stream] CEL → hint={patch.tool_hint} safety={getattr(patch, 'safety', None)}")
         if getattr(patch, "safety", None) == "crisis":
             async def crisis_stream() -> AsyncGenerator[bytes, None]:
                 yield _nd({"type": "start", "session_id": sid, "mode": mode, "tool_hint": None})
@@ -285,7 +288,11 @@ async def chat_stream(payload: ChatRequest, req: Request):
             return _streaming_response(crisis_stream())
     except Exception as _e:
         dbg(f"⚠️ [stream] CEL failed: {_e}")
-        patch = type("Patch", (), {"tool_hint": None, "user_preface": None})()  # minimal fallback
+        # minimal fallback object
+        class _Patch: 
+            tool_hint = None
+            user_preface = None
+        patch = _Patch()
 
     # Build prompt (fast; no model call)
     prompt_meta = build_stream_prompt(payload.text, hist, user_id=user_id, mode=mode)
@@ -315,16 +322,13 @@ async def chat_stream(payload: ChatRequest, req: Request):
             combined += preface + "\n\n"
 
         try:
-            # OpenAI Chat Completions streaming
+            # OpenAI Chat Completions streaming (synchronous iterator)
             stream = client.chat.completions.create(
                 model=model,
                 stream=True,
                 temperature=temperature,
                 max_tokens=400,
-                messages=[
-                    # We can pass the entire composed prompt as a single user message.
-                    {"role": "user", "content": full_prompt}
-                ],
+                messages=[{"role": "user", "content": full_prompt}],
             )
             for event in stream:
                 if not event.choices:
@@ -335,15 +339,15 @@ async def chat_stream(payload: ChatRequest, req: Request):
                     yield _nd({"type": "delta", "text": piece})
         except Exception as e:
             dbg("🔥 Streaming error:", e)
+            if DEBUG:
+                traceback.print_exc()
             yield _nd({"type": "delta", "text": "\n\n(temporary hiccup while streaming; message may be truncated) "})
 
         # Close event
         yield _nd({"type": "done"})
 
         # Update in-memory history so next turn has context (no DB writes here)
-        # Use the emotion guess we computed pre-stream for consistency
         try:
-            # Avoid empty combined
             final_text = combined.strip() if combined.strip() else "(no content)"
             hist.append((payload.text, final_text, emotion_guess))
         except Exception as _e:
@@ -375,6 +379,8 @@ async def get_modes_endpoint():
         )
     except Exception as e:
         print("🔥 ERROR getting modes:", str(e))
+        if DEBUG:
+            traceback.print_exc()
         raise HTTPException(status_code=500, detail="Server error")
 
 # ─────────────────────────────────────────────────────────────────────────────
