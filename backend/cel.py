@@ -1,34 +1,26 @@
 # -*- coding: utf-8 -*-
 """
-cel.py — Compact Emotion Layer (CEL)
+cel.py — Compact Emotion Layer (CEL) [prod-hardened]
 
 Purpose
 -------
-Normalize whatever the classifier (or user slang) throws at us into a small,
-actionable set of emotions and return a "patch" the frontend/backend can use
-to tune response style and trigger inline interventions (e.g., Breathing).
+Normalize classifier output (and user slang) into a small, actionable set and
+return a "patch" the stack can use to tune style and UI nudges.
 
-Key features
-------------
-• Robust normalization: panic/panicked/panicking, nervous, worried, stressed,
-  overwhelmed, spiraling, on edge, *edgy*, etc. → "anxious"
-• Lightweight text heuristics (regex) catch slang & physiology (heart racing, can't breathe)
-• Optional GPT fallback router for low-confidence cases
-  - Enable with env: CEL_USE_LLM=1 and OPENAI_API_KEY set
-  - Strict JSON, low temp, redacted input; returns one of:
-    {"anxious","angry","sad","foggy","meaning","neutral"}
-
-Return shape
-------------
+Public API
+----------
 make_patch(label: str, prob: float, persona: str, text: Optional[str]) -> Patch
 
-- user_preface: short empathetic preface to prepend to model’s reply
-- system_addendum: style nudge for downstream generation (if you choose to use it)
+- user_preface: short, empathetic preface to prepend to model’s reply
+- system_addendum: style nudge string for downstream prompts
 - tool_hint:  "Breathing" | "ConflictStyle" | "Stretch" | None
-- max_questions: gentle cap to keep responses tight during dysregulation
-- safety: "crisis" | None  (placeholder; extend if you add explicit crisis labels)
+- max_questions: gently cap questions when dysregulated
+- safety: "crisis" | None   (quick local signal; full routing still handled by safety.py)
 
-This file is self-contained and safe if GPT is unavailable (falls back gracefully).
+Env
+---
+- CEL_USE_LLM=1           → enable GPT fallback router (requires OPENAI_API_KEY)
+- CEL_DEBUG=true|1        → verbose prints from this module
 """
 
 from __future__ import annotations
@@ -36,15 +28,20 @@ from __future__ import annotations
 from dataclasses import dataclass
 import os
 import re
-from typing import Optional
+from functools import lru_cache
+from typing import Optional, Tuple
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Optional semantic router (GPT) — only used if CEL_USE_LLM=1 and OPENAI_API_KEY is set
+# Optional semantic router (GPT). Imported lazily & guarded.
 try:
     from backend.cel_llm import llm_semantic_emotion  # type: ignore
 except Exception:  # pragma: no cover
     llm_semantic_emotion = None  # type: ignore
 
+CEL_DEBUG = os.getenv("CEL_DEBUG", "false").lower() in {"1", "true", "yes"}
+def _dbg(*a):  # tiny local logger
+    if CEL_DEBUG:
+        print("[CEL]", *a)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Patch contract returned to the caller
@@ -57,7 +54,7 @@ class Patch:
     safety: Optional[str] = None
 
 
-# Short, human, and safe empathetic lines
+# Short, human, safe empathetic lines
 EMPATHY = {
     "anxious": "I’m hearing urgency and racing thoughts — let’s slow the tempo for a moment.",
     "angry":   "I can feel the heat here — your anger makes sense.",
@@ -74,17 +71,26 @@ STYLE = {
     "friend":    "Warm, casual, validating. Avoid advice dumping.",
 }
 
-
 # ─────────────────────────────────────────────────────────────────────────────
+# Minimal crisis signals (fast, local). Full routing still handled by safety.py.
+CRISIS_RX = re.compile(
+    r"(kill myself|suicide|end my life|self[-\s]?harm|cutting|can['’]?t cope)",
+    re.I,
+)
+
 # Helpers
 def _root(w: str) -> str:
     """Very light stemming to fold simple variants together."""
     w = (w or "").lower().strip()
+    w = w.replace("’", "'")
     for suf in ("ing", "ed", "ly", "ness", "s"):
         if w.endswith(suf) and len(w) > len(suf) + 2:
             return w[: -len(suf)]
     return w
 
+def _is_greeting(t: str) -> bool:
+    t = (t or "").strip().lower()
+    return t in {"hi", "hey", "hello", "yo", "sup", "hiya"} or (len(t) <= 3 and t in {"hi", "yo"})
 
 # Canonical vocab buckets — add slang here to widen coverage
 ANXIOUS_SET = {
@@ -138,7 +144,6 @@ SAD_RX = re.compile(
     re.I,
 )
 
-
 def _normalize_label(label: str) -> str:
     """Map classifier label to a canonical bucket."""
     l = _root(label or "neutral")
@@ -148,13 +153,11 @@ def _normalize_label(label: str) -> str:
         return "angry"
     if l in SAD_SET:
         return "sad"
-    # keep extra lanes for future semantics if you want
     if l in {"foggy"}:
         return "foggy"
     if l in {"meaning", "meaningful"}:
         return "meaning"
     return "neutral"
-
 
 def _text_hint(text: Optional[str]) -> Optional[str]:
     """Regex nudge from raw text; returns a canonical label or None."""
@@ -169,37 +172,51 @@ def _text_hint(text: Optional[str]) -> Optional[str]:
         return "sad"
     return None
 
+# ─────────────────────────────────────────────────────────────────────────────
+# LLM fallback (optional) with memoization to cut cost/latency
+@lru_cache(maxsize=1024)
+def _llm_route_cached(sample: str) -> Optional[Tuple[str, float]]:
+    """Cache results for identical prompts; returns (label, conf) or None."""
+    if not (os.getenv("CEL_USE_LLM", "0").lower() in {"1", "true", "yes"} and llm_semantic_emotion):
+        return None
+    try:
+        data = llm_semantic_emotion(sample or "")
+        if isinstance(data, dict) and data.get("label"):
+            lab = str(data["label"]).strip().lower()
+            conf = float(data.get("confidence") or 0.75)
+            return _normalize_label(lab), max(0.0, min(1.0, conf))
+    except Exception:
+        pass
+    return None
 
-def _resolve_emotion(label: str, prob: float, text: Optional[str]) -> tuple[str, float]:
+def _resolve_emotion(label: str, prob: float, text: Optional[str]) -> Tuple[str, float]:
     """
     Decide on a canonical emotion using:
-      1) classifier label (if confident >= 0.72)
+      1) classifier label (if confident enough)
       2) text hints (regex) if low confidence
-      3) optional GPT fallback if still low and enabled
+      3) optional LLM fallback if still low and enabled
     """
     canon = _normalize_label(label)
     if prob >= 0.72:
+        _dbg("classifier confident →", canon, prob)
         return canon, prob
 
     hint = _text_hint(text)
     if hint:
-        # bump a bit so downstream logic can confidently trigger tools
+        _dbg("regex hint →", hint)
+        # bump a bit so downstream can trigger tools confidently
         return hint, max(prob, 0.78)
 
-    use_llm = os.getenv("CEL_USE_LLM", "0").lower() in {"1", "true", "yes"}
-    if use_llm and llm_semantic_emotion:
-        try:
-            data = llm_semantic_emotion(text or "")
-            if isinstance(data, dict) and data.get("label"):
-                lab = str(data.get("label"))
-                conf = float(data.get("confidence") or 0.75)
-                return _normalize_label(lab), conf
-        except Exception:
-            # silent fallback
-            pass
+    # Only route to LLM if we have enough text to meaningfully parse
+    t = (text or "").strip()
+    if len(t) >= 6 and not _is_greeting(t):
+        cached = _llm_route_cached(t.lower())
+        if cached:
+            _dbg("llm route →", cached)
+            return cached
 
+    _dbg("fallback neutral-ish →", canon, prob)
     return canon, prob
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Public API
@@ -211,7 +228,7 @@ def make_patch(label: str, prob: float, persona: str, text: Optional[str] = None
 
     p = Patch()
     p.user_preface = EMPATHY.get(emo, EMPATHY["neutral"])
-    p.system_addendum = STYLE.get(persona, STYLE["therapist"])
+    p.system_addendum = STYLE.get(persona, STYLE.get("therapist", ""))
 
     # Tiny, targeted interventions (frontend chooses how to render)
     if emo == "anxious":
@@ -224,8 +241,8 @@ def make_patch(label: str, prob: float, persona: str, text: Optional[str] = None
         p.tool_hint = "Stretch"
         p.max_questions = 1
 
-    # Safety lane (placeholder). Extend when your classifier exposes crisis labels.
-    if conf >= 0.8 and emo in {"self-harm", "suicidal", "violence"}:
+    # Quick client-side safety lane (still rely on backend safety.py for canonical routing)
+    if text and CRISIS_RX.search(text):
         p.safety = "crisis"
 
     return p

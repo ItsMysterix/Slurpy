@@ -1,0 +1,37 @@
+app = "slurpy-web"
+primary_region = "iad"
+
+[build]
+  dockerfile = "infra/docker/Dockerfile.frontend"
+  context = "."
+
+  [build.args]
+    NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = "pk_live_xxx"
+    NEXT_PUBLIC_RAG_API = "https://api.slurpy.life/v1/mcp/stream"
+    NEXT_TELEMETRY_DISABLED = "1"
+
+[env]
+
+  NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = "pk_live_xxx"
+  NEXT_PUBLIC_RAG_API = "https://api.slurpy.life/v1/mcp/stream"
+
+  NEXT_PUBLIC_CLERK_SIGN_IN_URL = "/sign-in"
+  NEXT_PUBLIC_CLERK_SIGN_UP_URL = "/sign-up"
+  NEXT_PUBLIC_CLERK_AFTER_SIGN_IN_URL = "/chat"
+  NEXT_PUBLIC_CLERK_AFTER_SIGN_UP_URL = "/chat"
+
+  NEXT_PUBLIC_CLERK_ALLOWED_ORIGINS = "https://slurpy.life,https://slurpy-web.fly.dev"
+
+  NODE_OPTIONS = "--dns-result-order=ipv4first"
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+  auto_stop_machines = true
+  auto_start_machines = true
+  min_machines_running = 0
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory = "1gb"

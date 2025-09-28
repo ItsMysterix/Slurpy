@@ -2,19 +2,23 @@ FROM python:3.11-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1
 
-RUN apt-get update && apt-get install -y --no-install-recommends gcc python3-dev build-essential && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      gcc python3-dev build-essential \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-COPY requirements.txt .
+# install python deps
+RUN python -m pip install --upgrade pip setuptools wheel
+COPY requirements/backend.txt ./requirements.txt
 RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu \
       torch==2.4.1 torchvision==0.19.1 torchaudio==2.4.1 \
  && pip install --no-cache-dir sentence-transformers==2.7.0 \
  && pip install --no-cache-dir -r requirements.txt
 
+# app code
 COPY backend ./backend
 COPY emotion ./emotion
 
 EXPOSE 8000
 CMD ["sh","-c","uvicorn backend.api:app --host 0.0.0.0 --port ${PORT:-8000}"]
-

@@ -1,316 +1,425 @@
+# backend/direct_upload.py
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
-Direct SQLite extraction and cloud upload - bypasses Qdrant client issues
+Direct SQLite → Qdrant Cloud uploader (streaming, resilient)
+
+Why this version?
+- Streams rows out of SQLite with fetchmany() (no giant .fetchall())
+- Converts pickled Qdrant records into dense vectors + payload
+- Uploads in batches with retries/backoff
+- Auto-creates/optionally-replaces the cloud collection
+- Detects vector dimension from the first valid row (or accept --dim)
+- Verifies upload without forcing heavyweight model downloads
+- Keeps backward-compat helpers: extract_points_from_sqlite(), upload_points_to_cloud()
+
+Typical usage:
+  python -m backend.direct_upload --replace
+  python -m backend.direct_upload --db ed_index_full/storage.sqlite --batch 500
+  python -m backend.direct_upload --collection ed_chunks_v2 --dim 384
+
+Environment:
+  QDRANT_URL
+  QDRANT_API_KEY
 """
+
+from __future__ import annotations
+
 import os
+import sys
+import argparse
 import sqlite3
 import pickle
 import uuid
+import time
+from typing import Generator, Iterable, List, Optional, Tuple, Dict, Any
+
+from dotenv import load_dotenv
 from qdrant_client import QdrantClient
 from qdrant_client.models import VectorParams, Distance, PointStruct
-from langchain_community.embeddings import HuggingFaceEmbeddings
-from dotenv import load_dotenv
-from typing import List, Optional
-import argparse
+
+# Optional: light verify search if embeddings are available (not required)
+try:
+    from langchain_community.embeddings import HuggingFaceEmbeddings  # type: ignore
+except Exception:  # pragma: no cover
+    HuggingFaceEmbeddings = None  # type: ignore
 
 load_dotenv()
 
-QDRANT_URL = os.getenv("QDRANT_URL")
-QDRANT_API = os.getenv("QDRANT_API_KEY")
-CLOUD_COLLECTION = "ed_chunks"
+QDRANT_URL = os.getenv("QDRANT_URL") or ""
+QDRANT_API = os.getenv("QDRANT_API_KEY") or ""
+DEFAULT_COLLECTION = "ed_chunks"
+DEFAULT_SQLITE = "ed_index_full/storage.sqlite"
 
-def extract_points_from_sqlite() -> List[PointStruct]:
-    """Extract all points directly from the SQLite database"""
-    
-    print("🔄 EXTRACTING DATA DIRECTLY FROM SQLITE")
-    print("=" * 45)
-    
-    db_path = 'ed_index_full/storage.sqlite'
-    
-    if not os.path.exists(db_path):
-        print(f"❌ SQLite file not found: {db_path}")
-        return []
-    
-    print(f"📊 Opening database: {db_path}")
-    
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
-    
-    # Get total count
-    cursor.execute("SELECT COUNT(*) FROM points")
-    total_points = cursor.fetchone()[0]
-    print(f"📈 Total points to extract: {total_points}")
-    
-    # Extract all points
-    cursor.execute("SELECT id, point FROM points")
-    
-    extracted_points = []
-    failed_count = 0
-    processed_count = 0
-    
-    print("🔄 Processing points...")
-    
-    for row_id, point_data in cursor.fetchall():
-        processed_count += 1
-        
-        if processed_count % 1000 == 0:
-            print(f"   Processed {processed_count}/{total_points} points...")
-        
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Utilities
+# ─────────────────────────────────────────────────────────────────────────────
+def _eprint(*a, **k):
+    print(*a, file=sys.stderr, **k)
+
+
+def _vector_from_any(vec: Any) -> Optional[List[float]]:
+    """
+    Convert a variety of vector shapes to a plain list[float].
+    Supports:
+      - list[float]
+      - dict with a first named dense vector
+      - objects carrying `.values` and `.indices` (sparse) → skipped (no safe dim)
+    """
+    if vec is None:
+        return None
+    if isinstance(vec, list):
+        # already dense
+        return [float(x) for x in vec]
+    if isinstance(vec, dict) and vec:
+        # take first named vector if it's a list
+        first_key = next(iter(vec))
+        v = vec[first_key]
+        if isinstance(v, list):
+            return [float(x) for x in v]
+        # sparse types (values/indices) are ambiguous without a declared dimension;
+        # return None so caller can skip or handle separately.
+        if hasattr(v, "values") and hasattr(v, "indices"):
+            return None
+    # objects with .vector
+    if hasattr(vec, "__iter__"):
         try:
-            # Decode the pickled point data
-            decoded_point = pickle.loads(point_data)
-            
-            # Extract required fields
-            original_id = None
-            vector = None
-            payload = {}
-            
-            # Handle different object types to get original ID
-            if hasattr(decoded_point, 'id'):
-                original_id = decoded_point.id
-            elif hasattr(decoded_point, '__dict__') and 'id' in decoded_point.__dict__:
-                original_id = decoded_point.__dict__['id']
-            
-            # Always generate a new UUID for Qdrant Cloud compatibility
-            # Store original ID in payload if it exists
-            point_id = str(uuid.uuid4())
-            
-            if hasattr(decoded_point, 'vector'):
-                vector = decoded_point.vector
-            elif hasattr(decoded_point, '__dict__') and 'vector' in decoded_point.__dict__:
-                vector = decoded_point.__dict__['vector']
-            
-            if hasattr(decoded_point, 'payload'):
-                payload = decoded_point.payload or {}
-            elif hasattr(decoded_point, '__dict__') and 'payload' in decoded_point.__dict__:
-                payload = decoded_point.__dict__['payload'] or {}
-            
-            # Store original ID in payload for reference
-            if original_id is not None:
-                payload['original_id'] = original_id
-            
-            # Validate vector
-            if vector is None:
-                failed_count += 1
-                continue
-            
-            # Handle different vector formats
-            final_vector = None
-            if isinstance(vector, list):
-                final_vector = vector
-            elif isinstance(vector, dict):
-                # Handle named vectors
-                if len(vector) > 0:
-                    first_key = list(vector.keys())[0]
-                    vector_data = vector[first_key]
-                    if isinstance(vector_data, list):
-                        final_vector = vector_data
-                    else:
-                        failed_count += 1
+            return [float(x) for x in list(vec)]  # best-effort
+        except Exception:
+            return None
+    return None
+
+
+def _decode_pickled_point(raw: bytes) -> Tuple[Optional[str], Optional[List[float]], Dict[str, Any]]:
+    """
+    Decode a pickled Qdrant local record into (original_id, vector, payload).
+    If vector cannot be resolved, returns (id, None, payload).
+    NOTE: This trusts local SQLite generated by your own pipeline.
+    """
+    obj = pickle.loads(raw)  # noqa: S301 (trusted local artifact)
+    original_id = None
+    payload: Dict[str, Any] = {}
+
+    # id
+    if hasattr(obj, "id"):
+        original_id = obj.id
+    elif isinstance(obj, dict) and "id" in obj:
+        original_id = obj["id"]
+    elif hasattr(obj, "__dict__") and "id" in obj.__dict__:
+        original_id = obj.__dict__["id"]
+
+    # payload
+    if isinstance(obj, dict) and "payload" in obj:
+        payload = obj.get("payload") or {}
+    elif hasattr(obj, "payload"):
+        payload = getattr(obj, "payload", {}) or {}
+    elif hasattr(obj, "__dict__") and "payload" in obj.__dict__:
+        payload = obj.__dict__["payload"] or {}
+
+    # vector
+    cand = None
+    if isinstance(obj, dict) and "vector" in obj:
+        cand = obj["vector"]
+    elif hasattr(obj, "vector") and not isinstance(obj, dict):
+        cand = obj.vector
+    elif hasattr(obj, "__dict__") and "vector" in obj.__dict__:
+        cand = obj.__dict__["vector"]
+
+    vec = _vector_from_any(cand)
+    if original_id is not None:
+        payload.setdefault("original_id", original_id)
+    return str(original_id) if original_id is not None else None, vec, payload
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SQLite streaming extractor
+# ─────────────────────────────────────────────────────────────────────────────
+def iter_points_from_sqlite(
+    db_path: str = DEFAULT_SQLITE,
+    fetch_size: int = 2000,
+    max_rows: Optional[int] = None,
+) -> Generator[PointStruct, None, int]:
+    """
+    Stream rows from the local SQLite 'points' table and yield PointStructs.
+    Returns the total attempted rows as the generator's return value.
+    """
+    if not os.path.exists(db_path):
+        _eprint(f"❌ SQLite file not found: {db_path}")
+        return 0  # type: ignore [return-value]
+
+    con = sqlite3.connect(db_path)
+    try:
+        cur = con.cursor()
+        # Count total (for progress)
+        try:
+            cur.execute("SELECT COUNT(*) FROM points")
+            total = int(cur.fetchone()[0] or 0)
+        except Exception:
+            total = 0
+
+        print(f"📊 Reading from: {db_path}")
+        print(f"📈 Points in table: {total or 'unknown'}")
+        cur.execute("SELECT id, point FROM points")
+
+        processed = 0
+        yielded = 0
+        failures = 0
+
+        while True:
+            rows = cur.fetchmany(fetch_size)
+            if not rows:
+                break
+
+            for _row_id, raw in rows:
+                processed += 1
+                if max_rows and processed > max_rows:
+                    break
+                try:
+                    _orig, vec, payload = _decode_pickled_point(raw)
+                    if not isinstance(vec, list) or not vec:
+                        failures += 1
                         continue
-                else:
-                    failed_count += 1
-                    continue
-            else:
-                failed_count += 1
-                continue
-            
-            # Create PointStruct with UUID
-            point = PointStruct(
-                id=point_id,  # Always a UUID now
-                vector=final_vector,
-                payload=payload  # Contains original_id if it existed
-            )
-            
-            extracted_points.append(point)
-            
-        except Exception as e:
-            failed_count += 1
-            if failed_count <= 5:  # Show first few errors
-                print(f"   ⚠️ Failed to decode point {processed_count}: {e}")
-    
-    conn.close()
-    
-    print(f"\n✅ Extraction complete!")
-    print(f"   Successfully extracted: {len(extracted_points)} points")
-    print(f"   Failed to decode: {failed_count} points")
-    print(f"   Success rate: {(len(extracted_points)/total_points)*100:.1f}%")
-    
-    if extracted_points:
-        # Show sample data
-        sample = extracted_points[0]
-        print(f"\n📋 Sample extracted point:")
-        print(f"   ID: {sample.id} (UUID)")
-        if 'original_id' in sample.payload:
-            print(f"   Original ID: {sample.payload['original_id']} (stored in payload)")
-        print(f"   Vector type: {type(sample.vector)}")
-        print(f"   Vector length: {len(sample.vector) if isinstance(sample.vector, list) else 'unknown'}")
-        print(f"   Payload keys: {list(sample.payload.keys()) if sample.payload else 'None'}")
-        
-        # Check vector dimensions
-        if isinstance(sample.vector, list):
-            vector_dim = len(sample.vector)
-            print(f"   Vector dimension: {vector_dim}")
-    
-    return extracted_points
+                    pt = PointStruct(
+                        id=str(uuid.uuid4()),     # decouple from local ids
+                        vector=vec,
+                        payload=payload or {},
+                    )
+                    yielded += 1
+                    if yielded % 1000 == 0:
+                        print(f"   • yielded {yielded} points…")
+                    yield pt
+                except Exception as e:
+                    failures += 1
+                    if failures <= 5:
+                        _eprint(f"   ⚠️ decode failure (#{failures}): {e}")
+            if max_rows and processed > max_rows:
+                break
 
-def upload_points_to_cloud(points: List[PointStruct], replace_existing: bool = False) -> bool:
-    """Upload extracted points directly to Qdrant Cloud"""
-    
-    print(f"\n☁️ UPLOADING TO QDRANT CLOUD")
-    print("=" * 35)
-    
-    if not points:
-        print("❌ No points to upload!")
-        return False
-    
-    print(f"📊 Points to upload: {len(points)}")
-    
-    # Connect to cloud
-    try:
-        print("🔗 Connecting to Qdrant Cloud...")
-        cloud_client = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API)
-        print("✅ Connected successfully!")
-    except Exception as e:
-        print(f"❌ Failed to connect to cloud: {e}")
-        print("💡 Check your QDRANT_URL and QDRANT_API_KEY in .env file")
-        return False
-    
-    # Get vector dimension from first point
-    vector_dim = len(points[0].vector) if isinstance(points[0].vector, list) else 384
-    print(f"📐 Using vector dimension: {vector_dim}")
-    
-    # Check if collection exists
-    try:
-        existing_collections = cloud_client.get_collections().collections
-        collection_names = [c.name for c in existing_collections]
-        
-        if CLOUD_COLLECTION in collection_names:
-            if replace_existing:
-                print(f"🗑️ Deleting existing collection: {CLOUD_COLLECTION}")
-                cloud_client.delete_collection(CLOUD_COLLECTION)
-            else:
-                existing_info = cloud_client.get_collection(CLOUD_COLLECTION)
-                existing_count = existing_info.points_count or 0
-                print(f"📋 Collection exists with {existing_count} points (will add to existing)")
-        
-        # Create or ensure collection exists
-        if CLOUD_COLLECTION not in collection_names or replace_existing:
-            print(f"📦 Creating collection: {CLOUD_COLLECTION}")
-            cloud_client.create_collection(
-                collection_name=CLOUD_COLLECTION,
-                vectors_config=VectorParams(size=vector_dim, distance=Distance.COSINE)
-            )
-            print("✅ Collection created!")
-        
-    except Exception as e:
-        print(f"❌ Error managing collection: {e}")
-        return False
-    
-    # Upload in batches
-    print(f"⬆️ Uploading points in batches...")
-    batch_size = 100
-    total_batches = (len(points) - 1) // batch_size + 1
-    
-    try:
-        for i in range(0, len(points), batch_size):
-            batch = points[i:i + batch_size]
-            
-            cloud_client.upsert(
-                collection_name=CLOUD_COLLECTION,
-                points=batch
-            )
-            
-            batch_num = i // batch_size + 1
-            progress = (batch_num / total_batches) * 100
-            print(f"   ✅ Batch {batch_num}/{total_batches} ({progress:.1f}%) - {len(batch)} points")
-    
-    except Exception as e:
-        print(f"❌ Error during upload: {e}")
-        return False
-    
-    # Verify upload
-    try:
-        print(f"\n🎉 Verifying upload...")
-        final_info = cloud_client.get_collection(CLOUD_COLLECTION)
-        final_count = final_info.points_count or 0
-        print(f"✅ Upload complete! Cloud now has {final_count} total points")
-        
-        # Test search to make sure everything works
-        print(f"🔍 Testing search functionality...")
-        embedder = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
-        test_vector = embedder.embed_query("test search query")
-        
-        search_results = cloud_client.search(
-            collection_name=CLOUD_COLLECTION,
-            query_vector=test_vector,
-            limit=3
+        print(f"✅ Extraction done: yielded={yielded}, failed={failures}, processed={processed}")
+        return processed  # type: ignore [return-value]
+    finally:
+        con.close()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Cloud helpers
+# ─────────────────────────────────────────────────────────────────────────────
+def _ensure_collection(
+    cli: QdrantClient,
+    name: str,
+    vector_dim: int,
+    replace_existing: bool = False,
+) -> None:
+    collections = cli.get_collections().collections
+    names = [c.name for c in collections]
+    if name in names and replace_existing:
+        print(f"🗑️ Deleting existing collection: {name}")
+        cli.delete_collection(name)
+
+    if name not in names or replace_existing:
+        print(f"📦 Creating collection: {name} (dim={vector_dim})")
+        cli.create_collection(
+            collection_name=name,
+            vectors_config=VectorParams(size=vector_dim, distance=Distance.COSINE),
         )
-        print(f"✅ Search test successful - found {len(search_results)} results")
-        
-        if search_results:
-            print(f"📋 Sample search result:")
-            sample_result = search_results[0]
-            print(f"   Score: {sample_result.score:.4f}")
-            if sample_result.payload:
-                print(f"   Payload keys: {list(sample_result.payload.keys())}")
-        
-        print(f"\n🚀 SUCCESS! Your data is now live in Qdrant Cloud!")
-        print(f"   Collection: {CLOUD_COLLECTION}")
-        print(f"   Total points: {final_count}")
-        print(f"   Vector dimension: {vector_dim}")
-        
-        return True
-        
-    except Exception as e:
-        print(f"⚠️ Upload completed but verification failed: {e}")
-        return True  # Still consider it successful
-
-def main():
-    parser = argparse.ArgumentParser(description="Direct SQLite to Qdrant Cloud Migration")
-    parser.add_argument('--replace', action='store_true', 
-                       help='Replace existing cloud collection (default: add to existing)')
-    parser.add_argument('--extract-only', action='store_true',
-                       help='Only extract and save data locally, do not upload')
-    
-    args = parser.parse_args()
-    
-    print("🚀 DIRECT SQLITE TO CLOUD MIGRATION")
-    print("=" * 50)
-    
-    if args.replace:
-        print("⚠️ REPLACE MODE: Will delete existing cloud data!")
-        confirm = input("Are you sure? Type 'yes' to continue: ")
-        if confirm.lower() != 'yes':
-            print("❌ Cancelled")
-            return
-    
-    # Extract data from SQLite
-    points = extract_points_from_sqlite()
-    
-    if not points:
-        print("❌ No points extracted - nothing to upload")
-        return
-    
-    if args.extract_only:
-        # Save extracted data locally
-        output_file = "extracted_points.pickle"
-        with open(output_file, 'wb') as f:
-            pickle.dump(points, f)
-        print(f"\n💾 Extracted data saved to: {output_file}")
-        print(f"   {len(points)} points saved")
-        print("   Use without --extract-only flag to upload to cloud")
-        return
-    
-    # Upload to cloud
-    success = upload_points_to_cloud(points, replace_existing=args.replace)
-    
-    if success:
-        print(f"\n🎊 MIGRATION COMPLETE!")
-        print(f"   Your {len(points)} data points are now in Qdrant Cloud")
-        print(f"   You can now use your cloud collection for RAG queries")
     else:
-        print(f"\n❌ Migration failed - check the errors above")
+        info = cli.get_collection(name)
+        current = None
+        if info.config and info.config.params and info.config.params.vectors:
+            vectors_config = info.config.params.vectors
+            if isinstance(vectors_config, dict):
+                # Get the first vector config if it's a dictionary
+                first_vector = next(iter(vectors_config.values()), None)
+                if first_vector and hasattr(first_vector, 'size'):
+                    current = int(first_vector.size)
+            elif hasattr(vectors_config, 'size'):
+                current = int(vectors_config.size)
+        
+        if current and current != vector_dim:
+            raise RuntimeError(
+                f"Vector dim mismatch: cloud={current} vs local={vector_dim}. "
+                "Re-run with --replace or --dim to match."
+            )
+        print(f"✅ Collection exists: {name} (dim={current or vector_dim})")
+
+
+def _batched(iterable: Iterable[PointStruct], batch_size: int) -> Generator[List[PointStruct], None, None]:
+    batch: List[PointStruct] = []
+    for item in iterable:
+        batch.append(item)
+        if len(batch) >= batch_size:
+            yield batch
+            batch = []
+    if batch:
+        yield batch
+
+
+def _retry_upsert(
+    cli: QdrantClient,
+    collection: str,
+    points: List[PointStruct],
+    max_retries: int = 4,
+) -> None:
+    delay = 0.5
+    for attempt in range(1, max_retries + 1):
+        try:
+            cli.upsert(collection_name=collection, points=points)
+            return
+        except Exception as e:
+            if attempt == max_retries:
+                raise
+            _eprint(f"   ⚠️ upsert attempt {attempt} failed: {e} — retrying in {delay:.1f}s")
+            time.sleep(delay)
+            delay *= 2
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Legacy-compatible helpers (kept for callers who imported old API)
+# ─────────────────────────────────────────────────────────────────────────────
+def extract_points_from_sqlite(db_path: str = DEFAULT_SQLITE, limit: Optional[int] = None) -> List[PointStruct]:
+    """
+    Back-compat: return a list (not recommended for large datasets).
+    Prefer streaming via iter_points_from_sqlite().
+    """
+    out: List[PointStruct] = []
+    for i, pt in enumerate(iter_points_from_sqlite(db_path=db_path, fetch_size=2000, max_rows=limit or None), start=1):
+        out.append(pt)
+        if limit and i >= limit:
+            break
+    return out
+
+
+def upload_points_to_cloud(points: List[PointStruct], collection: str = DEFAULT_COLLECTION, replace_existing: bool = False) -> bool:
+    """
+    Back-compat: upload a list of points. Prefer streaming in main().
+    """
+    if not points:
+        _eprint("❌ No points to upload")
+        return False
+
+    if not QDRANT_URL or not QDRANT_API:
+        _eprint("❌ QDRANT_URL/QDRANT_API_KEY not set")
+        return False
+
+    print("🔗 Connecting to Qdrant Cloud…")
+    cli = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API)
+    dim = len(points[0].vector) if isinstance(points[0].vector, list) else 384
+    _ensure_collection(cli, collection, dim, replace_existing=replace_existing)
+
+    total = len(points)
+    print(f"⬆️ Uploading {total} points in batches of 100…")
+    uploaded = 0
+    for batch in _batched(points, 100):
+        _retry_upsert(cli, collection, batch)
+        uploaded += len(batch)
+        print(f"   • {uploaded}/{total}")
+
+    print("✅ Upload complete.")
+    return True
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CLI
+# ─────────────────────────────────────────────────────────────────────────────
+def main() -> None:
+    p = argparse.ArgumentParser(description="Direct SQLite → Qdrant Cloud (streaming)")
+    p.add_argument("--db", default=DEFAULT_SQLITE, help=f"Path to SQLite (default: {DEFAULT_SQLITE})")
+    p.add_argument("--collection", default=DEFAULT_COLLECTION, help=f"Cloud collection (default: {DEFAULT_COLLECTION})")
+    p.add_argument("--batch", type=int, default=200, help="Upload batch size (default: 200)")
+    p.add_argument("--dim", type=int, default=0, help="Force vector dimension (skip auto-detect)")
+    p.add_argument("--replace", action="store_true", help="Replace existing cloud collection")
+    p.add_argument("--limit", type=int, default=0, help="Process at most N rows (debug)")
+    p.add_argument("--skip-verify", action="store_true", help="Skip post-upload verification")
+    args = p.parse_args()
+
+    print("🚀 DIRECT SQLITE → QDRANT CLOUD")
+    print("=" * 42)
+
+    if not QDRANT_URL or not QDRANT_API:
+        _eprint("❌ Missing QDRANT_URL or QDRANT_API_KEY in environment")
+        sys.exit(1)
+
+    # Connect to cloud early
+    print("🔗 Connecting to Qdrant Cloud…")
+    cli = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API)
+    print("✅ Connected")
+
+    # Stream first N points until we can detect dimension
+    dim = int(args.dim) if args.dim and args.dim > 0 else 0
+    buffer: List[PointStruct] = []
+    yielded_total = 0
+
+    def _stream() -> Generator[PointStruct, None, None]:
+        nonlocal yielded_total
+        limit = args.limit if args.limit and args.limit > 0 else None
+        for pt in iter_points_from_sqlite(db_path=args.db, fetch_size=max(args.batch * 5, 1000), max_rows=limit):
+            yielded_total += 1
+            yield pt
+
+    stream = _stream()
+
+    # Prime dimension (peek 1 point)
+    try:
+        first = next(stream)
+    except StopIteration:
+        _eprint("❌ No points found in SQLite")
+        sys.exit(2)
+
+    buffer.append(first)
+    if dim <= 0:
+        dim = len(first.vector) if isinstance(first.vector, list) else 384
+    print(f"📐 Using vector dimension: {dim}")
+
+    # Ensure collection exists (and matches dim)
+    _ensure_collection(cli, args.collection, dim, replace_existing=args.replace)
+
+    # Upload: include primed buffer, then continue streaming in batches
+    uploaded = 0
+    batch_size = max(50, int(args.batch))
+
+    # Fill buffer to a full batch first
+    try:
+        while len(buffer) < batch_size:
+            buffer.append(next(stream))
+    except StopIteration:
+        pass
+
+    if buffer:
+        _retry_upsert(cli, args.collection, buffer)
+        uploaded += len(buffer)
+        print(f"   • Uploaded {uploaded} points")
+
+    # Continue with the rest
+    for batch in _batched(stream, batch_size):
+        _retry_upsert(cli, args.collection, batch)
+        uploaded += len(batch)
+        if uploaded % (batch_size * 5) == 0:
+            print(f"   • Uploaded {uploaded} points…")
+
+    print(f"✅ Upload complete: {uploaded} points total")
+
+    if args.skip_verify:
+        return
+
+    # Lightweight verification (no embedding download required)
+    try:
+        info = cli.get_collection(args.collection)
+        total_points = int(info.points_count or 0)
+        print(f"🔎 Cloud collection count: {total_points}")
+
+        # Try a simple search with a zero vector of matching dimension
+        zero_vec = [0.0] * dim
+        res = cli.search(collection_name=args.collection, query_vector=zero_vec, limit=3)
+        print(f"🔎 Search sanity check returned: {len(res)} hits")
+        if res:
+            sample = res[0]
+            print(f"   • sample score={getattr(sample, 'score', None)} payload_keys={list((sample.payload or {}).keys())}")
+        print("🎉 Verification succeeded.")
+    except Exception as e:
+        _eprint(f"⚠️ Verification encountered an issue: {e}")
+        _eprint("   (Upload likely succeeded; you can re-run without --skip-verify to try again.)")
+
 
 if __name__ == "__main__":
     main()

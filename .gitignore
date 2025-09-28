@@ -1,36 +1,29 @@
-# ───────── Python ─────────
-__pycache__/
-*.py[cod]
-*.so
-.venv/
-env/
-# pytest / coverage
-.coverage
-htmlcov/
-.tox/
-*.log
+# env/secrets
+.env*
+!.env.example
 
-# ───────── Node / Next.js ─────────
+# OS/editor
+.DS_Store
+.vscode/
+
+# node/next
 node_modules/
 .next/
-.vscode/
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
+.vercel/
+.turbo/
 
-# ───────── Environment & secrets ─────────
-.env*
-.clerk*
-*.key
-*.pem
+# python
+__pycache__/
+.venv*/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 
-# ───────── Build / dist artefacts ─────────
-dist/
-build/
-*.egg-info/
-package-lock.json  # keep if you prefer — remove if you commit lockfile
-
-# ───────── Model checkpoints & data ─────────
+# generated data / models
+ed_index_full/
+outputs/
+slurpy_qdrant_index/
+test-results/
 emotion/**/checkpoint-*/
 emotion/**/optimizer.pt
 emotion/**/scheduler.pt
@@ -38,19 +31,3 @@ emotion/**/rng_state.pth
 emotion/**/training_args.bin
 *.safetensors
 *.ckpt
-
-# Large vector index (kept in Qdrant Cloud now)
-ed_index_full/
-
-# Local SQLite memories (prod lives in Qdrant Cloud)
-*.sqlite
-
-# ───────── IDE miscellany ─────────
-.idea/
-.DS_Store
-Thumbs.db
-
-# ───────── Docker ─────────
-*.tar
-
-/generated/prisma

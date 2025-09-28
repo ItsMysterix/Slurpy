@@ -1,0 +1,6 @@
+# Pull in clean prod deps
+-r backend.txt
+-r frontend.txt
+
+# Pull in the original full stack (archive of old deps)
+-r old.txt

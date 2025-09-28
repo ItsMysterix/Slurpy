@@ -1,28 +1,21 @@
 #!/usr/bin/env node
+const { spawn } = require('node:child_process');
+const env = { ...process.env };
 
-const { spawn } = require('node:child_process')
+(async () => {
+  const launch = process.argv.slice(2).join(' ');
 
-const env = { ...process.env }
-
-;(async() => {
-  // If running the web server then prerender pages
-  if (process.argv.slice(-2).join(' ') === 'node server.js') {
-    await exec('npx next build --experimental-build-mode generate')
+  // Only prerender if explicitly enabled (e.g., PRERENDER_ON_BOOT=true)
+  if (env.PRERENDER_ON_BOOT === 'true') {
+    await exec('npx next build --experimental-build-mode generate');
   }
 
-  // launch application
-  await exec(process.argv.slice(2).join(' '))
-})()
+  await exec(launch);
+})();
 
 function exec(command) {
-  const child = spawn(command, { shell: true, stdio: 'inherit', env })
+  const child = spawn(command, { shell: true, stdio: 'inherit', env });
   return new Promise((resolve, reject) => {
-    child.on('exit', code => {
-      if (code === 0) {
-        resolve()
-      } else {
-        reject(new Error(`${command} failed rc=${code}`))
-      }
-    })
-  })
+    child.on('exit', code => (code === 0 ? resolve() : reject(new Error(`${command} failed rc=${code}`))));
+  });
 }

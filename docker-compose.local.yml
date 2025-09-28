@@ -1,0 +1,91 @@
+# docker-compose.local.yml
+# Minimal setup for testing MCP server locally with cloud Qdrant
+# Usage: docker compose -f docker-compose.local.yml up
+
+services:
+  mcp-local:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.mcp
+    env_file:
+      - .env
+    environment:
+      FRONTEND_ORIGIN: http://localhost:3000
+      CORS_ALLOW_ALL: "true"
+      # Use your cloud Qdrant with API key (from .env file)
+    ports:
+      - "9001:9001"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9001/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - local-network
+
+  backend-local:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.backend
+    env_file:
+      - .env
+    environment:
+      API_DEBUG: "true"
+      DEV_NO_AUTH: "true"
+      FRONTEND_ORIGIN: http://localhost:3000
+      CORS_ALLOW_ALL: "true"
+      MCP_BASE_URL: http://mcp-local:9001
+      # Use your cloud Qdrant with API key (from .env file)
+    depends_on:
+      mcp-local:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - local-network
+
+  frontend-local:
+    image: node:20-bookworm-slim
+    working_dir: /app
+    command: >
+      bash -c "
+        npm install &&
+        npm run dev --legacy-peer-deps
+      "
+    volumes:
+      - .:/app
+      - /app/node_modules
+    environment:
+      - NODE_ENV=development
+      - NEXT_PUBLIC_RAG_API=http://localhost:8000/v1/mcp/stream
+      - NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY}
+      - CLERK_SECRET_KEY=${CLERK_SECRET_KEY}
+      - NEXT_PUBLIC_CLERK_SIGN_IN_URL=/sign-in
+      - NEXT_PUBLIC_CLERK_SIGN_UP_URL=/sign-up
+      - NEXT_PUBLIC_CLERK_AFTER_SIGN_IN_URL=/chat
+      - NEXT_PUBLIC_CLERK_AFTER_SIGN_UP_URL=/chat
+      - NEXT_PUBLIC_CLERK_DOMAIN=localhost:3000
+      - NEXT_PUBLIC_CLERK_ALLOWED_ORIGINS=http://localhost:3000
+      - SLURPY_MOOD_MODEL=DailyMood
+      - NEXT_TELEMETRY_DISABLED=1
+    env_file:
+      - .env
+    depends_on:
+      backend-local:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    networks:
+      - local-network
+    restart: unless-stopped
+
+networks:
+  local-network:
+    driver: bridge

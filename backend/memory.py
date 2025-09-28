@@ -1,643 +1,617 @@
+# backend/memory.py
 """
-memory.py – Enhanced Qdrant Cloud memory system with proper type handling
+Enhanced Qdrant Cloud memory system with robust env loading and type-safe helpers.
+Exposes module-level functions used by the rest of the backend:
+  - add_message(user_id, text, emotion, fruit, intensity, context?)
+  - recall(user_id, query, k=5)
+  - get_user_insights(user_id)
+  - search_by_theme(user_id, theme, limit=5)
+  - get_conversation_context(user_id, current_message)
 """
-import uuid, datetime, os, json, hashlib
-from typing import Dict, Any, List, Optional, Tuple, Union
+
+import os
+import uuid
+import datetime
+from typing import Dict, Any, List, Optional, Tuple
+
+# Env loading — prefer project envs first
 from dotenv import load_dotenv
+if os.path.exists(".env.backend"):
+    load_dotenv(".env.backend")
+elif os.path.exists(".env.local"):
+    load_dotenv(".env.local")
+else:
+    load_dotenv()  # fall back to default .env if present
+
 from qdrant_client import QdrantClient
-from qdrant_client.models import VectorParams, Distance, PointStruct, Filter, FieldCondition, MatchValue, Range
-from langchain_huggingface import HuggingFaceEmbeddings
+from qdrant_client.models import (
+    VectorParams,
+    Distance,
+    PointStruct,
+    Filter,
+    FieldCondition,
+    MatchValue,
+    PayloadSchemaType,
+)
+
 import numpy as np
 
-# ── Enhanced configuration ─────────────────────────────────────────────
-load_dotenv()
+# Embeddings (guarded import; we’ll fallback if this fails)
+_embedder = None
+_embedder_err: Optional[str] = None
+_EMBED_MODEL = os.getenv("EMBED_MODEL", "all-MiniLM-L6-v2")
 
+try:
+    from langchain_huggingface import HuggingFaceEmbeddings
+    _embedder = HuggingFaceEmbeddings(model_name=_EMBED_MODEL)
+except Exception as _e:
+    _embedder_err = f"Embeddings unavailable: {type(_e).__name__}: {_e}"
+    _embedder = None
+
+# ── Configuration ─────────────────────────────────────────────────────────
 QDRANT_URL = os.getenv("QDRANT_URL")
-QDRANT_API = os.getenv("QDRANT_API_KEY") 
-COLL_MEM = "user_memory_v2"  # New collection name for enhanced version
-EMBED_MODEL = "all-MiniLM-L6-v2"
+QDRANT_API = os.getenv("QDRANT_API_KEY")
+COLL_MEM = os.getenv("MEMORY_COLLECTION", "user_memory_v2")
 
 print(f"🔍 Memory System - QDRANT_URL: {QDRANT_URL}")
 print(f"🔍 Memory System - API Key present: {bool(QDRANT_API)}")
+if _embedder is None:
+    print(f"⚠️ {_embedder_err or 'Embeddings backend not initialized'} — memory will degrade gracefully.")
 
-_embedder = HuggingFaceEmbeddings(model_name=EMBED_MODEL)
+# ── Utilities ──────────────────────────────────────────────────────────────
+def _utc_now() -> datetime.datetime:
+    return datetime.datetime.utcnow()
 
+def _embed(text: str) -> Optional[List[float]]:
+    """Return embedding vector for text or None if not available."""
+    if not text:
+        return None
+    if _embedder is None:
+        return None
+    try:
+        vec = _embedder.embed_query(text)
+        # Ensure it’s a plain list[float]
+        return [float(x) for x in vec]
+    except Exception as e:
+        print(f"⚠️ Embedding failed: {e}")
+        return None
+
+# ── Core class ─────────────────────────────────────────────────────────────
 class MemorySystem:
-    def __init__(self):
+    def __init__(self) -> None:
         self.client: Optional[QdrantClient] = None
-        self.connected = False
-        self.collection_ready = False
+        self.connected: bool = False
+        self.collection_ready: bool = False
+        self._embedding_dim: Optional[int] = None
         self._initialize_connection()
-    
-    def _initialize_connection(self):
-        """Initialize connection with robust error handling"""
+
+    # ── Connection / setup ────────────────────────────────────────────────
+    def _initialize_connection(self) -> None:
+        """Initialize connection with robust error handling."""
         if not QDRANT_URL or not QDRANT_API:
-            print("⚠️ Missing QDRANT_URL or QDRANT_API_KEY - memory will be disabled")
+            print("⚠️ Missing QDRANT_URL or QDRANT_API_KEY — memory will be disabled")
             return
-        
+        if _embedder is None:
+            print("⚠️ No embedding model — semantic memory disabled (store/recall may be limited)")
         try:
             print("🔄 Connecting to Qdrant Cloud...")
             self.client = QdrantClient(
                 url=QDRANT_URL,
                 api_key=QDRANT_API,
                 timeout=30,
-                prefer_grpc=False  # Use HTTP for better compatibility
+                prefer_grpc=False,  # HTTP tends to be simpler for local/dev
             )
-            
-            # Test connection with proper None check
-            if self.client is not None:
-                collections = self.client.get_collections().collections
-                collection_names = [c.name for c in collections]
-                print(f"✅ Connected successfully! Available collections: {collection_names}")
-                self.connected = True
-                
-                # Setup collection
-                self._setup_collection()
-            
+            # Smoke test
+            collections = self.client.get_collections().collections
+            names = [c.name for c in collections]
+            print(f"✅ Connected successfully! Available collections: {names}")
+            self.connected = True
+            self._setup_collection()
         except Exception as e:
             print(f"❌ Failed to connect to Qdrant: {e}")
             self.connected = False
             self.client = None
-    
-    def _setup_collection(self):
-        """Setup collection with proper configuration"""
+
+    def _setup_collection(self) -> None:
+        """Ensure collection exists with correct vector size and index."""
         if self.client is None:
             print("❌ Client is None, cannot setup collection")
             return
-            
+
         try:
+            # Determine embedding dimension once
+            if _embedder is not None and self._embedding_dim is None:
+                test = _embed("test") or []
+                self._embedding_dim = len(test) if test else None
+
             collections = self.client.get_collections().collections
-            collection_names = [c.name for c in collections]
-            
-            if COLL_MEM not in collection_names:
+            names = [c.name for c in collections]
+
+            if COLL_MEM not in names:
                 print(f"📦 Creating new collection: {COLL_MEM}")
-                
-                # Get embedding dimension
-                test_embedding = _embedder.embed_query("test")
-                embedding_dim = len(test_embedding)
-                print(f"📏 Embedding dimension: {embedding_dim}")
-                
-                # Create collection with optimized settings
+                if not self._embedding_dim:
+                    # If we don’t know the embedding size, try a sane default for MiniLM-L6
+                    self._embedding_dim = int(os.getenv("EMBEDDING_DIM", "384"))
+                    print(f"⚠️ Couldn’t infer embedding dim; using default {self._embedding_dim}")
+
                 self.client.create_collection(
                     collection_name=COLL_MEM,
                     vectors_config=VectorParams(
-                        size=embedding_dim,
-                        distance=Distance.COSINE
-                    )
+                        size=self._embedding_dim or 384,
+                        distance=Distance.COSINE,
+                    ),
                 )
                 print(f"✅ Created collection {COLL_MEM}")
-                
-                # Create payload index for user_id field for efficient filtering
-                try:
-                    from qdrant_client.models import PayloadSchemaType
-                    self.client.create_payload_index(
-                        collection_name=COLL_MEM,
-                        field_name="user_id",
-                        field_schema=PayloadSchemaType.KEYWORD
-                    )
-                    print("✅ Created index for user_id field")
-                except Exception as index_error:
-                    print(f"⚠️ Could not create user_id index: {index_error}")
-                    print("Memory will work but queries may be slower")
-                    
             else:
                 print(f"📋 Using existing collection {COLL_MEM}")
-                
-                # Try to create index if it doesn't exist
-                try:
-                    from qdrant_client.models import PayloadSchemaType
-                    self.client.create_payload_index(
-                        collection_name=COLL_MEM,
-                        field_name="user_id",
-                        field_schema=PayloadSchemaType.KEYWORD
-                    )
-                    print("✅ Created missing index for user_id field")
-                except Exception:
-                    # Index probably already exists or we don't have permission
-                    pass
-            
-            # Verify collection is accessible
-            collection_info = self.client.get_collection(COLL_MEM)
-            print(f"📊 Collection has {collection_info.points_count} stored memories")
+
+            # Try to ensure payload index for user_id
+            try:
+                self.client.create_payload_index(
+                    collection_name=COLL_MEM,
+                    field_name="user_id",
+                    field_schema=PayloadSchemaType.KEYWORD,
+                )
+                print("✅ Created index for user_id field")
+            except Exception:
+                # Probably exists already
+                print("ℹ️ user_id index exists (or cannot be created in this plan)")
+
+            # Verify
+            info = self.client.get_collection(COLL_MEM)
+            # Newer qdrant-client may expose .points_count; if not, skip
+            count = getattr(info, "points_count", "unknown")
+            print(f"📊 Collection has {count} stored memories")
             self.collection_ready = True
-            
+
         except Exception as e:
             print(f"❌ Failed to setup collection: {e}")
             self.collection_ready = False
-    
-    def add_message(self, user_id: str, text: str, emotion: str, fruit: str, intensity: float, 
-                   context: Optional[Dict[str, Any]] = None) -> bool:
-        """Add a message to user's memory with enhanced metadata"""
+
+    # ── Public ops ────────────────────────────────────────────────────────
+    def add_message(
+        self,
+        user_id: str,
+        text: str,
+        emotion: str,
+        fruit: str,
+        intensity: float,
+        context: Optional[Dict[str, Any]] = None,
+    ) -> bool:
+        """Add a message to user's memory with enhanced metadata."""
         if not self.connected or not self.collection_ready or self.client is None:
-            print("⚠️ Memory system not ready - skipping message storage")
+            print("⚠️ Memory system not ready — skipping message storage")
             return False
-        
+
         try:
-            # Create unique ID that's compatible with Qdrant (UUID format)
-            timestamp = datetime.datetime.utcnow()
-            # Use UUID instead of concatenated string
             point_id = str(uuid.uuid4())
-            
-            # Generate embedding
-            vector = _embedder.embed_query(text)
-            
-            # Enhanced payload with better metadata
+            ts = _utc_now()
+
+            vector = _embed(text)
+            if vector is None:
+                # If we can't embed, we can still store payload-only, but Qdrant requires vectors
+                print("⚠️ No embedding — skipping memory upsert")
+                return False
+
             payload: Dict[str, Any] = {
                 "user_id": user_id,
                 "text": text,
                 "emotion": emotion,
                 "fruit": fruit,
                 "intensity": float(intensity),
-                "timestamp": timestamp.isoformat(),
-                "date": timestamp.strftime("%Y-%m-%d"),
-                "hour": timestamp.hour,
-                "word_count": len(text.split()),
+                "timestamp": ts.isoformat(),
+                "date": ts.strftime("%Y-%m-%d"),
+                "hour": ts.hour,
+                "word_count": len(text.split()) if text else 0,
                 "char_count": len(text),
-                "context": context or {}
+                "context": context or {},
             }
-            
-            # Add semantic tags for better retrieval
             payload["semantic_tags"] = self._generate_semantic_tags(text, emotion)
-            
-            # Create and insert point
-            point = PointStruct(
-                id=point_id,
-                vector=vector,
-                payload=payload
-            )
-            
-            result = self.client.upsert(
-                collection_name=COLL_MEM,
-                points=[point]
-            )
-            
+
+            point = PointStruct(id=point_id, vector=vector, payload=payload)
+
+            # Upsert (idempotent insert/update)
+            self.client.upsert(collection_name=COLL_MEM, points=[point])
             print(f"💾 Stored memory for user {user_id[:8]}... (ID: {point_id})")
             return True
-            
+
         except Exception as e:
             print(f"⚠️ Failed to add message: {e}")
             return False
-    
-    def _generate_semantic_tags(self, text: str, emotion: str) -> List[str]:
-        """Generate semantic tags for better search"""
-        tags = [emotion]
-        
-        text_lower = text.lower()
-        
-        # Topic tags
-        if any(word in text_lower for word in ["work", "job", "career", "boss"]):
-            tags.append("work")
-        if any(word in text_lower for word in ["family", "parent", "mom", "dad", "sibling"]):
-            tags.append("family")
-        if any(word in text_lower for word in ["friend", "relationship", "partner", "dating"]):
-            tags.append("relationships")
-        if any(word in text_lower for word in ["school", "study", "exam", "class"]):
-            tags.append("education")
-        if any(word in text_lower for word in ["health", "doctor", "medicine", "sick"]):
-            tags.append("health")
-        if any(word in text_lower for word in ["money", "budget", "expensive", "debt"]):
-            tags.append("finances")
-        
-        # Emotional intensity tags
-        if any(word in text_lower for word in ["really", "very", "extremely", "so much"]):
-            tags.append("high_intensity")
-        
-        # Progress tags
-        if any(word in text_lower for word in ["better", "improving", "progress", "good"]):
-            tags.append("positive_progress")
-        if any(word in text_lower for word in ["worse", "harder", "difficult", "struggling"]):
-            tags.append("challenging")
-        
-        return list(set(tags))  # Remove duplicates
-    
-    def recall(self, user_id: str, query: str, k: int = 5, 
-               time_weight: float = 0.1, emotion_match: bool = False) -> List[str]:
-        """Enhanced recall with multiple search strategies"""
+
+    def recall(
+        self,
+        user_id: str,
+        query: str,
+        k: int = 5,
+        time_weight: float = 0.1,
+        emotion_match: bool = False,  # kept for signature compatibility
+    ) -> List[str]:
+        """Recall relevant memories for a user with semantic search + recency rerank."""
         if not self.connected or not self.collection_ready or self.client is None:
-            print("⚠️ Memory system not ready - no recall available")
+            print("⚠️ Memory system not ready — no recall available")
             return []
-        
+
         try:
-            # Strategy 1: Semantic similarity search with user filter
-            memories = self._semantic_search(user_id, query, k * 2)  # Get more candidates
-            
+            memories = self._semantic_search(user_id, query, max(k * 2, 5))
             if memories:
-                # Strategy 2: Re-rank by relevance and recency
-                ranked_memories = self._rank_memories(memories, query, time_weight)
-                
-                # Return top k
-                result = [mem["text"] for mem in ranked_memories[:k]]
-                print(f"🧠 Recalled {len(result)} memories for user {user_id[:8]}...")
-                return result
-            
-            # Fallback: Get recent memories if no semantic matches
-            print(f"🔄 No semantic matches, trying recent memories...")
-            recent_memories = self._get_recent_memories(user_id, k)
-            
-            if recent_memories:
-                print(f"📚 Found {len(recent_memories)} recent memories")
-                return recent_memories
-            
+                ranked = self._rank_memories(memories, query, time_weight)
+                out = [m["text"] for m in ranked[:k] if m.get("text")]
+                print(f"🧠 Recalled {len(out)} memories for user {user_id[:8]}...")
+                return out
+
+            print("🔄 No semantic matches, trying recent memories...")
+            recent = self._get_recent_memories(user_id, k)
+            if recent:
+                print(f"📚 Found {len(recent)} recent memories")
+                return recent
+
             print(f"💭 No memories found for user {user_id[:8]}...")
             return []
-            
+
         except Exception as e:
             print(f"⚠️ Recall failed: {e}")
             return []
-    
-    def _semantic_search(self, user_id: str, query: str, limit: int) -> List[Dict[str, Any]]:
-        """Semantic search with user filtering and fallback strategies"""
-        if self.client is None:
-            return []
-            
-        try:
-            query_vector = _embedder.embed_query(query)
-            
-            # Try search with user filter first
-            try:
-                search_result = self.client.search(
-                    collection_name=COLL_MEM,
-                    query_vector=query_vector,
-                    query_filter=Filter(
-                        must=[
-                            FieldCondition(
-                                key="user_id",
-                                match=MatchValue(value=user_id)
-                            )
-                        ]
-                    ),
-                    limit=limit,
-                    with_payload=True,
-                    score_threshold=0.3
-                )
-                
-                memories = []
-                for hit in search_result:
-                    if hit.payload and hit.payload.get("text"):
-                        memory = dict(hit.payload)
-                        memory["similarity_score"] = hit.score
-                        memories.append(memory)
-                
-                return memories
-                
-            except Exception as filter_error:
-                print(f"⚠️ Filtered search failed: {filter_error}")
-                
-                # Fallback: Search all and filter manually
-                print("🔄 Trying manual filtering...")
-                search_result = self.client.search(
-                    collection_name=COLL_MEM,
-                    query_vector=query_vector,
-                    limit=limit * 3,  # Get more to filter
-                    with_payload=True,
-                    score_threshold=0.3
-                )
-                
-                memories = []
-                for hit in search_result:
-                    if (hit.payload and 
-                        hit.payload.get("text") and 
-                        hit.payload.get("user_id") == user_id):
-                        memory = dict(hit.payload)
-                        memory["similarity_score"] = hit.score
-                        memories.append(memory)
-                        if len(memories) >= limit:
-                            break
-                
-                return memories
-            
-        except Exception as e:
-            print(f"⚠️ Semantic search failed completely: {e}")
-            return []
-    
-    def _get_recent_memories(self, user_id: str, limit: int) -> List[str]:
-        """Get recent memories for a user"""
-        if self.client is None:
-            return []
-            
-        try:
-            # Scroll through user's memories
-            scroll_result = self.client.scroll(
-                collection_name=COLL_MEM,
-                scroll_filter=Filter(
-                    must=[
-                        FieldCondition(
-                            key="user_id",
-                            match=MatchValue(value=user_id)
-                        )
-                    ]
-                ),
-                limit=limit * 3,  # Get more to sort by time
-                with_payload=True
-            )
-            
-            memories = []
-            for point in scroll_result[0]:
-                if point.payload and point.payload.get("text"):
-                    memories.append({
-                        "text": point.payload["text"],
-                        "timestamp": point.payload.get("timestamp", ""),
-                        "emotion": point.payload.get("emotion", "neutral")
-                    })
-            
-            # Sort by timestamp (most recent first)
-            memories.sort(key=lambda x: x["timestamp"], reverse=True)
-            
-            return [mem["text"] for mem in memories[:limit]]
-            
-        except Exception as e:
-            print(f"⚠️ Recent memories fetch failed: {e}")
-            return []
-    
-    def _rank_memories(self, memories: List[Dict[str, Any]], query: str, time_weight: float) -> List[Dict[str, Any]]:
-        """Rank memories by relevance, recency, and other factors"""
-        if not memories:
-            return []
-        
-        current_time = datetime.datetime.utcnow()
-        
-        for memory in memories:
-            score = memory.get("similarity_score", 0.0)
-            
-            # Time decay factor
-            try:
-                mem_time = datetime.datetime.fromisoformat(memory["timestamp"].replace("Z", "+00:00"))
-                days_ago = (current_time - mem_time).days
-                time_factor = np.exp(-days_ago * time_weight)  # Exponential decay
-                score += time_factor * 0.1  # Small boost for recent memories
-            except:
-                pass
-            
-            # Emotional relevance boost
-            query_lower = query.lower()
-            mem_emotion = memory.get("emotion", "").lower()
-            if any(emo_word in query_lower for emo_word in ["sad", "happy", "angry", "anxious"]):
-                if mem_emotion in query_lower:
-                    score += 0.1
-            
-            # Length penalty for very short memories
-            text_length = len(memory.get("text", ""))
-            if text_length < 20:
-                score -= 0.05
-            
-            memory["final_score"] = score
-        
-        # Sort by final score
-        return sorted(memories, key=lambda x: x.get("final_score", 0), reverse=True)
-    
+
     def get_user_insights(self, user_id: str) -> Dict[str, Any]:
-        """Get insights about a user's conversation patterns"""
+        """Aggregate simple insights for a user's stored memories."""
         if not self.connected or not self.collection_ready or self.client is None:
             return {}
-        
+
         try:
-            # Get all user memories
-            scroll_result = self.client.scroll(
+            points, _ = self.client.scroll(
                 collection_name=COLL_MEM,
                 scroll_filter=Filter(
-                    must=[
-                        FieldCondition(
-                            key="user_id",
-                            match=MatchValue(value=user_id)
-                        )
-                    ]
+                    must=[FieldCondition(key="user_id", match=MatchValue(value=user_id))]
                 ),
                 limit=1000,
-                with_payload=True
+                with_payload=True,
             )
-            
-            if not scroll_result[0]:
+
+            if not points:
                 return {}
-            
-            memories = [point.payload for point in scroll_result[0] if point.payload]
-            
-            # Analyze patterns
-            emotions = [mem.get("emotion", "neutral") for mem in memories]
-            semantic_tags = []
-            for mem in memories:
-                tags = mem.get("semantic_tags", [])
+
+            payloads = [p.payload for p in points if p.payload]
+            emotions = [p.get("emotion", "neutral") for p in payloads]
+            semantic_tags: List[str] = []
+            for p in payloads:
+                tags = p.get("semantic_tags", [])
                 if isinstance(tags, list):
                     semantic_tags.extend(tags)
-            
-            # Calculate insights
+
+            avg_intensity = float(np.mean([float(p.get("intensity", 0.5)) for p in payloads])) if payloads else 0.0
+
             insights = {
-                "total_memories": len(memories),
+                "total_memories": len(payloads),
                 "most_common_emotion": max(set(emotions), key=emotions.count) if emotions else "neutral",
-                "emotion_distribution": {emotion: emotions.count(emotion) for emotion in set(emotions)},
-                "common_themes": [tag for tag in set(semantic_tags) if semantic_tags.count(tag) > 1],
-                "average_intensity": float(np.mean([mem.get("intensity", 0.5) for mem in memories])),
-                "conversation_span_days": self._calculate_span_days(memories),
-                "recent_trend": self._get_recent_emotional_trend(memories)
+                "emotion_distribution": {e: emotions.count(e) for e in set(emotions)},
+                "common_themes": [t for t in set(semantic_tags) if semantic_tags.count(t) > 1],
+                "average_intensity": avg_intensity,
+                "conversation_span_days": self._calculate_span_days(payloads),
+                "recent_trend": self._get_recent_emotional_trend(payloads),
             }
-            
             return insights
-            
+
         except Exception as e:
             print(f"⚠️ Failed to get insights: {e}")
             return {}
-    
-    def _calculate_span_days(self, memories: List[Dict[str, Any]]) -> int:
-        """Calculate how many days the conversation history spans"""
-        try:
-            timestamps = []
-            for mem in memories:
-                if mem.get("timestamp"):
-                    try:
-                        ts = datetime.datetime.fromisoformat(mem["timestamp"].replace("Z", "+00:00"))
-                        timestamps.append(ts)
-                    except:
-                        continue
-            
-            if len(timestamps) < 2:
-                return 0
-            
-            return (max(timestamps) - min(timestamps)).days
-            
-        except Exception:
-            return 0
-    
-    def _get_recent_emotional_trend(self, memories: List[Dict[str, Any]]) -> str:
-        """Analyze recent emotional trend"""
-        try:
-            # Sort by timestamp, get last 5 memories
-            recent_memories = sorted(
-                [mem for mem in memories if mem.get("timestamp")],
-                key=lambda x: x["timestamp"],
-                reverse=True
-            )[:5]
-            
-            if len(recent_memories) < 3:
-                return "insufficient_data"
-            
-            # Simple trend analysis
-            positive_emotions = ["joy", "excited", "happy", "content", "hopeful", "proud"]
-            negative_emotions = ["sad", "anxious", "angry", "frustrated", "depressed", "worried"]
-            
-            recent_scores = []
-            for mem in recent_memories:
-                emotion = mem.get("emotion", "neutral")
-                intensity = mem.get("intensity", 0.5)
-                
-                if emotion in positive_emotions:
-                    recent_scores.append(float(intensity))
-                elif emotion in negative_emotions:
-                    recent_scores.append(-float(intensity))
-                else:
-                    recent_scores.append(0.0)
-            
-            avg_recent = float(np.mean(recent_scores))
-            if avg_recent > 0.1:
-                return "improving"
-            elif avg_recent < -0.1:
-                return "declining"
-            else:
-                return "stable"
-                
-        except Exception:
-            return "unknown"
-    
+
     def search_by_theme(self, user_id: str, theme: str, limit: int = 5) -> List[str]:
-        """Search memories by specific theme/topic"""
+        """Fetch memories by a semantic tag/theme."""
         if not self.connected or not self.collection_ready or self.client is None:
             return []
-        
+
         try:
-            # Search by semantic tags
-            search_result = self.client.scroll(
+            points, _ = self.client.scroll(
                 collection_name=COLL_MEM,
                 scroll_filter=Filter(
                     must=[
-                        FieldCondition(
-                            key="user_id",
-                            match=MatchValue(value=user_id)
-                        ),
-                        FieldCondition(
-                            key="semantic_tags",
-                            match=MatchValue(value=theme)
-                        )
+                        FieldCondition(key="user_id", match=MatchValue(value=user_id)),
+                        FieldCondition(key="semantic_tags", match=MatchValue(value=theme)),
                     ]
                 ),
                 limit=limit,
-                with_payload=True
+                with_payload=True,
             )
-            
-            memories = []
-            for point in search_result[0]:
-                if point.payload and point.payload.get("text"):
-                    memories.append(point.payload["text"])
-            
-            return memories
-            
+            out: List[str] = []
+            for p in points:
+                if p.payload and p.payload.get("text"):
+                    out.append(p.payload["text"])
+            return out
         except Exception as e:
             print(f"⚠️ Theme search failed: {e}")
             return []
-    
+
     def get_conversation_context(self, user_id: str, current_message: str) -> str:
-        """Get relevant conversation context for the current message"""
-        if not self.connected or not self.collection_ready:
+        """Compose a short context block from recent and similar memories."""
+        if not self.connected or not self.collection_ready or self.client is None:
             return ""
-        
+
         try:
-            # Get recent memories and similar memories
             recent = self._get_recent_memories(user_id, 3)
             similar = self.recall(user_id, current_message, k=3)
-            
-            # Combine and deduplicate
-            all_memories = []
+            bag: List[str] = []
             seen = set()
-            
-            for memory_list, label in [(recent, "Recent"), (similar, "Related")]:
-                for memory in memory_list:
-                    if memory not in seen and len(memory.strip()) > 10:
-                        all_memories.append(f"{label}: {memory}")
-                        seen.add(memory)
-                        if len(all_memories) >= 5:  # Limit context length
-                            break
-                if len(all_memories) >= 5:
+
+            for label, items in (("Recent", recent), ("Related", similar)):
+                for txt in items:
+                    if not txt or txt in seen or len(txt.strip()) < 10:
+                        continue
+                    bag.append(f"{label}: {txt}")
+                    seen.add(txt)
+                    if len(bag) >= 5:
+                        break
+                if len(bag) >= 5:
                     break
-            
-            if all_memories:
-                return "Previous conversation context:\n" + "\n".join(all_memories)
-            else:
-                return ""
-                
+
+            return "Previous conversation context:\n" + "\n".join(bag) if bag else ""
         except Exception as e:
             print(f"⚠️ Context retrieval failed: {e}")
             return ""
 
-# Initialize global memory system
+    # ── Internals ─────────────────────────────────────────────────────────
+    def _generate_semantic_tags(self, text: str, emotion: str) -> List[str]:
+        """Heuristic tags for better search/retrieval."""
+        tags = set()
+        if emotion:
+            tags.add(emotion.lower())
+
+        t = (text or "").lower()
+
+        def any_in(words: List[str]) -> bool:
+            return any(w in t for w in words)
+
+        if any_in(["work", "job", "career", "boss"]): tags.add("work")
+        if any_in(["family", "parent", "mom", "dad", "sibling"]): tags.add("family")
+        if any_in(["friend", "relationship", "partner", "dating"]): tags.add("relationships")
+        if any_in(["school", "study", "exam", "class"]): tags.add("education")
+        if any_in(["health", "doctor", "medicine", "sick"]): tags.add("health")
+        if any_in(["money", "budget", "expensive", "debt"]): tags.add("finances")
+
+        if any_in(["really", "very", "extremely", "so much"]): tags.add("high_intensity")
+        if any_in(["better", "improving", "progress", "good"]): tags.add("positive_progress")
+        if any_in(["worse", "harder", "difficult", "struggling"]): tags.add("challenging")
+
+        return list(tags)
+
+    def _semantic_search(self, user_id: str, query: str, limit: int) -> List[Dict[str, Any]]:
+        """Semantic search with user filtering and resilient fallbacks."""
+        if self.client is None:
+            return []
+        vec = _embed(query)
+        if vec is None:
+            return []
+
+        try:
+            # First attempt: filtered search + score threshold if supported
+            try:
+                results = self.client.search(
+                    collection_name=COLL_MEM,
+                    query_vector=vec,
+                    query_filter=Filter(
+                        must=[FieldCondition(key="user_id", match=MatchValue(value=user_id))]
+                    ),
+                    limit=limit,
+                    with_payload=True,
+                    score_threshold=0.3,  # may not be supported in older clients; fallback below
+                )
+            except TypeError:
+                # Older qdrant-client without score_threshold
+                results = self.client.search(
+                    collection_name=COLL_MEM,
+                    query_vector=vec,
+                    query_filter=Filter(
+                        must=[FieldCondition(key="user_id", match=MatchValue(value=user_id))]
+                    ),
+                    limit=limit,
+                    with_payload=True,
+                )
+
+            memories: List[Dict[str, Any]] = []
+            for hit in results:
+                if hit.payload and hit.payload.get("text"):
+                    m = dict(hit.payload)
+                    # In cosine, Qdrant returns similarity score (higher is better). Treat uniformly.
+                    m["similarity_score"] = float(getattr(hit, "score", 0.0) or 0.0)
+                    memories.append(m)
+            if memories:
+                return memories
+
+            # Fallback: global search then manual filter
+            try:
+                results = self.client.search(
+                    collection_name=COLL_MEM,
+                    query_vector=vec,
+                    limit=limit * 3,
+                    with_payload=True,
+                )
+            except TypeError:
+                results = self.client.search(
+                    collection_name=COLL_MEM,
+                    query_vector=vec,
+                    limit=limit * 3,
+                    with_payload=True,
+                )
+
+            memories = []
+            for hit in results:
+                if hit.payload and hit.payload.get("text") and hit.payload.get("user_id") == user_id:
+                    m = dict(hit.payload)
+                    m["similarity_score"] = float(getattr(hit, "score", 0.0) or 0.0)
+                    memories.append(m)
+                    if len(memories) >= limit:
+                        break
+            return memories
+
+        except Exception as e:
+            print(f"⚠️ Semantic search failed: {e}")
+            return []
+
+    def _get_recent_memories(self, user_id: str, limit: int) -> List[str]:
+        """Fetch most recent memories by timestamp field."""
+        if self.client is None:
+            return []
+        try:
+            points, _ = self.client.scroll(
+                collection_name=COLL_MEM,
+                scroll_filter=Filter(
+                    must=[FieldCondition(key="user_id", match=MatchValue(value=user_id))]
+                ),
+                limit=max(limit * 3, 20),
+                with_payload=True,
+            )
+            mems: List[Dict[str, Any]] = []
+            for p in points:
+                if p.payload and p.payload.get("text"):
+                    mems.append(
+                        {
+                            "text": p.payload["text"],
+                            "timestamp": p.payload.get("timestamp", ""),
+                            "emotion": p.payload.get("emotion", "neutral"),
+                        }
+                    )
+            mems.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
+            return [m["text"] for m in mems[:limit]]
+        except Exception as e:
+            print(f"⚠️ Recent memories fetch failed: {e}")
+            return []
+
+    def _rank_memories(self, memories: List[Dict[str, Any]], query: str, time_weight: float) -> List[Dict[str, Any]]:
+        """Rank by similarity, recency, and heuristics."""
+        if not memories:
+            return []
+        now = _utc_now()
+
+        for m in memories:
+            score = float(m.get("similarity_score", 0.0))
+
+            # Recency boost (exponential decay)
+            try:
+                ts_raw = m.get("timestamp", "")
+                ts = datetime.datetime.fromisoformat(str(ts_raw).replace("Z", "+00:00"))
+                days_ago = (now - ts).days
+                score += float(np.exp(-days_ago * max(time_weight, 0.0))) * 0.1
+            except Exception:
+                pass
+
+            # Short text penalty
+            if len(m.get("text", "")) < 20:
+                score -= 0.05
+
+            m["final_score"] = score
+
+        return sorted(memories, key=lambda x: x.get("final_score", 0.0), reverse=True)
+
+    def _calculate_span_days(self, memories: List[Dict[str, Any]]) -> int:
+        """Inclusive time span in days between oldest and newest timestamp."""
+        ts_list: List[datetime.datetime] = []
+        for m in memories:
+            ts = m.get("timestamp")
+            if not ts:
+                continue
+            try:
+                ts_list.append(datetime.datetime.fromisoformat(str(ts).replace("Z", "+00:00")))
+            except Exception:
+                continue
+        if len(ts_list) < 2:
+            return 0
+        return (max(ts_list) - min(ts_list)).days
+
+    def _get_recent_emotional_trend(self, memories: List[Dict[str, Any]]) -> str:
+        """Simple recent trend from last ~5 memories using emotion + intensity."""
+        try:
+            recent = sorted(
+                [m for m in memories if m.get("timestamp")],
+                key=lambda x: x["timestamp"],
+                reverse=True,
+            )[:5]
+            if len(recent) < 3:
+                return "insufficient_data"
+
+            pos = {"joy", "excited", "happy", "content", "hopeful", "proud"}
+            neg = {"sad", "anxious", "angry", "frustrated", "depressed", "worried"}
+
+            scores: List[float] = []
+            for m in recent:
+                emo = str(m.get("emotion", "neutral")).lower()
+                inten = float(m.get("intensity", 0.5))
+                if emo in pos:
+                    scores.append(+inten)
+                elif emo in neg:
+                    scores.append(-inten)
+                else:
+                    scores.append(0.0)
+
+            avg = float(np.mean(scores))
+            if avg > 0.1:
+                return "improving"
+            if avg < -0.1:
+                return "declining"
+            return "stable"
+        except Exception:
+            return "unknown"
+
+# ── Global instance and public API (backwards compatible) ───────────────────
 _memory_system = MemorySystem()
 
-# Public API functions (maintaining compatibility with existing code)
-def add_message(user_id: str, text: str, emotion: str, fruit: str, intensity: float, 
-               context: Optional[Dict[str, Any]] = None) -> bool:
-    """Add a message to user's memory"""
+def add_message(user_id: str, text: str, emotion: str, fruit: str, intensity: float,
+                context: Optional[Dict[str, Any]] = None) -> bool:
     return _memory_system.add_message(user_id, text, emotion, fruit, intensity, context)
 
 def recall(user_id: str, query: str, k: int = 5) -> List[str]:
-    """Recall relevant memories for a user"""
     return _memory_system.recall(user_id, query, k)
 
 def get_user_insights(user_id: str) -> Dict[str, Any]:
-    """Get insights about a user's patterns"""
     return _memory_system.get_user_insights(user_id)
 
 def search_by_theme(user_id: str, theme: str, limit: int = 5) -> List[str]:
-    """Search memories by theme"""
     return _memory_system.search_by_theme(user_id, theme, limit)
 
 def get_conversation_context(user_id: str, current_message: str) -> str:
-    """Get conversation context for current message"""
     return _memory_system.get_conversation_context(user_id, current_message)
 
-# Test the system
+# Startup banner
 if _memory_system.connected and _memory_system.collection_ready:
     print("🎉 Enhanced Slurpy memory system is ready!")
     print("✅ Features available:")
     print("  - Semantic memory search")
-    print("  - Conversation context tracking") 
+    print("  - Conversation context tracking")
     print("  - User insight analytics")
     print("  - Theme-based memory retrieval")
     print("  - Temporal memory ranking")
 else:
     print("💤 Running without enhanced memory features")
 
-# Example usage and testing
+# Optional self-test (run as a script)
 if __name__ == "__main__":
-    # Test the memory system
-    test_user = "test_user_123"
-    
+    u = "test_user_123"
     print("\n🧪 Testing memory system...")
-    
-    # Add some test memories
-    test_memories = [
+
+    samples = [
         ("I'm feeling really anxious about my job interview tomorrow", "anxious", 0.8),
         ("Had a great day with my family at the park", "joy", 0.9),
         ("Work has been so stressful lately, my boss is demanding", "frustrated", 0.7),
         ("I'm proud of how I handled that difficult conversation", "proud", 0.8),
-        ("Feeling overwhelmed with all the deadlines", "anxious", 0.6)
+        ("Feeling overwhelmed with all the deadlines", "anxious", 0.6),
     ]
-    
-    for text, emotion, intensity in test_memories:
-        result = add_message(test_user, text, emotion, f"Test {emotion}", intensity)
-        print(f"📝 Added memory: {result}")
-    
-    # Test recall
+
+    for text, emo, inten in samples:
+        ok = add_message(u, text, emo, f"Test {emo}", inten)
+        print(f"📝 Added memory: {ok}")
+
     print("\n🔍 Testing recall...")
-    memories = recall(test_user, "work stress", k=3)
-    for i, memory in enumerate(memories, 1):
-        print(f"  {i}. {memory}")
-    
-    # Test insights
+    r = recall(u, "work stress", k=3)
+    for i, m in enumerate(r, 1):
+        print(f"  {i}. {m}")
+
     print("\n📊 Testing insights...")
-    insights = get_user_insights(test_user)
-    print(f"  Total memories: {insights.get('total_memories', 0)}")
-    print(f"  Most common emotion: {insights.get('most_common_emotion', 'unknown')}")
-    print(f"  Common themes: {insights.get('common_themes', [])}")
-    
-    # Test conversation context
+    ins = get_user_insights(u)
+    print(f"  Total memories: {ins.get('total_memories', 0)}")
+    print(f"  Most common emotion: {ins.get('most_common_emotion', 'unknown')}")
+    print(f"  Common themes: {ins.get('common_themes', [])}")
+
     print("\n💬 Testing conversation context...")
-    context = get_conversation_context(test_user, "I'm worried about tomorrow")
-    print(f"Context: {context[:200]}..." if len(context) > 200 else f"Context: {context}")
-    
+    ctx = get_conversation_context(u, "I'm worried about tomorrow")
+    print(f"Context: {ctx[:200]}..." if len(ctx) > 200 else f"Context: {ctx}")
+
     print("\n✅ Memory system test complete!")

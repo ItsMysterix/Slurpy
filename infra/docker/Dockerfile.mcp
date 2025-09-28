@@ -1,0 +1,32 @@
+FROM python:3.11-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    python3-dev \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+RUN python -m pip install --upgrade pip setuptools wheel
+
+COPY requirements/backend.txt ./requirements.txt
+
+RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu \
+    torch==2.4.1 torchvision==0.19.1 torchaudio==2.4.1 \
+    && pip install --no-cache-dir sentence-transformers==2.7.0 \
+    && pip install --no-cache-dir -r requirements.txt
+
+COPY backend ./backend
+COPY emotion ./emotion
+
+EXPOSE 9001
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+  CMD curl -f http://localhost:9001/healthz || exit 1
+
+CMD ["uvicorn", "backend.mcp_server:app", "--host", "0.0.0.0", "--port", "9001"]

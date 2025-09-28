@@ -1,0 +1,30 @@
+app = "slurpy-mcp"
+primary_region = "iad"
+
+[build]
+  dockerfile = "./infra/docker/Dockerfile.mcp"
+  context = "."
+
+[env]
+  FRONTEND_ORIGIN = "https://slurpy.life,https://slurpy-web.fly.dev,http://localhost:3000"
+  CORS_ALLOW_ALL = "false"
+  QDRANT_URL = "https://48f513c5-3950-48de-9866-34f55c9b04bc.us-east4-0.gcp.cloud.qdrant.io:6333"
+
+[http_service]
+  internal_port = 9001
+  force_https = true
+  auto_stop_machines = true
+  auto_start_machines = true
+  min_machines_running = 0
+  
+  [[http_service.checks]]
+    interval = "10s"
+    timeout = "2s"
+    grace_period = "30s"
+    method = "GET"
+    path = "/healthz"
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory = "1024mb"

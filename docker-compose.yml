@@ -1,16 +1,43 @@
 services:
+  qdrant:
+    image: qdrant/qdrant:v1.12.4
+    ports:
+      - "6333:6333"
+    restart: unless-stopped
+
+  mcp:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.mcp
+    env_file:
+      - .env.backend
+    environment:
+      FRONTEND_ORIGIN: http://localhost:3000
+      CORS_ALLOW_ALL: "true"
+      # if you want memory locally, point MCP to qdrant in the network
+      QDRANT_URL: http://qdrant:6333
+    depends_on:
+      - qdrant
+    ports:
+      - "9001:9001"
+    restart: unless-stopped
+
   backend:
     build:
       context: .
-      dockerfile: Dockerfile.backend
+      dockerfile: infra/docker/Dockerfile.backend
     env_file:
-      - .env
+      - .env.backend
     environment:
-      OPENAI_API_KEY: ${OPENAI_API_KEY}
-      QDRANT_URL: ${QDRANT_URL:-http://localhost:6333}
-      QDRANT_API_KEY: ${QDRANT_API_KEY:-}
       API_DEBUG: "true"
       DEV_NO_AUTH: "true"
+      FRONTEND_ORIGIN: http://localhost:3000
+      CORS_ALLOW_ALL: "true"
+      MCP_BASE_URL: http://mcp:9001
+      # use the qdrant container instead of localhost (inside Docker, localhost ≠ host)
+      QDRANT_URL: http://qdrant:6333
+    depends_on:
+      - mcp
     ports:
       - "8000:8000"
     restart: unless-stopped
@@ -18,31 +45,27 @@ services:
   frontend:
     build:
       context: .
-      dockerfile: Dockerfile.frontend
+      dockerfile: infra/docker/Dockerfile.frontend
+      # Clerk/Next need these at **build time** to compile middleware/client bundle.
+      # Compose resolves build args from the project `.env` (NOT env_file).
       args:
         NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY}
         CLERK_SECRET_KEY: ${CLERK_SECRET_KEY}
-        NEXT_PUBLIC_RAG_API: ${NEXT_PUBLIC_RAG_API:-http://backend:8000/chat}
+        # expose API base to the build if your client bundle uses it
+        NEXT_PUBLIC_RAG_API: ${NEXT_PUBLIC_RAG_API:-http://localhost:8000/v1/mcp/stream}
     env_file:
-      - .env
+      - .env.frontend
     environment:
-      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY}
-      CLERK_SECRET_KEY: ${CLERK_SECRET_KEY}
-      NEXT_PUBLIC_RAG_API: ${NEXT_PUBLIC_RAG_API:-http://backend:8000/chat}
+      # available at **runtime** (SSR/middleware)
+      NEXT_PUBLIC_RAG_API: ${NEXT_PUBLIC_RAG_API:-http://localhost:8000/v1/mcp/stream}
       NEXT_PUBLIC_CLERK_SIGN_IN_URL: /sign-in
       NEXT_PUBLIC_CLERK_SIGN_UP_URL: /sign-up
       NEXT_PUBLIC_CLERK_AFTER_SIGN_IN_URL: /chat
       NEXT_PUBLIC_CLERK_AFTER_SIGN_UP_URL: /chat
-      # Fix the Prisma model name to match your schema
-      SLURPY_MOOD_MODEL: "DailyMood"
-      # Force IPv4 first so Prisma/Supabase connect from inside Docker
+      SLURPY_MOOD_MODEL: DailyMood
       NODE_OPTIONS: --dns-result-order=ipv4first
-    # Add DNS configuration for better connectivity
-    dns:
-      - 8.8.8.8
-      - 1.1.1.1
-    ports:
-      - "3000:3000"
     depends_on:
       - backend
+    ports:
+      - "3000:3000"
     restart: unless-stopped

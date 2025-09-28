@@ -180,6 +180,21 @@ export default function InsightsPage() {
 
   const trendData = useMemo(() => insights?.trends.last7Days ?? [], [insights?.trends.last7Days])
 
+  /* ---------------- NLP quick check (minimal add) ---------------- */
+  const [nlpText, setNlpText] = useState("")
+  const [nlpLoading, setNlpLoading] = useState(false)
+  const [nlpData, setNlpData] = useState<any>(null)
+
+  const runNLP = useCallback(async () => {
+    if (!nlpText.trim()) return
+    setNlpLoading(true)
+    setNlpData(null)
+    const res = await fetch(`/api/nlp?text=${encodeURIComponent(nlpText)}`, { cache: "no-store" })
+    const json = await res.json()
+    setNlpData(json)
+    setNlpLoading(false)
+  }, [nlpText])
+
   /* -------------------------- Loading / Error -------------------------- */
 
   if (initialLoading) {
@@ -461,6 +476,79 @@ export default function InsightsPage() {
                         <p className="text-clay-500 dark:text-sand-400 text-sm">No topics identified yet.</p>
                       )}
                     </div>
+                  </CardContent>
+                </Card>
+              </motion.div>
+
+              {/* NLP quick check */}
+              <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6, delay: 0.45 }}>
+                <Card className="bg-gradient-to-br from-white/70 via-sage-50/50 to-sand-50/70 dark:from-gray-900/70 dark:via-gray-800/50 dark:to-gray-900/70 border border-sage-100/30 dark:border-gray-700/30">
+                  <CardContent className="p-6 space-y-3">
+                    <h3 className="font-display text-lg text-clay-700 dark:text-sand-200">NLP quick check</h3>
+                    <textarea
+                      value={nlpText}
+                      onChange={(e)=>setNlpText(e.target.value)}
+                      className="w-full h-24 p-2 rounded border dark:bg-gray-900/40"
+                      placeholder="Paste any sentence to analyze…"
+                    />
+                    <div className="flex items-center gap-3">
+                      <Button
+                        onClick={runNLP}
+                        disabled={nlpLoading}
+                        className="bg-gradient-to-r from-sage-500 via-clay-500 to-sand-500 text-white"
+                      >
+                        {nlpLoading ? "Analyzing…" : "Analyze"}
+                      </Button>
+                      {nlpData?.lang && (
+                        <Badge
+                          variant="secondary"
+                          className="bg-sage-100 text-sage-700 dark:bg-gray-800 dark:text-sand-300"
+                        >
+                          lang: {nlpData.lang}
+                        </Badge>
+                      )}
+                    </div>
+
+                    {nlpData?.error && (
+                      <div className="text-red-600 dark:text-red-400 text-sm">{nlpData.error}</div>
+                    )}
+
+                    {nlpData && !nlpLoading && !nlpData.error && (
+                      <div className="grid md:grid-cols-3 gap-4 text-sm">
+                        <div>
+                          <div className="mb-1 text-clay-700 dark:text-sand-200">Sentiment</div>
+                          <div className="text-clay-500 dark:text-sand-400">
+                            {(nlpData.sentiment || [])
+                              .map((s: any) => `${s.label} ${s.score.toFixed(2)}`)
+                              .join(", ")}
+                          </div>
+                        </div>
+                        <div>
+                          <div className="mb-1 text-clay-700 dark:text-sand-200">Top Emotions</div>
+                          <div className="text-clay-500 dark:text-sand-400">
+                            {(nlpData.emotions || [])
+                              .slice(0, 3)
+                              .map((e: any) => `${e.label} ${e.score.toFixed(2)}`)
+                              .join(", ")}
+                          </div>
+                        </div>
+                        <div>
+                          <div className="mb-1 text-clay-700 dark:text-sand-200">Keywords</div>
+                          <div className="text-clay-500 dark:text-sand-400">
+                            {(nlpData.keywords || []).join(" | ")}
+                          </div>
+                        </div>
+                        <div className="md:col-span-3">
+                          <div className="mb-1 text-clay-700 dark:text-sand-200">Toxicity</div>
+                          <div className="text-clay-500 dark:text-sand-400">
+                            {(nlpData.toxicity || [])
+                              .slice(0, 2)
+                              .map((t: any) => `${t.label} ${t.score.toFixed(2)}`)
+                              .join(", ")}
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </CardContent>
                 </Card>
               </motion.div>
