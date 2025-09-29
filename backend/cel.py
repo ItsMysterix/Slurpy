@@ -29,7 +29,7 @@ from dataclasses import dataclass
 import os
 import re
 from functools import lru_cache
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Dict, Any  # <-- added Dict, Any
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Optional semantic router (GPT). Imported lazily & guarded.
@@ -37,6 +37,13 @@ try:
     from backend.cel_llm import llm_semantic_emotion  # type: ignore
 except Exception:  # pragma: no cover
     llm_semantic_emotion = None  # type: ignore
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Optional NLP enrichment (lazy, safe import)
+try:
+    from .nlp import analyze_text  # returns rich dict
+except Exception:  # pragma: no cover
+    analyze_text = None  # type: ignore
 
 CEL_DEBUG = os.getenv("CEL_DEBUG", "false").lower() in {"1", "true", "yes"}
 def _dbg(*a):  # tiny local logger
@@ -247,5 +254,46 @@ def make_patch(label: str, prob: float, persona: str, text: Optional[str] = None
 
     return p
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Optional: compact NLP context for storage/search (tiny & stable)
+def build_context(text: str) -> Dict[str, Any]:
+    """
+    Returns a compact JSON-able dict:
+      {
+        "sent": {"label": str, "pos": float, "neu": float, "neg": float},
+        "emo": str,
+        "tox": float,
+        "ents": [str, ...],   # top 5 unique
+        "key":  [str, ...],   # top 5 keyphrases
+      }
+    Falls back to {} if analyze_text is unavailable.
+    """
+    if not analyze_text or not text or not text.strip():
+        return {}
+    try:
+        nlp = analyze_text(text)
+        return {
+            "sent": {
+                "label": nlp["sentiment"]["label"],
+                "pos": round(float(nlp["sentiment"]["pos"]), 4),
+                "neu": round(float(nlp["sentiment"]["neu"]), 4),
+                "neg": round(float(nlp["sentiment"]["neg"]), 4),
+            },
+            "emo": nlp["emotion"]["top"],
+            "tox": round(float(nlp["toxicity"]["score"]), 4),
+            "ents": sorted({e["text"] for e in nlp.get("entities", [])})[:5],
+            "key": nlp.get("keyphrases", [])[:5],
+        }
+    except Exception:
+        return {}
 
-__all__ = ["Patch", "make_patch"]
+def maybe_build_context(text: Optional[str]) -> Optional[Dict[str, Any]]:
+    """
+    Guarded variant: returns None on failure/empty text.
+    """
+    if not text or not text.strip():
+        return None
+    ctx = build_context(text)
+    return ctx or None
+
+__all__ = ["Patch", "make_patch", "build_context", "maybe_build_context"]

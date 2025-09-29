@@ -8,32 +8,29 @@ primary_region = "iad"
 [env]
   FRONTEND_ORIGIN = "https://slurpy.life,https://slurpy-web.fly.dev,http://localhost:3000"
   CORS_ALLOW_ALL = "false"
-
-  MCP_BASE_URL = "http://slurpy-mcp.flycast:9001"
-
+  MCP_BASE_URL = "http://slurpy-mcp.flycast:9001"   # good: private Flycast between API ↔ MCP
   API_DEBUG = "false"
   DEV_NO_AUTH = "false"
   OPENAI_MODEL = "gpt-4o-mini"
   OPENAI_TEMPERATURE = "0.7"
   API_MAX_SESSIONS = "5000"
   API_SESSION_TTL_SEC = "86400"
-  QDRANT_URL="https://48f513c5-3950-48de-9866-34f55c9b04bc.us-east4-0.gcp.cloud.qdrant.io:6333"
+  QDRANT_URL = "https://48f5...qdrant.io:6333"
 
 [http_service]
   internal_port = 8000
   force_https = true
-  auto_stop_machines = true
   auto_start_machines = true
-  min_machines_running = 0
-
+  auto_stop_machines = false      # ← keep API warm so first request doesn’t 502
+  min_machines_running = 1        # ← 1 hot machine
   [[http_service.checks]]
     interval = "10s"
     timeout = "2s"
-    grace_period = "30s"
+    grace_period = "60s"          # ← give cold init time if needed
     method = "GET"
     path = "/healthz"
 
 [[vm]]
   cpu_kind = "shared"
   cpus = 1
-  memory = "1gb"
+  memory = "1536mb"               # ← your 1.5 GB size

@@ -8,24 +8,40 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     python3-dev \
     build-essential \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-
 RUN python -m pip install --upgrade pip setuptools wheel
 
+# Install backend deps first (so warmup has the libraries)
 COPY requirements/backend.txt ./requirements.txt
+RUN pip install --no-cache-dir \
+    --index-url https://download.pytorch.org/whl/cpu \
+    --extra-index-url https://pypi.org/simple \
+    torch==2.6.0+cpu torchvision==0.21.0 torchaudio==2.6.0 \
+ && pip install --no-cache-dir sentence-transformers==2.7.0 \
+ && pip install --no-cache-dir -r requirements.txt
 
-RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu \
-    torch==2.4.1 torchvision==0.19.1 torchaudio==2.4.1 \
-    && pip install --no-cache-dir sentence-transformers==2.7.0 \
-    && pip install --no-cache-dir -r requirements.txt
+# --- NLP cache & warmup ---
+ENV HF_HOME=/root/.cache/huggingface
+RUN pip install --no-cache-dir \
+  https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.7.1/en_core_web_sm-3.7.1-py3-none-any.whl
+RUN python - <<'PY'
+from transformers import pipeline
+print("Warming transformers pipelines...")
+pipeline("text-classification", model="cardiffnlp/twitter-roberta-base-sentiment-latest")
+# OLD (fails): joeddav/distilbert-base-uncased-go-emotions
+pipeline("text-classification", model="SamLowe/roberta-base-go_emotions", return_all_scores=True)
+pipeline("text-classification", model="unitary/unbiased-toxic-roberta", return_all_scores=True)
+print("Done.")
+PY
 
+# App code last (so deps/model-cache layers are reused)
 COPY backend ./backend
 COPY emotion ./emotion
 
 EXPOSE 9001
-
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
   CMD curl -f http://localhost:9001/healthz || exit 1
 

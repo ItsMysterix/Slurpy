@@ -13,18 +13,18 @@ primary_region = "iad"
 [http_service]
   internal_port = 9001
   force_https = true
-  auto_stop_machines = true
   auto_start_machines = true
-  min_machines_running = 0
-  
+  auto_stop_machines = false     # keep warm during testing
+  min_machines_running = 1       # ensure at least 1 MCP process stays live
+
   [[http_service.checks]]
     interval = "10s"
     timeout = "2s"
-    grace_period = "30s"
+    grace_period = "60s"         # give Uvicorn/Qdrant init a bit more breathing room
     method = "GET"
     path = "/healthz"
 
 [[vm]]
   cpu_kind = "shared"
   cpus = 1
-  memory = "1024mb"
+  memory = "1536mb"

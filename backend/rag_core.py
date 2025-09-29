@@ -30,6 +30,7 @@ from .ufm import update as ufm_update
 from .plans import vote as plans_vote, roadmap as plans_roadmap
 from .roleplay import PERSONAS, record as rp_record
 from .memory import add_message as kv_add, recall  # package-relative import
+from .cel import maybe_build_context  # compact NLP context for Qdrant payloads
 
 History = Deque[Tuple[str, str, str]]
 T = TypeVar("T")
@@ -202,7 +203,13 @@ def _memory_hint_block(msg: str, mems: List[str], hist: History) -> str:
         return ""
 
     th_msg = set(_themes(msg, []))
-    th_mem = set(_themes("", mems))
+    th_mem_raw = set(_themes("", mems))
+
+    # normalize ongoing_* -> base tag for comparison
+    def _base(t: str) -> str:
+        return t[8:] if t.startswith("ongoing_") else t
+
+    th_mem = {_base(t) for t in th_mem_raw}
     overlap = th_msg.intersection(th_mem)
     early_session = len(hist) <= 6
 
@@ -332,7 +339,8 @@ def slurpy_answer(
 
     # Safety (guarded)
     try:
-        level, _ = safety_classify(msg)
+        level_out = safety_classify(msg)
+        level = level_out[0] if isinstance(level_out, (list, tuple)) and level_out else level_out
     except Exception as e:
         print("⚠️ safety_classify failed:", e)
         level = None
@@ -346,7 +354,7 @@ def slurpy_answer(
 
         _safe_call(add_msg, session_id, user_id, "user", msg, guess, prob, _themes(msg, mems))
         _safe_call(add_msg, session_id, user_id, "assistant", str(text), "crisis", 1.0, ["crisis"])
-        _safe_call(kv_add, user_id, msg, guess, fruit_for(guess), prob)
+        _safe_call(kv_add, user_id, msg, guess, fruit_for(guess), prob, maybe_build_context(msg))
 
         if mode in PERSONAS:
             turn = len(hist)
@@ -424,7 +432,7 @@ Instruction: {guidance}"""
     # Analytics + memory (best effort)
     _safe_call(add_msg, session_id, user_id, "user", msg, guess, prob, th)
     _safe_call(add_msg, session_id, user_id, "assistant", final, "support", 0.8, th)
-    _safe_call(kv_add, user_id, msg, guess, fruit_for(guess), prob)
+    _safe_call(kv_add, user_id, msg, guess, fruit_for(guess), prob, maybe_build_context(msg))
 
     if roleplay:
         turn = len(hist)
@@ -461,10 +469,15 @@ async def async_slurpy_answer(
     ok_m, mems = await _safe_call_async(recall, user_id, msg, 5)
     mems = mems or []
 
-    # Safety
+    # Safety (more robust shape handling)
     try:
         ok_sf, lvl = await _safe_call_async(safety_classify, msg)
-        level = lvl[0] if ok_sf and isinstance(lvl, tuple) and len(lvl) > 0 else None
+        level = None
+        if ok_sf:
+            if isinstance(lvl, (list, tuple)) and lvl:
+                level = lvl[0]
+            else:
+                level = lvl
     except Exception as e:
         print("⚠️ safety_classify failed:", e)
         level = None
@@ -477,7 +490,7 @@ async def async_slurpy_answer(
 
         await _safe_call_async(add_msg, session_id, user_id, "user", msg, guess, prob, _themes(msg, mems))
         await _safe_call_async(add_msg, session_id, user_id, "assistant", str(text), "crisis", 1.0, ["crisis"])
-        await _safe_call_async(kv_add, user_id, msg, guess, fruit_for(guess), prob)
+        await _safe_call_async(kv_add, user_id, msg, guess, fruit_for(guess), prob, maybe_build_context(msg))
 
         if mode in PERSONAS:
             turn = len(hist)
@@ -560,7 +573,7 @@ Instruction: {guidance}"""
     # Side effects
     await _safe_call_async(add_msg, session_id, user_id, "user", msg, guess, prob, th)
     await _safe_call_async(add_msg, session_id, user_id, "assistant", final, "support", 0.8, th)
-    await _safe_call_async(kv_add, user_id, msg, guess, fruit_for(guess), prob)
+    await _safe_call_async(kv_add, user_id, msg, guess, fruit_for(guess), prob, maybe_build_context(msg))
 
     if roleplay:
         turn = len(hist)

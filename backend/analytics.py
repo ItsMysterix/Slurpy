@@ -15,7 +15,8 @@ SNAKE_MESSAGE_TABLE = "chat_messages"
 LEGACY_SESSION_TABLE = "ChatSession"
 LEGACY_MESSAGE_TABLE = "ChatMessage"
 
-# Candidates for a dedicated analysis-blob table (NOT your 'analytics' aggregates)
+# Events & optional analysis blob tables
+APP_EVENTS_TABLE = "app_events"
 ANALYSIS_TABLE_CANDIDATES = ["Analysis", "SessionAnalysis", "ChatAnalysis", "analysis"]
 
 # Regex helpers (some clients bubble these messages)
@@ -25,11 +26,12 @@ REL_MISSING_RE = re.compile(r"relation .* does not exist", re.IGNORECASE)
 # Minimal payloads we know most schemas will accept
 SNAKE_SESSION_MIN_KEYS = {"session_id", "user_id", "updated_at"}
 SNAKE_MESSAGE_MIN_KEYS = {"session_id", "user_id", "role", "content", "created_at"}
+SNAKE_EVENT_MIN_KEYS   = {"user_id", "event_type", "created_at"}
 
 LEGACY_SESSION_MIN_KEYS = {"id", "sessionId", "userId", "updatedAt", "createdAt"}
 LEGACY_MESSAGE_MIN_KEYS = {
     "id", "messageId", "session_id", "sessionId", "user_id", "userId",
-    "role", "created_at", "createdAt",  # content fields are varied below
+    "role", "created_at", "createdAt",
     # include multiple synonyms so at least one survives
     "content", "text", "message", "body", "msg", "payload", "value", "contentText", "messageText",
 }
@@ -226,6 +228,7 @@ def add_msg(
     emotion: str,
     intensity: float,
     themes: List[str],
+    context: Optional[Dict[str, Any]] = None,  # ← NEW: optional context blob
 ) -> None:
     """
     Insert a message and bump session counters.
@@ -246,6 +249,10 @@ def add_msg(
             "themes": themes,
             "created_at": now,
         }
+        # include context if the column exists (progressive writer will strip if not)
+        if context:
+            msg_payload["context"] = context
+
         _write_progressive(
             action="insert",
             table=SNAKE_MESSAGE_TABLE,
@@ -270,6 +277,7 @@ def add_msg(
             "last_emotion": emotion,
             "last_intensity": float(intensity),
             "updated_at": now,
+            "last_activity": now,       # if present
         }
         _write_progressive(
             action="update",
@@ -306,6 +314,12 @@ def add_msg(
         "contentText": text,
         "messageText": text,
     }
+    if context:
+        # best-effort context (common names)
+        msg_payload["context"] = context
+        msg_payload["metadata"] = context
+        msg_payload["meta"] = context
+
     _write_progressive(
         action="insert",
         table=LEGACY_MESSAGE_TABLE,
@@ -488,3 +502,107 @@ def update_analysis(session_id: str, analysis: Dict[str, Any]) -> None:
         )
 
 _update_analysis = update_analysis
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 🔥 Additions: session lifecycle, events, and convenience message insert
+
+def ensure_session(
+    user_id: str,
+    session_id: Optional[str] = None,
+    device: Optional[str] = None,
+    version: Optional[str] = None,
+) -> str:
+    """
+    Create or touch a session and return its id.
+    Writes device/version/last_activity if those columns exist.
+    """
+    sid = session_id or str(uuid.uuid4())
+    upsert_session(sid, user_id)
+    now = _now_iso()
+    # best-effort enrich
+    set_session_fields(
+        sid,
+        device=device,
+        version=version,
+        last_activity=now,
+        started_at=now,   # will be stripped if not present
+    )
+    return sid
+
+def touch_session(session_id: str) -> None:
+    """Lightweight heartbeat (updates last_activity/updated_at if present)."""
+    now = _now_iso()
+    set_session_fields(session_id, last_activity=now)
+
+def close_session(session_id: str) -> None:
+    """
+    Mark a session as ended now. Your scheduled job still handles durations if present.
+    """
+    now = _now_iso()
+    set_session_fields(session_id, ended_at=now, last_activity=now)
+
+def log_event(
+    user_id: str,
+    event_type: str,
+    session_id: Optional[str] = None,
+    meta: Optional[Dict[str, Any]] = None,
+) -> None:
+    """
+    Append an app-level event (if app_events table exists). Best-effort, non-blocking.
+    """
+    if not _probe_table(APP_EVENTS_TABLE):
+        return
+    payload = {
+        "user_id": user_id,
+        "session_id": session_id,
+        "event_type": event_type,
+        "meta": meta or {},
+        "created_at": _now_iso(),
+    }
+    try:
+        _write_progressive(
+            action="insert",
+            table=APP_EVENTS_TABLE,
+            payload=payload,
+            minimal_keys=SNAKE_EVENT_MIN_KEYS,
+        )
+    except Exception:
+        pass
+
+def insert_message(
+    *,
+    user_id: str,
+    session_id: str,
+    role: str,                 # 'user' | 'assistant' | 'system'
+    content: str,
+    emotion: Optional[str] = None,
+    intensity: Optional[float] = None,
+    themes: Optional[List[str]] = None,
+    context: Optional[Dict[str, Any]] = None,
+) -> None:
+    """
+    Convenience wrapper that:
+      1) writes a chat message (with optional context),
+      2) bumps counters on the session,
+      3) touches last_activity,
+      4) logs a 'message_sent' event.
+    """
+    emo = (emotion or "neutral").strip()
+    inten = float(intensity) if intensity is not None else 0.5
+    th = themes or []
+
+    # main write (handles snake/camel & context internally)
+    add_msg(
+        session_id=session_id,
+        user_id=user_id,
+        role=role,
+        text=content,
+        emotion=emo,
+        intensity=inten,
+        themes=th,
+        context=context,
+    )
+
+    # touch + event
+    touch_session(session_id)
+    log_event(user_id, "message_sent", session_id=session_id, meta={"role": role})
