@@ -39,28 +39,43 @@ export default function ChatInput({
   onModesChange: (m: ModeId[]) => void;
 }) {
   const [modesOpen, setModesOpen] = React.useState(false);
+  const taRef = React.useRef<HTMLTextAreaElement | null>(null);
+
+  // auto-grow (max ~128px)
+  const autoGrow = React.useCallback(() => {
+    const el = taRef.current;
+    if (!el) return;
+    el.style.height = "0px";
+    const h = Math.min(el.scrollHeight, 128);
+    el.style.height = `${h}px`;
+  }, []);
+
+  React.useEffect(() => {
+    autoGrow();
+  }, [input, autoGrow]);
 
   const toggleMode = (modeId: ModeId) => {
     const exists = currentModes.includes(modeId);
-    const next = exists ? (currentModes.filter((m) => m !== modeId) as ModeId[]) : ([...currentModes, modeId] as ModeId[]);
+    const next = exists
+      ? (currentModes.filter((m) => m !== modeId) as ModeId[])
+      : ([...currentModes, modeId] as ModeId[]);
     onModesChange(next);
   };
 
   return (
-    <div className="px-6 pb-6 relative">
-      <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-slate-200/50 dark:via-slate-700/50 to-transparent" />
-      <div className="absolute top-0 left-0 right-0 h-8 bg-gradient-to-b from-slate-100/20 dark:from-slate-900/20 to-transparent pointer-events-none" />
-
-      <div className="max-w-4xl mx-auto relative z-10">
-        <div className="bg-white/95 dark:bg-slate-800/95 rounded-2xl p-4 backdrop-blur-xl shadow-2xl border border-slate-200/50 dark:border-slate-700/50">
-          <div className="flex items-center gap-3 mb-4">
+    <div className="px-6 py-3">
+      <div className="max-w-4xl mx-auto">
+        <div className="bg-white/95 dark:bg-slate-800/95 rounded-2xl p-3 backdrop-blur-xl shadow-2xl border border-slate-200/50 dark:border-slate-700/50">
+          <div className="flex items-end gap-3">
             <div className="flex-1">
               <Textarea
+                ref={taRef}
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
+                onInput={autoGrow}
                 onKeyDown={onKeyDown}
-                placeholder="Type your message..."
-                className="w-full resize-none bg-transparent focus:ring-0 focus:outline-none font-rubik text-slate-700 dark:text-slate-200 placeholder:text-slate-400/70 dark:placeholder:text-slate-500/70 min-h-[40px] max-h-32 border-0 text-base"
+                placeholder="Type your message…"
+                className="w-full bg-transparent focus:ring-0 focus:outline-none font-rubik text-slate-700 dark:text-slate-200 placeholder:text-slate-400/70 dark:placeholder:text-slate-500/70 border-0 text-base resize-none leading-6 min-h-[40px] max-h-[128px]"
                 rows={1}
                 disabled={isTyping}
               />
@@ -68,7 +83,7 @@ export default function ChatInput({
             <SendButton onClick={handleSend} disabled={!input.trim() || isTyping} />
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 mt-2">
             <div className="flex items-center gap-2 flex-1 overflow-hidden">
               <AnimatePresence>
                 {modesOpen && (
@@ -77,7 +92,7 @@ export default function ChatInput({
                     initial={{ opacity: 0, x: -20 }}
                     animate={{ opacity: 1, x: 0 }}
                     exit={{ opacity: 0, x: -20 }}
-                    transition={{ duration: 0.3, ease: "easeOut" }}
+                    transition={{ duration: 0.25, ease: "easeOut" }}
                   >
                     {PERSONA_MODES.map((mode) => (
                       <motion.button
@@ -86,13 +101,13 @@ export default function ChatInput({
                         initial={{ opacity: 0 }}
                         animate={{ opacity: 1 }}
                         transition={{ duration: 0.2 }}
-                        className={`h-10 px-4 rounded-lg flex items-center transition-all duration-200 whitespace-nowrap font-rubik ${
+                        className={`h-9 px-3 rounded-lg flex items-center transition-all duration-200 whitespace-nowrap font-rubik ${
                           currentModes.includes(mode.id)
-                            ? "bg-gradient-to-r from-slate-200 via-zinc-200 to-stone-200 dark:from-slate-700 dark:via-zinc-700 dark:to-stone-700 text-slate-800 dark:text-slate-200 shadow-md"
+                            ? "bg-gradient-to-r from-slate-200 via-zinc-200 to-stone-200 dark:from-slate-700 dark:via-zinc-700 dark:to-stone-700 text-slate-800 dark:text-slate-200 shadow-sm"
                             : "bg-slate-100 dark:bg-slate-700 hover:bg-slate-50 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-300"
                         }`}
                       >
-                        <span className="text-sm font-medium">{mode.name}</span>
+                        <span className="text-[13px] font-medium">{mode.name}</span>
                       </motion.button>
                     ))}
                   </motion.div>
@@ -101,11 +116,15 @@ export default function ChatInput({
             </div>
 
             <Button
-              onClick={() => setModesOpen(!modesOpen)}
+              onClick={() => setModesOpen((v) => !v)}
               variant="outline"
               className="w-10 h-10 flex-shrink-0 rounded-lg bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-600 dark:text-slate-300 p-0 border-slate-200 dark:border-slate-600"
+              title="Toggle modes"
             >
-              <motion.div animate={{ rotate: modesOpen ? -45 : 0 }} transition={{ duration: 0.2, ease: "easeInOut" }}>
+              <motion.div
+                animate={{ rotate: modesOpen ? -45 : 0 }}
+                transition={{ duration: 0.2, ease: "easeInOut" }}
+              >
                 <Plus className="w-4 h-4" />
               </motion.div>
             </Button>

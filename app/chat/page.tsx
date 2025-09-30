@@ -76,6 +76,8 @@ function finalizeSession(
   } catch {}
 }
 
+const HEADER_H = 64; // keep in sync with ChatHeader height
+
 export default function ChatPage() {
   const { user } = useUser();
   const [sidebarOpen, setSidebarOpen] = React.useState(false);
@@ -276,45 +278,52 @@ export default function ChatPage() {
     if (t) await proceedSend(t);
   };
 
+  // shared left offset for header + content
+  const contentOffset = sidebarOpen ? "ml-64" : "ml-16";
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-zinc-25 to-stone-50 dark:from-slate-950 dark:via-zinc-900 dark:to-stone-950 transition-all duration-500">
       <SlideDrawer onSidebarToggle={setSidebarOpen} />
-      <ChatHeader title="Slurpy" sidebarOpen={sidebarOpen} />
 
+      {/* Fixed header aligned with sidebar width */}
+      <div className={`fixed top-0 left-0 right-0 z-40 ${contentOffset}`}>
+        <ChatHeader title="Slurpy" sidebarOpen={sidebarOpen} />
+      </div>
+
+      {/* Mode-change toast */}
       <AnimatePresence>{showModePopup && <ModeChangePopup modes={popupModes} />}</AnimatePresence>
 
-      <div className={`flex h-screen transition-all duration-300 ${sidebarOpen ? "ml-64" : "ml-16"}`}>
-        <div className="flex-1 flex flex-col">
-          {/* main content lane */}
-          <div className="flex-1 flex flex-col justify-start px-6 overflow-hidden">
-            {!hasStartedChat ? (
-              <div className="max-w-4xl mx-auto text-center my-auto">
-                <h1 className="text-5xl font-display font-light bg-gradient-to-r from-slate-600 via-zinc-600 to-stone-600 dark:from-slate-400 dark:via-zinc-400 dark:to-stone-400 bg-clip-text text-transparent mb-2">
-                  Hello{user?.firstName ? `, ${user.firstName}` : ""}
-                </h1>
-                <p className="text-xl text-slate-600 dark:text-slate-300 font-light">
-                  I'm Slurpy, your mindful AI companion
-                </p>
-                <div className="mt-6">
-                  <FloatingSuggestionButtons
-                    onSuggestionClick={(s) => {
-                      setInput(s);
-                      void handleSend(s);
-                    }}
-                  />
+      {/* Push content below header and keep total height = viewport - header */}
+      <div className={`pt-[${HEADER_H}px] ${contentOffset}`}>
+        <div className={`flex h-[calc(100vh-${HEADER_H}px)] transition-all duration-300`}>
+          <div className="flex-1 flex flex-col">
+            {/* scrollable message lane */}
+            <div className="flex-1 overflow-y-auto px-6">
+              {!hasStartedChat ? (
+                <div className="max-w-4xl mx-auto text-center h-full grid place-content-center">
+                  <h1 className="text-5xl font-display font-light bg-gradient-to-r from-slate-600 via-zinc-600 to-stone-600 dark:from-slate-400 dark:via-zinc-400 dark:to-stone-400 bg-clip-text text-transparent mb-2">
+                    Hello{user?.firstName ? `, ${user.firstName}` : ""}
+                  </h1>
+                  <p className="text-xl text-slate-600 dark:text-slate-300 font-light">
+                    I'm Slurpy, your mindful AI companion
+                  </p>
+                  <div className="mt-6">
+                    <FloatingSuggestionButtons
+                      onSuggestionClick={(s) => {
+                        setInput(s);
+                        void handleSend(s);
+                      }}
+                    />
+                  </div>
                 </div>
-              </div>
-            ) : (
-              <div className="flex-1 overflow-y-auto pb-4 rounded-2xl">
+              ) : (
                 <div className="max-w-4xl mx-auto py-6">
                   {messages.map((m) => (
                     <MessageBubble key={m.id} message={m} />
                   ))}
 
-                  {/* live typewriter */}
                   {liveText !== null && <LiveBubble text={liveText} />}
 
-                  {/* offer card */}
                   {drop?.phase === "offer" && (
                     <div className="flex justify-start mb-6">
                       <div className="max-w-[560px] w-full">
@@ -328,7 +337,6 @@ export default function ChatPage() {
                     </div>
                   )}
 
-                  {/* exercise */}
                   {drop?.phase === "exercise" && (
                     <div className="flex justify-start mb-6">
                       <div className="relative max-w-[720px] w-full rounded-2xl overflow-hidden">
@@ -367,20 +375,24 @@ export default function ChatPage() {
                   {isTyping && liveText === null && <TypingIndicator />}
                   <div ref={endRef} />
                 </div>
-              </div>
-            )}
-          </div>
+              )}
+            </div>
 
-          {/* input area */}
-          <ChatInput
-            input={input}
-            setInput={setInput}
-            isTyping={isTyping}
-            handleSend={() => void handleSend()}
-            onKeyDown={onKeyDown}
-            currentModes={currentModes}
-            onModesChange={onModesChange}
-          />
+            {/* sticky input within page, with subtle background + border */}
+            <div className="px-6">
+              <div className="sticky bottom-0 z-30 border-t border-slate-200/50 dark:border-slate-700/50 bg-slate-50/80 dark:bg-slate-900/70 backdrop-blur supports-[backdrop-filter]:bg-slate-50/40 rounded-t-2xl">
+                <ChatInput
+                  input={input}
+                  setInput={setInput}
+                  isTyping={isTyping}
+                  handleSend={() => void handleSend()}
+                  onKeyDown={onKeyDown}
+                  currentModes={currentModes}
+                  onModesChange={onModesChange}
+                />
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
