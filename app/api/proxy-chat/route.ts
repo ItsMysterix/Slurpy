@@ -23,7 +23,7 @@ function bad(status: number, error: string) {
 
 export async function POST(req: NextRequest) {
   try {
-    // 1) Auth gate
+    // 1) Auth presence (user session)
     const { userId, getToken } = await auth();
     if (!userId) return bad(401, "Unauthorized");
 
@@ -40,37 +40,37 @@ export async function POST(req: NextRequest) {
       (typeof body?.message === "string" ? body.message : undefined) ??
       (typeof body?.content === "string" ? body.content : undefined) ??
       "";
-
     const text = rawText.trim();
     if (!text) return bad(400, "Field 'text' is required");
 
     const sessionId = (body?.session_id || body?.sessionId || "").trim() || undefined;
 
-    // 3) Resolve a Clerk session JWT to forward to backend
-    // Priority: Authorization header → __session cookie → auth().getToken()
-    const hdrs = await headers();
-    const authz = hdrs.get("authorization") || hdrs.get("Authorization");
+    // 3) Resolve a Clerk JWT (prefer the 'backend' template)
+    // Order: getToken({template:"backend"}) → Authorization header (bearer) → __session cookie
     let clerkJwt = "";
-
-    if (authz?.startsWith("Bearer ")) {
-      clerkJwt = authz.slice("Bearer ".length).trim();
+    try {
+      clerkJwt = (await getToken({ template: "backend" })) || "";
+    } catch {
+      // ignore; we'll try fallbacks
     }
+
+    if (!clerkJwt) {
+      const hdrs = await headers();
+      const authz = hdrs.get("authorization") || hdrs.get("Authorization");
+      if (authz?.startsWith("Bearer ")) {
+        clerkJwt = authz.slice("Bearer ".length).trim();
+      }
+    }
+
     if (!clerkJwt) {
       const jar = await cookies();
       clerkJwt = jar.get("__session")?.value ?? "";
     }
-    if (!clerkJwt) {
-      try {
-        clerkJwt = (await getToken()) || "";
-      } catch {
-        // ignore
-      }
-    }
+
     if (!clerkJwt) return bad(401, "Missing Clerk session token");
 
-    // 4) Call backend via RAG helper
-    // askRag(text, sessionId, clerkJwt)  // keep signature aligned with your helper
-    const ragResponse = await askRag(text, sessionId, clerkJwt /*, body?.mode */);
+    // 4) Call backend via your helper (which should forward Authorization: Bearer <token>)
+    const ragResponse = await askRag(text, sessionId, clerkJwt /* , body?.mode */);
 
     // 5) Success
     return NextResponse.json(ragResponse, { headers: { "Cache-Control": "no-store" } });

@@ -1,23 +1,29 @@
 // app/api/proxy-chat-stream/route.ts
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { cookies, headers } from "next/headers";
 
+const BACKEND_URL = (process.env.BACKEND_URL ?? "http://localhost:8000").replace(/\/$/, "");
+
+function bad(status: number, error: string) {
+  return NextResponse.json({ error }, { status, headers: { "Cache-Control": "no-store" } });
+}
+
 export async function POST(req: NextRequest) {
   try {
     const { userId, getToken } = await auth();
-    if (!userId) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    if (!userId) return bad(401, "Unauthorized");
 
     // Parse body safely
     let body: any = {};
     try {
       body = await req.json();
     } catch {
-      return NextResponse.json({ error: "Bad JSON" }, { status: 400 });
+      return bad(400, "Bad JSON");
     }
 
     // Text: prefer body.text, then .message, then .content
@@ -27,9 +33,7 @@ export async function POST(req: NextRequest) {
       (typeof body?.content === "string" && body.content) ||
       "";
     const text = textRaw.trim();
-    if (!text) {
-      return NextResponse.json({ error: "Field 'text' is required" }, { status: 400 });
-    }
+    if (!text) return bad(400, "Field 'text' is required");
 
     // Optional fields
     const session_id =
@@ -38,27 +42,23 @@ export async function POST(req: NextRequest) {
       undefined;
     const mode = (typeof body?.mode === "string" && body.mode.trim()) || undefined;
 
-    // Resolve a Clerk session token to forward
-    const hdrs = await headers();
-    const authzHeader = hdrs.get("authorization") || hdrs.get("Authorization");
-    const cookieStore = await cookies();
-    let clerkJwt =
-      (authzHeader?.startsWith("Bearer ") && authzHeader.slice(7)) ||
-      cookieStore.get("__session")?.value ||
-      "";
-
-    if (!clerkJwt) {
-      try {
-        clerkJwt = (await getToken()) || "";
-      } catch {
-        // ignore
-      }
+    // Resolve a Clerk session token — prefer template 'backend'
+    let clerkJwt = "";
+    try {
+      clerkJwt = (await getToken({ template: "backend" })) || "";
+    } catch {
+      /* ignore — we’ll try fallbacks */
     }
     if (!clerkJwt) {
-      return NextResponse.json({ error: "Missing Clerk session token" }, { status: 401 });
+      const hdrs = await headers();
+      const authzHeader = hdrs.get("authorization") || hdrs.get("Authorization");
+      if (authzHeader?.startsWith("Bearer ")) clerkJwt = authzHeader.slice(7).trim();
     }
-
-    const backend = process.env.BACKEND_API_URL || "http://localhost:8000";
+    if (!clerkJwt) {
+      const cookieStore = await cookies();
+      clerkJwt = cookieStore.get("__session")?.value ?? "";
+    }
+    if (!clerkJwt) return bad(401, "Missing Clerk session token");
 
     // Propagate client abort to upstream
     const controller = new AbortController();
@@ -69,7 +69,7 @@ export async function POST(req: NextRequest) {
     if (session_id) upstreamPayload.session_id = session_id;
     if (mode) upstreamPayload.mode = mode;
 
-    const upstream = await fetch(`${backend}/chat_stream`, {
+    const upstream = await fetch(`${BACKEND_URL}/chat_stream`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -78,6 +78,7 @@ export async function POST(req: NextRequest) {
       },
       body: JSON.stringify(upstreamPayload),
       signal: controller.signal,
+      cache: "no-store",
     });
 
     if (!upstream.ok || !upstream.body) {
@@ -85,26 +86,29 @@ export async function POST(req: NextRequest) {
       try {
         errText = await upstream.text();
       } catch {}
-      return NextResponse.json(
-        { error: errText || "Upstream error" },
-        { status: upstream.status || 502 }
+      return new NextResponse(
+        JSON.stringify({ error: errText || "Upstream error" }),
+        {
+          status: upstream.status || 502,
+          headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
+        }
       );
     }
 
     // Pipe NDJSON straight through
     const stream = new ReadableStream({
-      start(controller) {
+      start(ctrl) {
         const reader = upstream.body!.getReader();
         (async () => {
           try {
             while (true) {
               const { done, value } = await reader.read();
               if (done) break;
-              if (value) controller.enqueue(value);
+              if (value) ctrl.enqueue(value);
             }
-            controller.close();
+            ctrl.close();
           } catch (e) {
-            controller.error(e);
+            ctrl.error(e);
           }
         })();
       },
@@ -125,6 +129,6 @@ export async function POST(req: NextRequest) {
     });
   } catch (err: any) {
     console.error("proxy-chat-stream error:", err?.message || err);
-    return NextResponse.json({ error: "Server error" }, { status: 500 });
+    return bad(500, "Server error");
   }
 }

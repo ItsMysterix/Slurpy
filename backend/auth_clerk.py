@@ -1,23 +1,24 @@
 # -*- coding: utf-8 -*-
 """
-auth_clerk.py — Minimal Clerk JWT verifier (prod-hardened)
+auth_clerk.py — Clerk JWT verifier (prod-hardened)
 
-- Caches JWKS with TTL, refreshes on kid-miss (key rotation)
-- Verifies alg, exp/nbf/iat with configurable leeway
-- Optional audience validation
-- Issuer allowlist via env
-- Normalizes all failures to JWTError (so API can 401)
+- JWKS TTL cache + automatic refresh on kid-miss (key rotation)
+- Strict alg check; validates exp/nbf/iat with configurable leeway
+- Optional audience verification (CLERK_AUDIENCE)
+- Issuer allowlist via CLERK_ISSUER / CLERK_ALLOWED_ISSUERS
+- FastAPI dependency: get_current_user() → {"id": <sub>, "claims": {...}}
 """
 
 from __future__ import annotations
 
 import os
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Annotated
 from urllib.parse import urlparse
 
 import httpx
 from jose import jwt, JWTError
 import cachetools
+from fastapi import Header, HTTPException
 
 # ── Env config ────────────────────────────────────────────────────────────────
 JWKS_URL: str = os.getenv(
@@ -29,7 +30,7 @@ ALGORITHM: str = os.getenv("CLERK_JWT_ALG", "RS256").strip()
 CACHE_TTL: int = int(os.getenv("CLERK_JWKS_TTL", "3600"))      # seconds
 LEEWAY: int    = int(os.getenv("CLERK_JWT_LEEWAY", "60"))      # seconds of clock skew
 
-# Audience (optional); if unset, we skip aud verification
+# Audience (optional). If unset, we skip aud verification.
 AUDIENCE: Optional[str] = (os.getenv("CLERK_AUDIENCE") or "").strip() or None
 
 # Issuer allowlist
@@ -43,6 +44,7 @@ if os.getenv("CLERK_ALLOWED_ISSUERS"):
         if i.strip()
     ]
 if not _allowed:
+    # conservative fallback to host derived from JWKS_URL
     host = urlparse(JWKS_URL).hostname
     if host:
         _allowed = [f"https://{host}"]
@@ -69,14 +71,11 @@ def _fetch_jwks_uncached() -> List[Dict[str, Any]]:
 
 def _fetch_jwks_cached() -> List[Dict[str, Any]]:
     """Fetch JWKS using TTL cache (and populate it if empty)."""
-    try:
-        if "jwks" in _JWKS_CACHE:
-            return _JWKS_CACHE["jwks"]  # type: ignore[index]
-        keys = _fetch_jwks_uncached()
-        _JWKS_CACHE["jwks"] = keys  # type: ignore[index]
-        return keys
-    except Exception as e:
-        raise JWTError(str(e)) from e
+    if "jwks" in _JWKS_CACHE:
+        return _JWKS_CACHE["jwks"]  # type: ignore[index]
+    keys = _fetch_jwks_uncached()
+    _JWKS_CACHE["jwks"] = keys  # type: ignore[index]
+    return keys
 
 def _get_signing_key(kid: Optional[str]) -> Dict[str, Any]:
     """
@@ -86,25 +85,22 @@ def _get_signing_key(kid: Optional[str]) -> Dict[str, Any]:
     if not kid:
         raise JWTError("Missing 'kid' in JWT header")
 
-    # 1) Try cached keys
+    # 1) try cached keys
     keys = _fetch_jwks_cached()
     for key in keys:
         if key.get("kid") == kid:
             return key
 
-    # 2) Force refresh (key rotation)
-    try:
-        keys = _fetch_jwks_uncached()
-        _JWKS_CACHE["jwks"] = keys  # refresh cache
-        for key in keys:
-            if key.get("kid") == kid:
-                return key
-    except JWTError:
-        pass
+    # 2) force refresh (rotation)
+    keys = _fetch_jwks_uncached()
+    _JWKS_CACHE["jwks"] = keys  # refresh cache
+    for key in keys:
+        if key.get("kid") == kid:
+            return key
 
     raise JWTError(f"Signing key not found for kid={kid}")
 
-# ── Public API ────────────────────────────────────────────────────────────────
+# ── Public verification ──────────────────────────────────────────────────────
 def verify_clerk_token(token: str) -> Dict[str, Any]:
     """
     Validate a Clerk session JWT and return claims.
@@ -124,7 +120,7 @@ def verify_clerk_token(token: str) -> Dict[str, Any]:
         options: Dict[str, Any] = {
             "verify_aud": bool(AUDIENCE),
             "leeway": LEEWAY,
-            # other defaults (exp/nbf/iat) are verified by default in python-jose
+            # (exp/nbf/iat) verified by default by python-jose
         }
 
         # Decode & validate
@@ -147,8 +143,35 @@ def verify_clerk_token(token: str) -> Dict[str, Any]:
         return claims
 
     except JWTError:
-        # Already normalized
+        # normalized
         raise
     except Exception as e:
         # Anything else → normalize to JWTError
         raise JWTError(f"Invalid Clerk JWT: {e}") from e
+
+# ── FastAPI dependency ────────────────────────────────────────────────────────
+AuthHeader = Annotated[Optional[str], Header(None)]
+
+def _claims_to_user(claims: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Map JWT claims → minimal user dict (future-proof).
+    """
+    return {"id": claims.get("sub"), "claims": claims}
+
+def get_current_user(authorization: AuthHeader) -> Dict[str, Any]:
+    """
+    FastAPI dependency.
+
+    Usage:
+        @app.get("/api/secure")
+        def secure_route(user = Depends(get_current_user)):
+            ...
+    """
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing bearer")
+    token = authorization.split(" ", 1)[1].strip()
+    try:
+        claims = verify_clerk_token(token)
+        return _claims_to_user(claims)
+    except JWTError as e:
+        raise HTTPException(status_code=401, detail=str(e))

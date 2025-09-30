@@ -1,39 +1,39 @@
 // lib/chat-store.ts
-import { create } from "zustand"
-import { persist, createJSONStorage } from "zustand/middleware"
+import { create } from "zustand";
+import { persist, createJSONStorage } from "zustand/middleware";
+import type { ModeId } from "@/lib/persona";
 
-export type Sender = "user" | "slurpy"
+export type Sender = "user" | "slurpy";
 
 export interface Message {
-  id: string
-  content: string
-  sender: Sender
-  timestamp: string // store as ISO to avoid Date serialization issues
-  emotion?: string
-  modes?: string[]
+  id: string;
+  content: string;
+  sender: Sender;
+  timestamp: string; // ISO
+  emotion?: string;
+  modes?: ModeId[];
 }
 
 interface ChatState {
-  ownerId: string | null
-  sessionId: string | null
-  messages: Message[]
-  currentModes: string[]
-  hasStartedChat: boolean
-  isTyping: boolean
+  ownerId: string | null;
+  sessionId: string | null;
+  messages: Message[];
+  currentModes: ModeId[];
+  hasStartedChat: boolean;
+  isTyping: boolean;
 
-  // actions
-  setOwner: (userId: string | null) => void
-  resetForUser: (userId: string | null) => void
-  addMessage: (msg: Omit<Message, "id" | "timestamp"> & { id?: string; timestamp?: string }) => void
-  setSessionId: (sid: string | null) => void
-  setCurrentModes: (modes: string[]) => void
-  setHasStartedChat: (v: boolean) => void
-  setIsTyping: (v: boolean) => void
+  setOwner: (userId: string | null) => void;
+  resetForUser: (userId: string | null) => void;
+  addMessage: (msg: Omit<Message, "id" | "timestamp"> & { id?: string; timestamp?: string }) => void;
+  setSessionId: (sid: string | null) => void;
+  setCurrentModes: (modes: ModeId[]) => void;
+  setHasStartedChat: (v: boolean) => void;
+  setIsTyping: (v: boolean) => void;
   updateMessage: (
     id: string,
     patch: Partial<Omit<Message, "id" | "timestamp">> & { content?: string }
-  ) => void
-  resetAll: () => void
+  ) => void;
+  resetAll: () => void;
 }
 
 export const useChatStore = create<ChatState>()(
@@ -42,22 +42,23 @@ export const useChatStore = create<ChatState>()(
       ownerId: null,
       sessionId: null,
       messages: [],
-      currentModes: ["therapist"],
+      currentModes: ["self_compassion"], // default
       hasStartedChat: false,
       isTyping: false,
 
       setOwner: (userId) => set({ ownerId: userId }),
+
       resetForUser: (userId) => {
-        const { ownerId } = get()
+        const { ownerId } = get();
         if (ownerId !== userId) {
           set({
             ownerId: userId,
             sessionId: null,
             messages: [],
-            currentModes: ["therapist"],
+            currentModes: ["self_compassion"],
             hasStartedChat: false,
             isTyping: false,
-          })
+          });
         }
       },
 
@@ -90,18 +91,15 @@ export const useChatStore = create<ChatState>()(
         set({
           sessionId: null,
           messages: [],
-          currentModes: ["therapist"],
+          currentModes: ["self_compassion"],
           hasStartedChat: false,
           isTyping: false,
         }),
     }),
     {
       name: "slurpy:chat:v1",
-      // IMPORTANT: per-tab persistence; clears when the tab/window closes
       storage: createJSONStorage(() => sessionStorage),
-      // If you ever want it to survive browser close, switch to:
-      // storage: createJSONStorage(() => localStorage),
       version: 1,
     }
   )
-)
+);
