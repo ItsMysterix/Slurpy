@@ -7,14 +7,14 @@ export type EmotionSlice = { emotion: string; count: number; percentage: number 
 
 export type InsightsResponse = {
   header: {
-    periodLabel: string;          // UI-computed on page; can be empty from API
-    totalMinutes: number;         // total minutes in selected period
-    totalMessages: number;        // total messages in selected period
-    currentEmotion: string;       // e.g., "anxious"
-    currentFruit: string;         // not used for score; still handy for emoji fallback
-    currentIntensity01: number;   // 0..1
-    currentValenceNeg1To1: number;// -1..1
-    topicSentence: string;        // one-liner summary of topics
+    periodLabel: string;           // UI-computed on page; can be empty from API
+    totalMinutes: number;          // total minutes in selected period
+    totalMessages: number;         // total messages in selected period
+    currentEmotion: string;        // e.g., "anxious"
+    currentFruit: string;          // emoji or decorative fruit
+    currentIntensity01: number;    // 0..1
+    currentValenceNeg1To1: number; // -1..1
+    topicSentence: string;         // one-liner summary of topics
   };
   trends: { last7Days: TrendPoint[] };
   breakdown: {
@@ -32,6 +32,10 @@ export type InsightsResponse = {
   topics: Array<{ topic: string; count: number; lastSeenISO: string; href: string }>;
 };
 
+/* ============================ Re-exports ============================ */
+/** Single source of truth for emotion → fruit/icon file */
+export { iconForEmotion } from "@/lib/moodFruit";
+
 /* =========================== UI Helpers =========================== */
 
 export function valenceLabel(v: number) {
@@ -40,7 +44,7 @@ export function valenceLabel(v: number) {
   return "Neutral";
 }
 
-/** Tailwind classes for the Badge, tuned for your dark/glassy theme */
+/** Tailwind classes for the Badge, tuned for dark/glassy theme */
 export function valenceClass(v: number): string {
   const neg =
     "bg-red-500/10 text-red-300 border-red-400/30 dark:bg-red-500/10 dark:text-red-300 dark:border-red-400/30";
@@ -55,40 +59,10 @@ export function valenceClass(v: number): string {
   return neu;
 }
 
-/* ---------- Fruit/Icon mapping (files under /public) ---------- */
-/* If a file isn't found, we fall back to /Slurpy.ico. */
-const EMO_ICON_NAME: Record<string, string> = {
-  // positive
-  happy: "Mango Mania.ico",
-  joy: "Mango Mania.ico",
-  excited: "Pineapple punch.ico",
-  energetic: "Cherry charge.ico",
-  grateful: "Grape Expectations.ico",
-  calm: "Watermelon Wave.ico",
-  peaceful: "Watermelon Wave.ico",
-  content: "Peachy Keen.ico",
-  hopeful: "Kiwi Comeback.ico",
-  // negative
-  angry: "Fiery Guava.ico",
-  frustrated: "Peer Pressure.ico",
-  anxious: "Sour Lemon.ico",
-  worried: "Sour Lemon.ico",
-  stressed: "Spiky Papaya.ico",
-  sad: "Strawberry Bliss.ico",
-  // neutral/default
-  neutral: "Slurpy.ico",
-};
-
-export function iconForEmotion(emotion: string) {
-  const key = (emotion || "neutral").toLowerCase();
-  const file = EMO_ICON_NAME[key] || EMO_ICON_NAME["neutral"];
-  return `/${encodeURIComponent(file)}`;
-}
-
 /* ========================= Normalization ========================= */
-
+/** Accepts both the new and legacy /api/insights response shapes */
 export function normalizeInsights(api: any): InsightsResponse {
-  // Even if API claims to be "new shape", fill safe defaults for optional fields.
+  // New shape
   if (api?.header && api?.trends && api?.breakdown) {
     const header = api.header ?? {};
     const trends = api.trends ?? {};
@@ -112,11 +86,13 @@ export function normalizeInsights(api: any): InsightsResponse {
       },
       breakdown: {
         emotions: Array.isArray(breakdown.emotions) ? breakdown.emotions : [],
-        valence: Array.isArray(breakdown.valence) ? breakdown.valence : [
-          { bucket: "negative", percentage: 0 },
-          { bucket: "neutral",  percentage: 100 },
-          { bucket: "positive", percentage: 0 },
-        ],
+        valence: Array.isArray(breakdown.valence)
+          ? breakdown.valence
+          : [
+              { bucket: "negative", percentage: 0 },
+              { bucket: "neutral", percentage: 100 },
+              { bucket: "positive", percentage: 0 },
+            ],
       },
       insights: insightsArr.map((x: any) => ({
         title: String(x?.title ?? "Getting Started"),
@@ -130,7 +106,7 @@ export function normalizeInsights(api: any): InsightsResponse {
     };
   }
 
-  // Back-compat with the earlier /api/insights result
+  // Legacy shape (back-compat)
   const nowISO = new Date().toISOString();
 
   const cs = api?.currentSession ?? {};
@@ -201,10 +177,26 @@ export function normalizeInsights(api: any): InsightsResponse {
 
 export function emotionValence(emotion: string, intensity01: number) {
   const pos = new Set([
-    "joy", "excited", "hopeful", "content", "energetic", "happy", "peaceful", "grateful", "calm",
+    "joy",
+    "excited",
+    "hopeful",
+    "content",
+    "energetic",
+    "happy",
+    "peaceful",
+    "grateful",
+    "calm",
   ]);
   const neg = new Set([
-    "sad", "angry", "anxious", "worried", "stressed", "fear", "panic", "resentful", "frustrated",
+    "sad",
+    "angry",
+    "anxious",
+    "worried",
+    "stressed",
+    "fear",
+    "panic",
+    "resentful",
+    "frustrated",
   ]);
   const e = (emotion || "").toLowerCase();
   const i = clamp01(Number(intensity01));
@@ -240,7 +232,7 @@ function valenceBuckets(vs: number[]) {
   const pos = vs.filter((v) => v > 0.2).length;
   return [
     { bucket: "negative" as const, percentage: Math.round((neg / n) * 100) },
-    { bucket: "neutral"  as const, percentage: Math.round((neu / n) * 100) },
+    { bucket: "neutral" as const, percentage: Math.round((neu / n) * 100) },
     { bucket: "positive" as const, percentage: Math.round((pos / n) * 100) },
   ];
 }
