@@ -1,17 +1,18 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Loader2 } from "lucide-react";
-import SlideDrawer from "@/components/slide-drawer";
+import { useAuth, useUser } from "@clerk/nextjs";
 
+import SlideDrawer from "@/components/slide-drawer";
 import JournalHeader from "@/components/journal/JournalHeader";
-import SearchBar from "@/components/journal/SearchBar";
+import SearchBar, { type JournalFilterState } from "@/components/journal/SearchBar";
 import NewEntryForm from "@/components/journal/NewEntryForm";
 import EntryCard, { type JournalEntry } from "@/components/journal/EntryCard";
 import PreviewModal from "@/components/journal/PreviewModal";
 
-import { useAuth, useUser } from "@clerk/nextjs";
-export type First<T = unknown> = { second: T };
+import { filterEntries, type Entry as FilterEntry } from "@/lib/journal-filter";
+import { fruitForEmotion } from "@/lib/moodFruit";
 
 /** ---------- Normalizers (prevent shape issues) ---------- */
 const normalizeTags = (tags: unknown): string[] => {
@@ -20,26 +21,47 @@ const normalizeTags = (tags: unknown): string[] => {
   return [];
 };
 
-const normalizeEntry = (e: any): JournalEntry => {
+const filenameToSlug = (icon?: string) => {
+  if (!icon) return undefined;
+  const base = icon.split("/").pop() ?? "";
+  const name = base.replace(/\.(ico|png|jpg|jpeg|svg)$/i, "");
+  return name ? name.toLowerCase().replace(/\s+/g, "-") : undefined;
+};
+
+const moodToSlug = (mood?: string) => {
+  if (!mood) return undefined;
+  const name = fruitForEmotion(mood).name; // e.g. "Sour Lemon"
+  return name.toLowerCase().replace(/\s+/g, "-");
+};
+
+const normalizeEntry = (e: any): (JournalEntry & { fruitId?: string; favorite?: boolean }) => {
   const id = e?.id ?? e?._id ?? crypto.randomUUID();
   const createdAt = e?.createdAt ?? e?.date ?? new Date().toISOString();
   const updatedAt = e?.updatedAt ?? createdAt;
   const date = e?.date ?? createdAt;
+
+  const fruitIcon = e?.fruit ? String(e.fruit) : undefined;
+  const fruitId = filenameToSlug(fruitIcon) || moodToSlug(e?.mood ? String(e.mood) : undefined);
+
   return {
     id: String(id),
     title: String(e?.title ?? ""),
     content: String(e?.content ?? ""),
     date: String(date),
     mood: e?.mood ? String(e.mood) : undefined,
-    fruit: e?.fruit ? String(e.fruit) : undefined, // icon URL or legacy emoji
+    fruit: fruitIcon, // icon URL or legacy emoji
     tags: normalizeTags(e?.tags),
     userId: String(e?.userId ?? e?.user_id ?? ""),
     createdAt: String(createdAt),
     updatedAt: String(updatedAt),
+
+    // extras for filtering
+    fruitId,
+    favorite: Boolean(e?.favorite),
   };
 };
 
-const normalizeArrayResponse = (raw: any): JournalEntry[] => {
+const normalizeArrayResponse = (raw: any): (JournalEntry & { fruitId?: string; favorite?: boolean })[] => {
   const arr = Array.isArray(raw) ? raw : Array.isArray(raw?.entries) ? raw.entries : raw ? [raw] : [];
   return arr.map(normalizeEntry);
 };
@@ -53,7 +75,14 @@ export default function JournalPage() {
   // page state
   const [showNewEntry, setShowNewEntry] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
-  const [journalEntries, setJournalEntries] = useState<JournalEntry[]>([]);
+  const [filters, setFilters] = useState<JournalFilterState>({
+    fruits: [],
+    from: undefined,
+    to: undefined,
+    favoritesOnly: false,
+  });
+
+  const [journalEntries, setJournalEntries] = useState<(JournalEntry & { fruitId?: string; favorite?: boolean })[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState<string | null>(null);
@@ -89,6 +118,7 @@ export default function JournalPage() {
 
   useEffect(() => {
     if (userId) void fetchJournalEntries();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId]);
 
   // ---------- Actions ----------
@@ -120,8 +150,8 @@ export default function JournalPage() {
         setNewEntry({ title: "", content: "", tags: "", mood: "", fruit: "" });
         setShowNewEntry(false);
       } else {
-        const error = await response.json().catch(() => ({}));
-        console.error("Failed to save entry:", error);
+        const err = await response.json().catch(() => ({}));
+        console.error("Failed to save entry:", err);
         alert("Failed to save entry. Please try again.");
       }
     } catch (error) {
@@ -170,8 +200,8 @@ export default function JournalPage() {
         setJournalEntries((prev) => prev.map((e) => (e.id === entryId ? updatedEntry : e)));
         setEditingEntry(null);
       } else {
-        const error = await response.json().catch(() => ({}));
-        console.error("Failed to update entry:", error);
+        const err = await response.json().catch(() => ({}));
+        console.error("Failed to update entry:", err);
         alert("Failed to update entry. Please try again.");
       }
     } catch (error) {
@@ -183,15 +213,15 @@ export default function JournalPage() {
   };
 
   const handleDeleteEntry = async (entryId: string) => {
-    if (!confirm("Are you sure you want to delete this journal entry? This action cannot be undone.")) return;
+    if (!confirm("Delete this journal entry? This action cannot be undone.")) return;
     try {
       setDeleting(entryId);
       const response = await fetch(`/api/journal?id=${entryId}`, { method: "DELETE" });
       if (response.ok) {
         setJournalEntries((prev) => prev.filter((entry) => entry.id !== entryId));
       } else {
-        const error = await response.json().catch(() => ({}));
-        console.error("Failed to delete entry:", error);
+        const err = await response.json().catch(() => ({}));
+        console.error("Failed to delete entry:", err);
         alert("Failed to delete entry. Please try again.");
       }
     } catch (error) {
@@ -212,12 +242,34 @@ export default function JournalPage() {
   };
 
   const safeEntries = Array.isArray(journalEntries) ? journalEntries : [];
-  const filteredEntries = safeEntries.filter(
-    (entry) =>
-      entry.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      entry.content.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      entry.tags.some((tag) => tag.toLowerCase().includes(searchQuery.toLowerCase()))
+
+  // Build filterable projection
+  const filterInput: FilterEntry[] = useMemo(
+    () =>
+      safeEntries.map((e) => ({
+        id: e.id,
+        text: `${e.title} ${e.content} ${e.tags.join(" ")}`,
+        date: e.date,
+        fruitId: (e as any).fruitId,
+        favorite: (e as any).favorite,
+      })),
+    [safeEntries]
   );
+
+  const filteredIds = useMemo(
+    () =>
+      new Set(
+        filterEntries(filterInput, searchQuery, {
+          fruits: filters.fruits,
+          from: filters.from,
+          to: filters.to,
+          favoritesOnly: filters.favoritesOnly,
+        }).map((e) => e.id)
+      ),
+    [filterInput, searchQuery, filters]
+  );
+
+  const filteredEntries = safeEntries.filter((e) => filteredIds.has(e.id));
 
   if (loading) {
     return (
@@ -240,14 +292,19 @@ export default function JournalPage() {
       <SlideDrawer onSidebarToggle={setSidebarOpen} />
       <div className={`flex h-screen transition-all duration-300 ${sidebarOpen ? "ml-64" : "ml-16"}`}>
         <div className="flex-1 flex flex-col">
-          {/* Header (consistent theme toggle position) */}
+          {/* Header */}
           <JournalHeader userFirstName={user?.firstName ?? ""} onNew={() => setShowNewEntry(true)} />
 
           {/* Main */}
           <div className="flex-1 overflow-y-auto p-6">
             <div className="max-w-4xl mx-auto space-y-6">
-              {/* Search */}
-              <SearchBar value={searchQuery} onChange={setSearchQuery} />
+              {/* Search + Filters */}
+              <SearchBar
+                value={searchQuery}
+                onChange={setSearchQuery}
+                filters={filters}
+                onFiltersChange={setFilters}
+              />
 
               {/* New Entry */}
               <NewEntryForm
@@ -261,7 +318,7 @@ export default function JournalPage() {
 
               {/* Entries */}
               <div className="space-y-4">
-                {filteredEntries.length === 0 && !searchQuery ? (
+                {filteredEntries.length === 0 && !searchQuery && filters.fruits.length === 0 && !filters.from && !filters.to && !filters.favoritesOnly ? (
                   <div className="text-center py-12 opacity-90">
                     <p className="text-clay-500 dark:text-sand-400 font-sans mb-4">Start your journaling journey!</p>
                     <button
@@ -292,7 +349,7 @@ export default function JournalPage() {
                         }}
                         onSaveEdit={() => handleSaveEdit(entry.id)}
                       />
-                      {/* Delete action bound here to keep API call centralized */}
+                      {/* Delete trigger (sr-only keeps DOM focus sane) */}
                       {deleting === entry.id ? null : (
                         <button
                           onClick={() => handleDeleteEntry(entry.id)}
@@ -306,9 +363,11 @@ export default function JournalPage() {
                 )}
               </div>
 
-              {filteredEntries.length === 0 && searchQuery && (
+              {filteredEntries.length === 0 && (searchQuery || filters.fruits.length || filters.from || filters.to || filters.favoritesOnly) && (
                 <div className="text-center py-12">
-                  <p className="text-clay-500 dark:text-sand-400 font-sans">No entries found matching “{searchQuery}”.</p>
+                  <p className="text-clay-500 dark:text-sand-400 font-sans">
+                    No entries match your filters.
+                  </p>
                 </div>
               )}
             </div>
