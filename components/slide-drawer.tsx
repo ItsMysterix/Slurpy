@@ -23,9 +23,9 @@ export default function SlideDrawer({ onSidebarToggle }: SlideDrawerProps) {
   const { user } = useUser();
 
   const navigationItems = [
-    { id: "chats",     label: "Chats",            icon: MessageCircle, href: "/chat",     description: "AI conversations",   gradient: "from-sage-400 to-sage-500" },
-    { id: "insights",  label: "Session Insights", icon: BarChart3,     href: "/insights", description: "Emotion analytics",   gradient: "from-clay-400 to-clay-500" },
-    { id: "calendar",  label: "Calendar",         icon: Calendar,      href: "/calendar", description: "Track your patterns", gradient: "from-sage-500 to-clay-400" },
+    { id: "chats",     label: "Chats",            icon: MessageCircle, href: "/chat",     description: "AI conversations",     gradient: "from-sage-400 to-sage-500" },
+    { id: "insights",  label: "Session Insights", icon: BarChart3,     href: "/insights", description: "Emotion analytics",     gradient: "from-clay-400 to-clay-500" },
+    { id: "calendar",  label: "Calendar",         icon: Calendar,      href: "/calendar", description: "Track your patterns",   gradient: "from-sage-500 to-clay-400" },
     { id: "journal",   label: "Journal",          icon: BookOpen,      href: "/journal",  description: "Reflect your thoughts", gradient: "from-clay-400 to-sage-400" },
   ];
 
@@ -42,10 +42,8 @@ export default function SlideDrawer({ onSidebarToggle }: SlideDrawerProps) {
       <div
         className={[
           "fixed inset-y-0 left-0 z-40 transition-all duration-300",
-          // Mobile: always narrow rail
-          "w-12",
-          // Desktop: expand/collapse controls width
-          isOpen ? "md:w-64" : "md:w-16",
+          "w-12",                               // mobile: narrow rail only
+          isOpen ? "md:w-64" : "md:w-16",       // desktop: expand/collapse
           "bg-gradient-to-b from-white/95 via-sage-25/90 to-clay-50/95",
           "dark:from-gray-950/95 dark:via-gray-900/90 dark:to-gray-950/95",
           "backdrop-blur-lg border-r border-sage-200/50 dark:border-gray-700/50",
@@ -77,12 +75,11 @@ export default function SlideDrawer({ onSidebarToggle }: SlideDrawerProps) {
           </Button>
         </div>
 
-        {/* ===== MOBILE =====
-            On mobile, hide everything else. Hamburger only. */}
+        {/* ===== MOBILE =====  — only hamburger */}
         <div className="md:hidden flex-1" />
 
         {/* ===== DESKTOP CONTENT ===== */}
-        <div className="hidden md:block">
+        <div className="hidden md:flex md:flex-1 md:flex-col">
           {isOpen ? (
             <>
               {/* Expanded list */}
@@ -127,9 +124,10 @@ export default function SlideDrawer({ onSidebarToggle }: SlideDrawerProps) {
                 </div>
               </div>
 
+              {/* push bottom section down */}
               <div className="flex-1" />
 
-              {/* User / Signout */}
+              {/* Bottom: User / Signout */}
               <div className="border-sage-200/50 dark:border-gray-700/50 p-4 flex items-center gap-3 min-h-[64px] border-t bg-gradient-to-r from-white/50 via-sage-50/30 to-sand-50/50 dark:from-gray-900/50 dark:via-gray-800/30 dark:to-gray-900/50 backdrop-blur-sm relative z-10">
                 <Avatar className="w-8 h-8 shadow-md">
                   {user?.imageUrl ? (
@@ -162,39 +160,45 @@ export default function SlideDrawer({ onSidebarToggle }: SlideDrawerProps) {
               </div>
             </>
           ) : (
-            // Collapsed desktop icons; hidden on mobile
-            <div className="flex-1 flex flex-col items-center py-4 space-y-4 relative z-10">
-              {navigationItems.map((item, index) => {
-                const Icon = item.icon;
-                const active = isActivePage(item.href);
-                return (
-                  <motion.div
-                    key={item.id}
-                    initial={{ opacity: 0, scale: 0.8 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    transition={{ delay: index * 0.1, duration: 0.4 }}
-                    whileHover={{ scale: 1.1, y: -5, transition: { duration: 0.2 } }}
-                  >
-                    <Link href={item.href}>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className={[
-                          "w-11 h-11 rounded-xl transition-all duration-200",
-                          active
-                            ? "bg-gradient-to-br from-sage-500 via-clay-500 to-sand-500 text-white shadow-lg border border-sage-400/60"
-                            : "bg-white/80 dark:bg-gray-800/90 text-clay-600 hover:text-clay-700 hover:bg-sage-100/80 dark:text-sand-300 dark:hover:text-sand-200 dark:hover:bg-gray-700/90 border border-sage-200/50 hover:border-sage-300/70"
-                        ].join(" ")}
-                        title={item.label}
-                      >
-                        <Icon className="w-5 h-5 text-inherit" />
-                      </Button>
-                    </Link>
-                  </motion.div>
-                );
-              })}
+            // Collapsed desktop: icons at top, avatar/logout pinned to bottom
+            <div className="flex flex-1 flex-col">
+              {/* top: nav icons */}
+              <div className="flex flex-col items-center py-4 space-y-4 relative z-10">
+                {navigationItems.map((item, index) => {
+                  const Icon = item.icon;
+                  const active = isActivePage(item.href);
+                  return (
+                    <motion.div
+                      key={item.id}
+                      initial={{ opacity: 0, scale: 0.8 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      transition={{ delay: index * 0.1, duration: 0.4 }}
+                      whileHover={{ scale: 1.1, y: -5, transition: { duration: 0.2 } }}
+                    >
+                      <Link href={item.href}>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className={[
+                            "w-11 h-11 rounded-xl transition-all duration-200",
+                            active
+                              ? "bg-gradient-to-br from-sage-500 via-clay-500 to-sand-500 text-white shadow-lg border border-sage-400/60"
+                              : "bg-white/80 dark:bg-gray-800/90 text-clay-600 hover:text-clay-700 hover:bg-sage-100/80 dark:text-sand-300 dark:hover:text-sand-200 dark:hover:bg-gray-700/90 border border-sage-200/50 hover:border-sage-300/70"
+                          ].join(" ")}
+                          title={item.label}
+                        >
+                          <Icon className="w-5 h-5 text-inherit" />
+                        </Button>
+                      </Link>
+                    </motion.div>
+                  );
+                })}
+              </div>
 
-              {/* bottom (avatar + logout) */}
+              {/* spacer to push bottom */}
+              <div className="flex-1" />
+
+              {/* bottom: avatar + logout */}
               <div className="flex flex-col items-center pb-4 space-y-3 relative z-10">
                 <Link href="/profile">
                   <Button variant="ghost" size="sm" className="p-0 rounded-full hover:scale-105 transition-transform hover:shadow-lg">

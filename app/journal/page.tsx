@@ -8,7 +8,8 @@ import SlideDrawer from "@/components/slide-drawer";
 import JournalHeader from "@/components/journal/JournalHeader";
 import SearchBar, { type JournalFilterState } from "@/components/journal/SearchBar";
 import NewEntryForm from "@/components/journal/NewEntryForm";
-import EntryCard, { type JournalEntry } from "@/components/journal/EntryCard";
+import EntryCard from "@/components/journal/EntryCard";
+import type { JournalEntry } from "@/components/journal/types";
 import PreviewModal from "@/components/journal/PreviewModal";
 
 import { filterEntries, type Entry as FilterEntry } from "@/lib/journal-filter";
@@ -358,16 +359,9 @@ export default function JournalPage() {
                           setEditEntry({ title: "", content: "", tags: "", mood: "", fruit: "" });
                         }}
                         onSaveEdit={() => handleSaveEdit(entry.id)}
+                        // ✅ wired delete
+                        onDelete={(id) => handleDeleteEntry(id)}
                       />
-                      {/* Delete trigger (sr-only keeps DOM focus sane) */}
-                      {deleting === entry.id ? null : (
-                        <button
-                          onClick={() => handleDeleteEntry(entry.id)}
-                          className="sr-only"
-                          aria-hidden
-                          tabIndex={-1}
-                        />
-                      )}
                     </div>
                   ))
                 )}
