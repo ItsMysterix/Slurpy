@@ -1,51 +1,86 @@
-"use client"
-import { motion } from "framer-motion"
-import { Button } from "@/components/ui/button"
-import { Badge } from "@/components/ui/badge"
-import { ChevronLeft, ChevronRight, Calendar as CalendarIcon, TrendingUp } from "lucide-react"
-import { monthNames } from "@/lib/calendar-types"
+"use client";
+
+import * as React from "react";
+import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, TrendingUp, Sun, Moon } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { useTheme } from "next-themes";
+
+/** Same toggle behavior/look as other pages (Chat/Insights) */
+function ThemeToggle() {
+  const { theme, setTheme } = useTheme();
+  const [mounted, setMounted] = React.useState(false);
+  React.useEffect(() => setMounted(true), []);
+  return (
+    <Button
+      aria-label="Toggle theme"
+      onClick={() => mounted && setTheme(theme === "dark" ? "light" : "dark")}
+      variant="ghost"
+      size="sm"
+      className="text-slate-600 hover:text-slate-500 dark:text-slate-400 dark:hover:text-slate-300 p-2 rounded-lg"
+    >
+      {theme === "dark" ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
+    </Button>
+  );
+}
 
 export default function CalendarHeader({
-  currentMonth, currentYear, onPrev, onNext, rightPad,
-  rightSlot
+  currentDate,
+  onPrev,
+  onNext,
 }: {
-  currentMonth: number
-  currentYear: number
-  onPrev: () => void
-  onNext: () => void
-  rightPad?: boolean
-  rightSlot?: React.ReactNode
+  /** optional to avoid crashes during first render */
+  currentDate?: Date;
+  onPrev: () => void;
+  onNext: () => void;
 }) {
+  // Defensive: if currentDate is undefined or invalid, fall back to "now"
+  const d = currentDate instanceof Date && !Number.isNaN(+currentDate) ? currentDate : new Date();
+  const monthLabel = d.toLocaleString("en-US", { month: "long", year: "numeric" });
+
+  // NOTE: No ml-16/ml-64 here; the page container handles sidebar offset (same pattern as ChatHeader).
   return (
-    <motion.div
-      className="flex items-center justify-between"
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.6 }}
-    >
-      <div className="flex items-center gap-4">
-        <Button onClick={onPrev} variant="outline" size="sm"
-          className="rounded-xl border-sage-200/50 dark:border-gray-600/50 hover:bg-sage-100 dark:hover:bg-gray-700 backdrop-blur-sm bg-white/60 dark:bg-gray-700/60">
+    <div className="h-16 flex items-center justify-between px-4 bg-white/30 dark:bg-slate-900/30 backdrop-blur-sm border-b border-slate-100/50 dark:border-slate-800/50">
+      {/* Left: Title */}
+      <div className="flex items-center gap-3">
+        <CalendarIcon className="w-5 h-5 text-slate-700 dark:text-slate-200" />
+        <h1 className="text-2xl font-display font-medium text-slate-700 dark:text-slate-200 truncate">
+          {monthLabel}
+        </h1>
+      </div>
+
+      {/* Center: Month nav */}
+      <div className="flex items-center gap-2">
+        <Button
+          size="icon"
+          variant="outline"
+          onClick={onPrev}
+          className="rounded-xl border-slate-200/60 dark:border-slate-600/60"
+          aria-label="Previous month"
+        >
           <ChevronLeft className="w-4 h-4" />
         </Button>
-        <h2 className="text-3xl font-display text-clay-700 dark:text-sand-200 flex items-center gap-2">
-          <CalendarIcon className="w-6 h-6" />
-          {monthNames[currentMonth]} {currentYear}
-        </h2>
-        <Button onClick={onNext} variant="outline" size="sm"
-          className="rounded-xl border-sage-200/50 dark:border-gray-600/50 hover:bg-sage-100 dark:hover:bg-gray-700 backdrop-blur-sm bg-white/60 dark:bg-gray-700/60">
+        <Button
+          size="icon"
+          variant="outline"
+          onClick={onNext}
+          className="rounded-xl border-slate-200/60 dark:border-slate-600/60"
+          aria-label="Next month"
+        >
           <ChevronRight className="w-4 h-4" />
         </Button>
       </div>
 
-      <div className={`flex items-center gap-2 ${rightPad ? "mr-96" : ""}`}>
-        <Badge variant="secondary"
-          className="bg-sage-100 text-sage-600 dark:bg-gray-800 dark:text-sand-300 border-sage-200 dark:border-gray-600">
-          <TrendingUp className="w-3 h-3 mr-1" />
+      {/* Right: Track Progress & Theme (kept exactly as before) */}
+      <div className="flex items-center gap-3">
+        <Button
+          variant="secondary"
+          className="h-8 rounded-lg bg-slate-100/60 dark:bg-slate-800/60 border border-slate-200/50 dark:border-slate-700/50 text-slate-700 dark:text-slate-200"
+        >
+          <TrendingUp className="w-4 h-4 mr-2" />
           Track Progress
-        </Badge>
-        {rightSlot}
+        </Button>
+        <ThemeToggle />
       </div>
-    </motion.div>
-  )
+    </div>
+  );
 }

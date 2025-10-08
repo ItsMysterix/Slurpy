@@ -16,6 +16,22 @@ function sb() {
   return createClient(url, key, { auth: { persistSession: false } });
 }
 
+/* ----------------------------- Types -------------------------- */
+type CalendarEventRow = {
+  id: string;
+  user_id: string;
+  date: string; // 'YYYY-MM-DD' (DATE)
+  title: string | null;
+  location: string | null; // aliased from location_label
+  location_lat: number | null;
+  location_lng: number | null;
+  emotion: string | null;
+  intensity: number | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string | null;
+};
+
 /* -------------------------- Helpers --------------------------- */
 const toUTCStartOfDay = (d: Date) =>
   new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
@@ -37,15 +53,18 @@ const monthRangeUTC = (year: number, month: number) => {
 
 function getFruitForEmotion(emotion: string): string {
   const fruits: Record<string, string> = {
+    // positive / calm
     happy: "🍊", joyful: "🍓", excited: "🍍", content: "🍇",
     calm: "🥝", peaceful: "🫐", relaxed: "🍑",
+    // negative
     sad: "🌰", depressed: "🥀", lonely: "🍂",
     anxious: "🍑", worried: "🍐", nervous: "🍌",
     angry: "🔥", frustrated: "🍋", irritated: "🌶️",
     stressed: "🥔", overwhelmed: "🌊", tired: "😴",
+    // neutral
     neutral: "🍎", okay: "🥭", fine: "🍈",
   };
-  return fruits[emotion.toLowerCase()] || "🍎";
+  return fruits[(emotion || "").toLowerCase()] || "🍎";
 }
 
 /* ------------------------------ GET --------------------------- */
@@ -63,7 +82,7 @@ export async function GET(req: NextRequest) {
     const startISO = start.toISOString();
     const endISO = end.toISOString();
 
-    // 1) Daily moods
+    // Daily moods
     const { data: moods, error: moodsErr } = await supabase
       .from("daily_mood")
       .select("id,user_id,date,emotion,intensity,fruit,notes,created_at,updated_at")
@@ -73,7 +92,7 @@ export async function GET(req: NextRequest) {
       .order("date", { ascending: true });
     if (moodsErr) throw moodsErr;
 
-    // 2) Journal entries
+    // Journal entries
     const { data: journals, error: journalsErr } = await supabase
       .from("journal_entries")
       .select("id,user_id,title,content,date,mood,tags,is_private,created_at,updated_at,fruit")
@@ -83,7 +102,33 @@ export async function GET(req: NextRequest) {
       .order("date", { ascending: true });
     if (journalsErr) throw journalsErr;
 
-    // 3) Chat sessions
+    // Events (use alias: location_label as location)
+    const { data: events, error: eventsErr } = await supabase
+      .from("calendar_events")
+      .select(
+        `
+        id,
+        user_id,
+        date,
+        title,
+        location:location_label,
+        location_lat,
+        location_lng,
+        emotion,
+        intensity,
+        notes,
+        created_at,
+        updated_at
+      `
+      )
+      .eq("user_id", userId)
+      .gte("date", startISO)
+      .lte("date", endISO)
+      .order("date", { ascending: true });
+
+    if (eventsErr) throw eventsErr;
+
+    // Chat sessions
     const { data: sessions, error: sessionsErr } = await supabase
       .from("chat_sessions")
       .select("session_id,user_id,started_at,message_count")
@@ -93,6 +138,7 @@ export async function GET(req: NextRequest) {
       .order("started_at", { ascending: true });
     if (sessionsErr) throw sessionsErr;
 
+    // Chat messages for those sessions
     const sessionIds = (sessions || []).map((s) => s.session_id);
     let messages: any[] = [];
     if (sessionIds.length) {
@@ -105,7 +151,7 @@ export async function GET(req: NextRequest) {
       messages = msgRows || [];
     }
 
-    // Group messages
+    // Group messages by session
     const msgsBySession = new Map<string, any[]>();
     for (const m of messages) {
       const arr = msgsBySession.get(m.session_id) || [];
@@ -113,9 +159,10 @@ export async function GET(req: NextRequest) {
       msgsBySession.set(m.session_id, arr);
     }
 
-    // Build calendarData
+    // Build day buckets
     const calendarData: Record<string, any> = {};
 
+    // moods
     for (const mood of moods || []) {
       const key = dateKeyUTC(new Date(mood.date));
       calendarData[key] = {
@@ -129,6 +176,7 @@ export async function GET(req: NextRequest) {
       };
     }
 
+    // journals
     for (const entry of journals || []) {
       const key = dateKeyUTC(new Date(entry.date));
       if (!calendarData[key]) calendarData[key] = {};
@@ -146,6 +194,25 @@ export async function GET(req: NextRequest) {
       });
     }
 
+    // events
+    for (const ev of (events as CalendarEventRow[]) || []) {
+      const key = dateKeyUTC(new Date(ev.date));
+      if (!calendarData[key]) calendarData[key] = {};
+      if (!calendarData[key].events) calendarData[key].events = [];
+      calendarData[key].events.push({
+        id: ev.id,
+        title: ev.title,
+        location: ev.location, // ← alias from location_label
+        location_lat: ev.location_lat,
+        location_lng: ev.location_lng,
+        emotion: ev.emotion,
+        intensity: ev.intensity,
+        notes: ev.notes,
+        timestamp: new Date(ev.date).toISOString(),
+      });
+    }
+
+    // chat sessions
     for (const s of sessions || []) {
       const key = dateKeyUTC(new Date(s.started_at));
       if (!calendarData[key]) calendarData[key] = {};
@@ -176,6 +243,7 @@ export async function GET(req: NextRequest) {
       });
     }
 
+    // stats
     const daysTracked = (moods || []).length;
     const averageMood =
       daysTracked > 0
@@ -183,7 +251,7 @@ export async function GET(req: NextRequest) {
         : 0;
 
     let bestDay: any = null;
-    if (moods.length) {
+    if (moods?.length) {
       const best = moods.reduce((b, c) => (c.intensity > b.intensity ? c : b));
       bestDay = {
         date: new Date(best.date).toISOString(),
@@ -206,17 +274,19 @@ export async function GET(req: NextRequest) {
         averageMood,
         journalEntries: (journals || []).length,
         chatSessions: (sessions || []).length,
+        events: ((events as CalendarEventRow[]) || []).length,
         bestDay,
         emotionDistribution,
       },
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error("Error fetching calendar data:", error);
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+    return NextResponse.json({ error: String(error?.message ?? error) }, { status: 500 });
   }
 }
 
 /* ------------------------------ POST -------------------------- */
+// Upsert Daily Mood for a given day
 export async function POST(req: NextRequest) {
   try {
     const { userId } = await auth();
@@ -269,13 +339,14 @@ export async function POST(req: NextRequest) {
         notes: data.notes,
       },
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error("Error saving daily mood:", error);
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+    return NextResponse.json({ error: String(error?.message ?? error) }, { status: 500 });
   }
 }
 
 /* ----------------------------- DELETE ------------------------- */
+// Delete Daily Mood for a given day (UTC day window)
 export async function DELETE(req: NextRequest) {
   try {
     const { userId } = await auth();
@@ -300,8 +371,8 @@ export async function DELETE(req: NextRequest) {
     if (error) throw error;
 
     return NextResponse.json({ success: true });
-  } catch (error) {
+  } catch (error: any) {
     console.error("Error deleting daily mood:", error);
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+    return NextResponse.json({ error: String(error?.message ?? error) }, { status: 500 });
   }
 }

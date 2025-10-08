@@ -1,3 +1,4 @@
+// middleware.ts
 import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 
@@ -6,12 +7,15 @@ const isPublicRoute = createRouteMatcher([
   "/auth(.*)",
   "/sign-in(.*)",
   "/sign-up(.*)",
+  "/email-verify-page(.*)", 
   "/forgot-password(.*)",
   "/terms",
   "/privacy",
   "/how-it-works",
-  "/sso-callback(.*)",
-  "/api/webhook(.*)",      // keep webhooks public if needed
+  "/sso-callback(.*)",      
+  "/health",                
+  "/api/public(.*)",        
+  "/api/webhook(.*)",       
 ]);
 
 export default clerkMiddleware(async (auth, req) => {
@@ -23,8 +27,10 @@ export default clerkMiddleware(async (auth, req) => {
     return NextResponse.redirect(url, 308);
   }
 
+  // Allow public routes
   if (isPublicRoute(req)) return NextResponse.next();
 
+  // Protect everything else
   const { userId } = await auth();
   if (!userId) {
     if (req.nextUrl.pathname.startsWith("/api/")) {
@@ -32,7 +38,10 @@ export default clerkMiddleware(async (auth, req) => {
     }
     const redirectUrl = req.nextUrl.clone();
     redirectUrl.pathname = "/sign-in";
-    redirectUrl.searchParams.set("redirect_url", req.nextUrl.pathname + req.nextUrl.search);
+    redirectUrl.searchParams.set(
+      "redirect_url",
+      req.nextUrl.pathname + req.nextUrl.search
+    );
     return NextResponse.redirect(redirectUrl);
   }
 

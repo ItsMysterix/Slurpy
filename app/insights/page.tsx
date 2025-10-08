@@ -12,10 +12,79 @@ import Topics from "@/components/insights/Topics";
 import { useAuth, useUser } from "@clerk/nextjs";
 import { Loader2 } from "lucide-react";
 import { useInsightsStream } from "@/lib/use-insights-stream";
-import { normalizeInsights, type InsightsResponse } from "@/lib/insights-types";
+import { normalizeInsights, type InsightsResponse, type TrendPoint } from "@/lib/insights-types";
 
 const MIN_REFRESH_MS = 4000;
 const DAY_POLL_MS = 15000;
+
+/* --------------------------- Date helpers --------------------------- */
+
+function fmtShort(d: Date) {
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+function fmtMonthYear(d: Date) {
+  return d.toLocaleDateString("en-US", { month: "long", year: "numeric" });
+}
+function fmtYear(d: Date) {
+  return d.getFullYear().toString();
+}
+function parseISO(d?: string) {
+  if (!d) return null;
+  const x = new Date(d);
+  return isNaN(+x) ? null : x;
+}
+function minMaxDates(points: TrendPoint[]) {
+  const dates = points
+    .map((p) => parseISO(p.date))
+    .filter((d): d is Date => !!d)
+    .sort((a, b) => +a - +b);
+  if (!dates.length) return null;
+  return { min: dates[0], max: dates[dates.length - 1] };
+}
+
+/** Builds a pretty label for the header’s top-right chip */
+function periodLabelFor(
+  timeframe: "day" | "week" | "month" | "year",
+  header: InsightsResponse["header"] | undefined,
+  trends: InsightsResponse["trends"] | undefined,
+) {
+  // Prefer whatever the API sent (if present)
+  if (header?.periodLabel) return header.periodLabel;
+
+  const today = new Date();
+
+  if (timeframe === "day") {
+    return today.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
+  }
+
+  if (timeframe === "week") {
+    const range = trends?.last7Days && minMaxDates(trends.last7Days);
+    if (range) {
+      const sameMonth = range.min.getMonth() === range.max.getMonth() && range.min.getFullYear() === range.max.getFullYear();
+      return sameMonth
+        ? `${range.min.toLocaleDateString("en-US", { month: "short" })} ${range.min.getDate()}–${range.max.getDate()}, ${range.max.getFullYear()}`
+        : `${fmtShort(range.min)}–${fmtShort(range.max)}, ${range.max.getFullYear()}`;
+    }
+    // Fallback to current ISO week if we have no data yet
+    const start = new Date(today);
+    start.setDate(today.getDate() - ((today.getDay() + 6) % 7)); // Monday-ish start
+    const end = new Date(start);
+    end.setDate(start.getDate() + 6);
+    return `${fmtShort(start)}–${fmtShort(end)}, ${end.getFullYear()}`;
+  }
+
+  if (timeframe === "month") {
+    // Try first point’s month, else current month
+    const first = trends?.last7Days?.[0] && parseISO(trends.last7Days[0].date);
+    return fmtMonthYear(first ?? today);
+  }
+
+  // year
+  const any = trends?.last7Days?.[0] && parseISO(trends.last7Days[0].date);
+  return fmtYear(any ?? today);
+}
+
+/* ------------------------------------------------------------------- */
 
 export default function InsightsPage() {
   const { userId } = useAuth();
@@ -121,6 +190,7 @@ export default function InsightsPage() {
   }
 
   const { header, trends, breakdown, insights: keyInsights, topics } = insights;
+  const periodLabel = periodLabelFor(selectedTimeframe, header, trends);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-sand-50 via-sage-25 to-clay-50 dark:from-gray-950 dark:via-gray-900 dark:to-gray-950">
@@ -132,7 +202,7 @@ export default function InsightsPage() {
             timeframe={selectedTimeframe}
             onTimeframeChange={setSelectedTimeframe}
             refreshing={refreshing}
-            periodLabelOverride={undefined}
+            periodLabelOverride={periodLabel}   // 👈 show dates on the right
           />
 
           <div className="flex-1 overflow-y-auto p-6">
@@ -144,7 +214,6 @@ export default function InsightsPage() {
                 <KeyInsights items={keyInsights} />
               </div>
               <Topics items={Array.isArray(topics) ? topics : []} timeframe={selectedTimeframe} />
-              {/* NLPQuickCheck removed */}
             </div>
           </div>
         </div>

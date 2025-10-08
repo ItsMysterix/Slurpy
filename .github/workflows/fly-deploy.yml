@@ -1,18 +1,49 @@
-# See https://fly.io/docs/app-guides/continuous-deployment-with-github-actions/
+name: Fly Deploy (frontend + backend + mcp)
 
-name: Fly Deploy
 on:
   push:
-    branches:
-      - main
+    branches: [ main ]
+    paths:
+      - "app/**"
+      - "backend/**"
+      - "mcp/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "fly.frontend.toml"
+      - "fly.backend.toml"
+      - "fly.mcp.toml"
+      - ".github/workflows/**"
+  workflow_dispatch: {}
+
 jobs:
   deploy:
-    name: Deploy app
+    name: Deploy ${{ matrix.target.name }}
     runs-on: ubuntu-latest
-    concurrency: deploy-group    # optional: ensure only one action runs at a time
+    concurrency:
+      group: fly-${{ matrix.target.name }}-${{ github.ref }}
+      cancel-in-progress: true
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - { name: "frontend", config: "fly.frontend.toml" }
+          - { name: "backend",  config: "fly.backend.toml" }
+          - { name: "mcp",      config: "fly.mcp.toml" }
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: superfly/flyctl-actions/setup-flyctl@master
-      - run: flyctl deploy --remote-only
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ✅ Correct action ref — use @master
+      - name: Setup Flyctl
+        uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: Deploy ${{ matrix.target.name }}
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          flyctl deploy \
+            --config "${{ matrix.target.config }}" \
+            --remote-only \
+            --strategy immediate \
+            --build-arg COMMIT_SHA=${{ github.sha }}

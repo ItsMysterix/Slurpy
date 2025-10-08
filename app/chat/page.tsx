@@ -34,13 +34,7 @@ async function sendToSlurpy(text: string, sessionId?: string | null, modes: Mode
   const res = await fetch("/api/proxy-chat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      text,
-      session_id: sessionId,
-      modes,
-      roleplay: roleplayPersona,
-      therapeutic_context: null,
-    }),
+    body: JSON.stringify({ text, session_id: sessionId, modes, roleplay: roleplayPersona, therapeutic_context: null }),
   });
   if (!res.ok) throw new Error(`Backend ${res.status}`);
   const data = await res.json();
@@ -76,7 +70,7 @@ function finalizeSession(
   } catch {}
 }
 
-const HEADER_H = 64; // keep in sync with ChatHeader height
+const HEADER_H = 64; // px — keep in sync with ChatHeader height
 
 export default function ChatPage() {
   const { user } = useUser();
@@ -293,9 +287,12 @@ export default function ChatPage() {
       {/* Mode-change toast */}
       <AnimatePresence>{showModePopup && <ModeChangePopup modes={popupModes} />}</AnimatePresence>
 
-      {/* Push content below header and keep total height = viewport - header */}
-      <div className={`pt-[${HEADER_H}px] ${contentOffset}`}>
-        <div className={`flex h-[calc(100vh-${HEADER_H}px)] transition-all duration-300`}>
+      {/* Content under header; use inline styles for exact spacing */}
+      <div className={contentOffset} style={{ paddingTop: HEADER_H }}>
+        <div
+          className="flex transition-all duration-300"
+          style={{ height: `calc(100vh - ${HEADER_H}px)` }}
+        >
           <div className="flex-1 flex flex-col">
             {/* scrollable message lane */}
             <div className="flex-1 overflow-y-auto px-6">
@@ -305,7 +302,7 @@ export default function ChatPage() {
                     Hello{user?.firstName ? `, ${user.firstName}` : ""}
                   </h1>
                   <p className="text-xl text-slate-600 dark:text-slate-300 font-light">
-                    I'm Slurpy, your mindful AI companion
+                    I&apos;m Slurpy, your mindful AI companion
                   </p>
                   <div className="mt-6">
                     <FloatingSuggestionButtons
@@ -378,7 +375,7 @@ export default function ChatPage() {
               )}
             </div>
 
-            {/* sticky input within page, with subtle background + border */}
+            {/* sticky input inside the page */}
             <div className="px-6">
               <div className="sticky bottom-0 z-30 border-t border-slate-200/50 dark:border-slate-700/50 bg-slate-50/80 dark:bg-slate-900/70 backdrop-blur supports-[backdrop-filter]:bg-slate-50/40 rounded-t-2xl">
                 <ChatInput
