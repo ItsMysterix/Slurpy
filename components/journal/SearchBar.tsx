@@ -12,9 +12,9 @@ import { Separator } from "@/components/ui/separator";
 import { ALL_FRUITS } from "@/lib/moodFruit";
 
 export type JournalFilterState = {
-  fruits: string[];        // MoodFruit IDs, e.g. ["cherry-charge","fiery-guava"]
-  from?: string;           // YYYY-MM-DD
-  to?: string;             // YYYY-MM-DD
+  fruits: string[];
+  from?: string;
+  to?: string;
   favoritesOnly?: boolean;
 };
 
@@ -29,6 +29,9 @@ export default function SearchBar({
   filters: JournalFilterState;
   onFiltersChange: (next: JournalFilterState) => void;
 }) {
+  // sanity ping
+  console.log("SearchBar (journal) loaded");
+
   const activeCount =
     (filters.fruits?.length ?? 0) +
     (filters.from ? 1 : 0) +
@@ -81,13 +84,7 @@ export default function SearchBar({
                           : "bg-white/50 border-sand-200 hover:bg-sage-50"
                       }`}
                     >
-                      <Image
-                        src={icon}
-                        alt={name}
-                        width={28}
-                        height={28}
-                        className="object-contain"
-                      />
+                      <Image src={icon} alt={name} width={28} height={28} className="object-contain" />
                     </button>
                   );
                 })}

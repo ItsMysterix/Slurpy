@@ -271,11 +271,20 @@ export default function JournalPage() {
 
   const filteredEntries = safeEntries.filter((e) => filteredIds.has(e.id));
 
+  // ---- Empty state guards ----
+  const hasAnyEntries = safeEntries.length > 0;
+  const hasActiveFilters =
+    !!searchQuery ||
+    filters.fruits.length > 0 ||
+    !!filters.from ||
+    !!filters.to ||
+    !!filters.favoritesOnly;
+
   if (loading) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-sand-50 via-sage-25 to-clay-50 dark:from-gray-950 dark:via-gray-900 dark:to-gray-950 transition-all duration-500">
         <SlideDrawer onSidebarToggle={setSidebarOpen} />
-        <div className={`flex h-screen transition-all duration-300 ${sidebarOpen ? "ml-64" : "ml-16"}`}>
+        <div className={`flex h-screen transition-all duration-300 ${sidebarOpen ? "md:ml-64" : "md:ml-16"} ml-0`}>
           <div className="flex-1 flex items-center justify-center">
             <div className="text-center">
               <Loader2 className="w-8 h-8 animate-spin mx-auto mb-4 text-clay-500 dark:text-sand-400" />
@@ -290,7 +299,7 @@ export default function JournalPage() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-sand-50 via-sage-25 to-clay-50 dark:from-gray-950 dark:via-gray-900 dark:to-gray-950 transition-all duration-500">
       <SlideDrawer onSidebarToggle={setSidebarOpen} />
-      <div className={`flex h-screen transition-all duration-300 ${sidebarOpen ? "ml-64" : "ml-16"}`}>
+      <div className={`flex h-screen transition-all duration-300 ${sidebarOpen ? "md:ml-64" : "md:ml-16"} ml-0`}>
         <div className="flex-1 flex flex-col">
           {/* Header */}
           <JournalHeader userFirstName={user?.firstName ?? ""} onNew={() => setShowNewEntry(true)} />
@@ -318,7 +327,8 @@ export default function JournalPage() {
 
               {/* Entries */}
               <div className="space-y-4">
-                {filteredEntries.length === 0 && !searchQuery && filters.fruits.length === 0 && !filters.from && !filters.to && !filters.favoritesOnly ? (
+                {/* True empty state: no entries, no filters/search, and not composing */}
+                {!hasAnyEntries && !hasActiveFilters && !showNewEntry ? (
                   <div className="text-center py-12 opacity-90">
                     <p className="text-clay-500 dark:text-sand-400 font-sans mb-4">Start your journaling journey!</p>
                     <button
@@ -363,11 +373,10 @@ export default function JournalPage() {
                 )}
               </div>
 
-              {filteredEntries.length === 0 && (searchQuery || filters.fruits.length || filters.from || filters.to || filters.favoritesOnly) && (
+              {/* No results (filters or query applied, or user has entries) */}
+              {filteredEntries.length === 0 && (hasActiveFilters || hasAnyEntries) && (
                 <div className="text-center py-12">
-                  <p className="text-clay-500 dark:text-sand-400 font-sans">
-                    No entries match your filters.
-                  </p>
+                  <p className="text-clay-500 dark:text-sand-400 font-sans">No entries match your filters.</p>
                 </div>
               )}
             </div>
