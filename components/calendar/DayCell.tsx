@@ -1,87 +1,165 @@
-"use client"
-import { motion } from "framer-motion"
-import { Heart, BookOpen, MessageCircle } from "lucide-react"
-import { CalendarData, getDayMoods, getMoodColor, iconForEmotionSafe } from "@/lib/calendar-types"
+"use client";
+import { motion } from "framer-motion";
+import { Heart, BookOpen, MessageCircle, CalendarDays } from "lucide-react";
+import {
+  CalendarData,
+  getDayMoods,
+  getMoodColor,
+  iconForEmotionSafe,
+} from "@/lib/calendar-types";
 
 export default function DayCell({
-  y, m0, d, today, dayData, onClick
+  y,
+  m0,
+  d,
+  today,
+  dayData,
+  onClick,
 }: {
-  y: number; m0: number; d: number
-  today: Date
-  dayData?: CalendarData
-  onClick: () => void
+  y: number;
+  m0: number;
+  d: number;
+  today: Date;
+  dayData?: CalendarData;
+  onClick: () => void;
 }) {
-  const isToday = d === today.getDate() && m0 === today.getMonth() && y === today.getFullYear()
-  const moods = getDayMoods(dayData)
-  const journals = dayData?.journals || []
-  const chatSessions = dayData?.chatSessions || []
+  const isToday =
+    d === today.getDate() &&
+    m0 === today.getMonth() &&
+    y === today.getFullYear();
 
-  // choose the most recent mood for the background color
-  const lastMood = moods[moods.length - 1]
-  const bgClass = lastMood ? getMoodColor(lastMood.intensity) : "border-sage-200/50 dark:border-gray-600/50 bg-white/50 dark:bg-gray-800/50 hover:border-sage-300 dark:hover:border-sand-400"
+  const moods = getDayMoods(dayData);
+  const journals = dayData?.journals || [];
+  const chatSessions = dayData?.chatSessions || [];
+  const events = dayData?.events || []; // if absent, stays at 0
 
-  // prepare up to 2 fruits
-  const fruits = moods.slice(-2).map(m => iconForEmotionSafe(m.emotion))
-  const overflow = Math.max(0, moods.length - 2)
+  // background derived from most recent mood
+  const lastMood = moods[moods.length - 1];
+  const bgClass = lastMood
+    ? getMoodColor(lastMood.intensity)
+    : "border-sage-200/50 dark:border-gray-600/50 bg-white/50 dark:bg-gray-800/50 hover:border-sage-300 dark:hover:border-sand-400";
+
+  // mood fruit at top; count = total mood entries that day
+  const fruitIcon = lastMood ? iconForEmotionSafe(lastMood.emotion) : null;
+  const moodCount = moods.length;
+  const journalCount = journals.length;
+  const chatCount = chatSessions.length;
+  const eventCount = events.length;
 
   return (
     <motion.div
       key={`day-${y}-${m0}-${d}`}
-      className={`h-24 rounded-xl border-2 transition-all duration-200 cursor-pointer hover:shadow-md ${isToday ? "border-sage-400 bg-sage-50 dark:border-sand-400 dark:bg-gray-800/70" : bgClass}`}
-      whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}
+      className={`relative h-24 rounded-xl border-2 transition-all duration-200 cursor-pointer hover:shadow-md ${
+        isToday
+          ? "border-sage-400 bg-sage-50 dark:border-sand-400 dark:bg-gray-800/70"
+          : bgClass
+      }`}
+      whileHover={{ scale: 1.02 }}
+      whileTap={{ scale: 0.98 }}
       onClick={onClick}
-      title={moods.map(m => `${m.emotion} ${m.intensity}/10`).join(", ")}
+      title={
+        moods.length
+          ? moods.map((m) => `${m.emotion} ${m.intensity}/10`).join(", ")
+          : "No mood logged"
+      }
     >
-      <div className="p-2 h-full flex flex-col justify-between">
-        <div className="flex justify-between items-start">
-          <span className={`text-sm font-medium ${isToday ? "text-clay-700 dark:text-sand-200" : "text-clay-600 dark:text-sand-300"}`}>
+      {/* content area */}
+      <div className="p-2 h-full flex flex-col">
+        {/* date badge */}
+        <div className="flex items-start justify-between">
+          <span
+            className={`text-sm font-medium ${
+              isToday
+                ? "text-clay-700 dark:text-sand-200"
+                : "text-clay-600 dark:text-sand-300"
+            }`}
+          >
             {d}
           </span>
-
-          <div className="flex flex-col gap-1 items-end">
-            {/* mood fruit icons */}
-            {moods.length > 0 && (
-              <div className="flex items-center gap-1">
-                {fruits.map((src, i) => (
-                  <img key={i} src={src} alt="" className="w-4 h-4 rounded" />
-                ))}
-                {overflow > 0 && <span className="text-[10px] text-clay-600 dark:text-sand-300">+{overflow}</span>}
-              </div>
-            )}
-
-            {/* activity dots */}
-            <div className="flex flex-col gap-1">
-              {moods.length > 0 && (
-                <div className="w-5 h-5 rounded-full bg-gradient-to-br from-sage-400 to-clay-500 flex items-center justify-center">
-                  <Heart className="w-3 h-3 text-white" />
-                </div>
-              )}
-              {journals.length > 0 && (
-                <div className="w-5 h-5 rounded-full bg-gradient-to-br from-clay-400 to-sand-500 flex items-center justify-center">
-                  <BookOpen className="w-3 h-3 text-white" />
-                </div>
-              )}
-              {chatSessions.length > 0 && (
-                <div className="w-5 h-5 rounded-full bg-gradient-to-br from-sand-400 to-sage-500 flex items-center justify-center">
-                  <MessageCircle className="w-3 h-3 text-white" />
-                </div>
-              )}
-            </div>
-          </div>
         </div>
 
-        <div className="space-y-1">
+        {/* label of last mood centered near bottom */}
+        <div className="mt-auto pr-8"> {/* leave room for right rail */}
           {lastMood && (
             <div className="text-xs text-center capitalize font-medium text-clay-600 dark:text-sand-300">
               {lastMood.emotion}
             </div>
           )}
-          <div className="flex justify-center gap-1 text-xs text-clay-500 dark:text-sand-400">
-            {journals.length > 0 && <span>{journals.length}j</span>}
-            {chatSessions.length > 0 && <span>{chatSessions.length}c</span>}
-          </div>
         </div>
       </div>
+
+      {/* RIGHT RAIL — fixed inside the cell so it never overflows */}
+      <div className="absolute right-1.5 top-1.5 bottom-1.5 flex flex-col items-end justify-start gap-1 pointer-events-none">
+        {/* Mood fruit + count */}
+        <RailPill
+          icon={
+            fruitIcon ? (
+              // image fruit
+              <img
+                src={fruitIcon}
+                alt=""
+                className="w-4 h-4 rounded"
+                aria-hidden
+              />
+            ) : (
+              // fallback heart if no mood
+              <Heart className="w-4 h-4" />
+            )
+          }
+          count={moodCount}
+          gradient="from-sage-400 to-clay-500"
+        />
+        {/* Journal */}
+        <RailPill
+          icon={<BookOpen className="w-4 h-4" />}
+          count={journalCount}
+          gradient="from-clay-400 to-sand-500"
+        />
+        {/* Chat */}
+        <RailPill
+          icon={<MessageCircle className="w-4 h-4" />}
+          count={chatCount}
+          gradient="from-sand-400 to-sage-500"
+        />
+        {/* Events / UFM */}
+        <RailPill
+          icon={<CalendarDays className="w-4 h-4" />}
+          count={eventCount}
+          gradient="from-indigo-400 to-purple-500"
+        />
+      </div>
     </motion.div>
-  )
+  );
+}
+
+/**
+ * Small rounded pill with an icon and a count badge.
+ * Fully self-contained so it never leaks outside the cell.
+ */
+function RailPill({
+  icon,
+  count,
+  gradient,
+}: {
+  icon: React.ReactNode;
+  count: number;
+  gradient: string; // tailwind gradient suffix, e.g. 'from-sage-400 to-clay-500'
+}) {
+  // Hide the pill entirely when count is 0
+  if (!count) return null;
+
+  return (
+    <div className="relative pointer-events-none">
+      <div
+        className={`w-6 h-6 rounded-full bg-gradient-to-br ${gradient} flex items-center justify-center shadow-sm`}
+        aria-hidden
+      >
+        <div className="text-white">{icon}</div>
+      </div>
+      {/* Count badge (sticks to the icon) */}
+      <div className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-black/80 text-white text-[10px] leading-4 text-center">
+        {count}
+      </div>
+    </div>
+  );
 }
