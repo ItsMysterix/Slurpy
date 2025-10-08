@@ -1,4 +1,3 @@
-// app/api/calendar/route.ts
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -7,6 +6,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { createClient } from "@supabase/supabase-js";
 import { randomUUID } from "crypto";
+import { fruitForEmotion } from "@/lib/moodFruit";
 
 /* -------------------------- Supabase -------------------------- */
 function sb() {
@@ -20,7 +20,7 @@ function sb() {
 type CalendarEventRow = {
   id: string;
   user_id: string;
-  date: string; // 'YYYY-MM-DD' (DATE)
+  date: string; // ISO
   title: string | null;
   location: string | null; // aliased from location_label
   location_lat: number | null;
@@ -51,20 +51,35 @@ const monthRangeUTC = (year: number, month: number) => {
   return { start, end };
 };
 
-function getFruitForEmotion(emotion: string): string {
-  const fruits: Record<string, string> = {
-    // positive / calm
-    happy: "🍊", joyful: "🍓", excited: "🍍", content: "🍇",
-    calm: "🥝", peaceful: "🫐", relaxed: "🍑",
-    // negative
-    sad: "🌰", depressed: "🥀", lonely: "🍂",
-    anxious: "🍑", worried: "🍐", nervous: "🍌",
-    angry: "🔥", frustrated: "🍋", irritated: "🌶️",
-    stressed: "🥔", overwhelmed: "🌊", tired: "😴",
-    // neutral
-    neutral: "🍎", okay: "🥭", fine: "🍈",
-  };
-  return fruits[(emotion || "").toLowerCase()] || "🍎";
+/**
+ * Canonical fruit identifier for an emotion:
+ * 1) Prefer moodFruit.icon (path/URL used in UI).
+ * 2) Fallback to a minimal name→emoji map (if icon missing).
+ * 3) Default to 🍎.
+ */
+function fruitIdForEmotion(emotion?: string | null): string {
+  if (!emotion) return "🍎";
+  try {
+    const f = fruitForEmotion(String(emotion).trim());
+    if (f?.icon) return f.icon;
+    const name = (f?.name || "").toLowerCase();
+
+    const byName: Record<string, string> = {
+      "sweet orange": "🍊",
+      "sour lemon": "🍋",
+      "calm blueberry": "🫐",
+      "warm peach": "🍑",
+      "fiery chili": "🌶️",
+      "steady apple": "🍎",
+      "sunny pineapple": "🍍",
+      "gentle pear": "🍐",
+      "bright strawberry": "🍓",
+      "cool kiwi": "🥝",
+    };
+    return byName[name] || "🍎";
+  } catch {
+    return "🍎";
+  }
 }
 
 /* ------------------------------ GET --------------------------- */
@@ -102,7 +117,7 @@ export async function GET(req: NextRequest) {
       .order("date", { ascending: true });
     if (journalsErr) throw journalsErr;
 
-    // Events (use alias: location_label as location)
+    // Events
     const { data: events, error: eventsErr } = await supabase
       .from("calendar_events")
       .select(
@@ -125,7 +140,6 @@ export async function GET(req: NextRequest) {
       .gte("date", startISO)
       .lte("date", endISO)
       .order("date", { ascending: true });
-
     if (eventsErr) throw eventsErr;
 
     // Chat sessions
@@ -170,7 +184,7 @@ export async function GET(req: NextRequest) {
         mood: {
           emotion: mood.emotion,
           intensity: mood.intensity,
-          fruit: mood.fruit,
+          fruit: mood.fruit || (mood.emotion ? fruitIdForEmotion(mood.emotion) : null),
           notes: mood.notes ?? null,
         },
       };
@@ -202,7 +216,7 @@ export async function GET(req: NextRequest) {
       calendarData[key].events.push({
         id: ev.id,
         title: ev.title,
-        location: ev.location, // ← alias from location_label
+        location: ev.location,
         location_lat: ev.location_lat,
         location_lng: ev.location_lng,
         emotion: ev.emotion,
@@ -257,7 +271,7 @@ export async function GET(req: NextRequest) {
         date: new Date(best.date).toISOString(),
         emotion: best.emotion,
         intensity: best.intensity,
-        fruit: best.fruit,
+        fruit: best.fruit || fruitIdForEmotion(best.emotion),
         notes: best.notes ?? undefined,
       };
     }
@@ -302,7 +316,7 @@ export async function POST(req: NextRequest) {
 
     const d = fromISO(String(date));
     const normalized = toUTCStartOfDay(d);
-    const fruit = getFruitForEmotion(String(emotion));
+    const fruit = fruitIdForEmotion(String(emotion));
     const nowIso = new Date().toISOString();
 
     const { data, error } = await supabase

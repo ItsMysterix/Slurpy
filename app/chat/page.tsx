@@ -3,7 +3,6 @@
 
 import * as React from "react";
 import { AnimatePresence } from "framer-motion";
-
 import SlideDrawer from "@/components/slide-drawer";
 import ChatHeader from "@/components/chat/ChatHeader";
 import MessageBubble from "@/components/chat/MessageBubble";
@@ -12,16 +11,17 @@ import TypingIndicator from "@/components/chat/TypingIndicator";
 import ModeChangePopup from "@/components/chat/ModeChangePopup";
 import FloatingSuggestionButtons from "@/components/chat/FloatingSuggestions";
 import LiveBubble from "@/components/chat/LiveBubble";
+import DropInRenderer from "@/components/chat/DropInRenderer";
 
 import { useUser } from "@clerk/nextjs";
-import { Button } from "@/components/ui/button";
-import BreathingInline from "@/components/interventions/BreathingInline";
-import { InterventionCard } from "@/components/interventions/InterventionCard";
-import { TITLES, detectState, allowDropIn } from "@/lib/jitai";
 import { useChatStore } from "@/lib/chat-store";
 import type { ModeId } from "@/lib/persona";
+import type { DropIn as OriginalDropIn, DropInKind } from "@/lib/dropins";
 
-/* tiny helpers */
+// The original type from the library is missing a field we use.
+type DropIn = OriginalDropIn & { ttlMs?: number; priority?: number; cooldownKey?: string };
+
+// -------- tiny helpers --------
 const CLEAN_OPENERS = [/^\s*got it[.!—-]*\s*/i, /^\s*sure[.!—-]*\s*/i];
 function cleanLLMText(t: string) {
   let out = t?.trim() ?? "";
@@ -49,7 +49,7 @@ async function sendToSlurpy(text: string, sessionId?: string | null, modes: Mode
 
 function finalizeSession(
   sessionId: string,
-  meta: { lastEmotions?: Array<{ label: string; score?: number }> } = {},
+  meta: { lastEmotions?: Array<{ label: string; score?: number }> } = {}
 ) {
   try {
     const payload = JSON.stringify({
@@ -70,6 +70,77 @@ function finalizeSession(
   } catch {}
 }
 
+// -------- lightweight client-side drop-in detector --------
+type Cooldowns = Record<string, number>;
+const now = () => Date.now();
+const within = (ms: number, last?: number) => (last ? now() - last < ms : false);
+
+function detectDropIns(textRaw: string, cooldowns: Cooldowns): DropIn[] {
+  const text = (textRaw || "").toLowerCase();
+  const add = (
+    kind: DropInKind,
+    cooldownKey: string,
+    title?: string,
+    meta?: Record<string, any>,
+    ttlMs = 180_000,
+    priority = 50
+  ): DropIn | null => {
+    if (within(5 * 60_000, cooldowns[cooldownKey])) return null; // 5 min per-key cooldown
+    return { id: `${cooldownKey}-${now()}`, kind, title: title ?? "", meta, ttlMs, priority, cooldownKey };
+  };
+
+  const out: DropIn[] = [];
+
+  // Anger → box breathing / heat release
+  if (/(i'm gonna snap|so mad|furious|rage|fuming|pissed)/i.test(text)) {
+    const d = add("box-breathing", "anger-breath", "Breathe it down (4–4–4–4)");
+    if (d) out.push(d);
+  }
+
+  // Anxiety/panic → 5-4-3-2-1 grounding or vagus hum
+  if (/(panic|anxious|heart racing|overthinking|can't breathe|spiral)/i.test(text)) {
+    const d = add("grounding-54321", "anxiety-ground", "Ground with 5–4–3–2–1");
+    if (d) out.push(d);
+  }
+
+  // Overwhelm → triage 10-3-1
+  if (/(too much|overwhelmed|so many things|don'?t know where to start|idk where to start)/i.test(text)) {
+    const d = add("triage-10-3-1", "overwhelm-triage", "Let’s shrink the pile (10→3→1)", { extract: textRaw.slice(0, 400) });
+    if (d) out.push(d);
+  }
+
+  // Low mood → reach-out + activation
+  if (/(empty|down|sad|hopeless|numb)/i.test(text)) {
+    const d1 = add("reach-out", "low-reachout", "Nudge a friendly ping?");
+    if (d1) out.push(d1);
+    const d2 = add("activation-120s", "low-activation", "120-second activation");
+    if (d2) out.push(d2);
+  }
+
+  // Late-night + arousal → sleep wind-down
+  const hour = new Date().getHours();
+  if ((hour >= 23 || hour < 5) && /(tired|can't sleep|up late|insomnia|awake since)/i.test(text)) {
+    const d = add("sleep-winddown", "sleep-winddown", "2-min wind-down?");
+    if (d) out.push(d);
+  }
+
+  // Accomplishment → tiny-win capture
+  if (/(i did it|finished|shipped|got through|completed|nailed it)/i.test(text)) {
+    const d = add("tiny-win", "tiny-win", "Bank the W?");
+    if (d) out.push(d);
+  }
+
+  // Nervous about event → calendar suggest
+  if (/(nervous|anxious) (about|for) (.+?)( tomorrow| next| on | at |$)/i.test(text)) {
+    const title = (text.match(/(about|for)\s+(.+?)(?:$|tomorrow|next|on|at)/i)?.[2] || "Important event").trim();
+    const d = add("calendar-suggest", "calendar-suggest", "Add this to your calendar?", { defaultTitle: title });
+    if (d) out.push(d);
+  }
+
+  // Keep max 2, sort by priority
+  return out.sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0)).slice(0, 2);
+}
+
 const HEADER_H = 64; // px — keep in sync with ChatHeader height
 
 export default function ChatPage() {
@@ -79,18 +150,13 @@ export default function ChatPage() {
   const [isTyping, setIsTyping] = React.useState(false);
   const [liveText, setLiveText] = React.useState<string | null>(null);
 
-  // JITAI drop-in
-  const [drop, setDrop] = React.useState<
-    | null
-    | { state: "heated" | "anxious" | "foggy" | "meaning"; phase: "offer" | "exercise" }
-  >(null);
-  const [pendingText, setPendingText] = React.useState<string | null>(null);
-  const [paused, setPaused] = React.useState(false);
-  const [lastDropAt, setLastDropAt] = React.useState(0);
-
   // mode popup
   const [showModePopup, setShowModePopup] = React.useState(false);
   const [popupModes, setPopupModes] = React.useState<ModeId[]>([]);
+
+  // drop-ins (local; no backend needed)
+  const [dropIns, setDropIns] = React.useState<DropIn[]>([]);
+  const [cooldowns, setCooldowns] = React.useState<Cooldowns>({});
 
   // store
   const messages = useChatStore((s) => s.messages);
@@ -106,7 +172,7 @@ export default function ChatPage() {
   const endRef = React.useRef<HTMLDivElement>(null);
   React.useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages.length, isTyping, liveText, drop]);
+  }, [messages.length, isTyping, liveText, dropIns.length]);
 
   // reset thread on user switch
   React.useEffect(() => {
@@ -127,7 +193,7 @@ export default function ChatPage() {
     return () => window.removeEventListener("beforeunload", handler);
   }, [sessionId, messages]);
 
-  // local typewriter then commit to store
+  // typewriter then commit to store
   const typewriterCommit = (finalText: string, meta: { emotion?: string; modes?: ModeId[] }) =>
     new Promise<void>((resolve) => {
       const text = cleanLLMText(finalText);
@@ -207,17 +273,42 @@ export default function ChatPage() {
     }
   };
 
+  // ---- Drop-in lifecycle helpers ----
+  const enqueueDropIns = React.useCallback((candidates: DropIn[]) => {
+    if (!candidates.length) return;
+    setDropIns((prev) => {
+      // TTL & max 3 visible at once
+      const next = [...prev, ...candidates].slice(-3);
+      return next;
+    });
+    setCooldowns((prev) => {
+      const updates: Cooldowns = { ...prev };
+      for (const c of candidates) {
+        if (c.cooldownKey) updates[c.cooldownKey] = now();
+      }
+      return updates;
+    });
+  }, []);
+
+  const dismissDropIn = React.useCallback((id: string) => {
+    setDropIns((prev) => prev.filter((d) => d.id !== id));
+  }, []);
+
+  React.useEffect(() => {
+    // TTL cleanup
+    if (!dropIns.length) return;
+    const id = window.setInterval(() => {
+      const t = now();
+      setDropIns((prev) => prev.filter((d) => !d.ttlMs || t - parseInt(d.id.split("-").pop() || "0", 10) < d.ttlMs!));
+    }, 10_000);
+    return () => window.clearInterval(id);
+  }, [dropIns.length]);
+
   const handleSend = async (messageText?: string) => {
     const textToSend = typeof messageText === "string" ? messageText : input.trim();
     if (!textToSend || isTyping) return;
 
-    // cancel any exercise card
-    if (drop) {
-      setDrop(null);
-      setPendingText(null);
-      setPaused(false);
-    }
-
+    // append user message locally
     addMessage({
       id: `${Date.now()}-${Math.random()}`,
       content: textToSend,
@@ -226,17 +317,11 @@ export default function ChatPage() {
     });
     setInput("");
 
-    // just-in-time intervention
-    const state = detectState(textToSend);
-    const now = Date.now();
-    const cool = !lastDropAt || now - lastDropAt > 30_000;
-    if (state && (state === "anxious" || state === "heated") && cool && allowDropIn()) {
-      setDrop({ state, phase: "offer" });
-      setPendingText(textToSend);
-      setLastDropAt(now);
-      return;
-    }
+    // detect + enqueue drop-ins (non-blocking)
+    const suggestions = detectDropIns(textToSend, cooldowns);
+    enqueueDropIns(suggestions);
 
+    // proceed with normal send
     await proceedSend(textToSend);
   };
 
@@ -257,21 +342,6 @@ export default function ChatPage() {
     }
   };
 
-  const startExercise = () => drop && setDrop({ ...drop, phase: "exercise" });
-  const skipExercise = async () => {
-    const t = pendingText;
-    setDrop(null);
-    setPendingText(null);
-    if (t) await proceedSend(t);
-  };
-  const finishExercise = async () => {
-    const t = pendingText;
-    setDrop(null);
-    setPendingText(null);
-    await typewriterCommit("nice. what feels 1% lighter right now?", { modes: [] });
-    if (t) await proceedSend(t);
-  };
-
   // shared left offset for header + content
   const contentOffset = sidebarOpen ? "ml-64" : "ml-16";
 
@@ -288,11 +358,8 @@ export default function ChatPage() {
       <AnimatePresence>{showModePopup && <ModeChangePopup modes={popupModes} />}</AnimatePresence>
 
       {/* Content under header; use inline styles for exact spacing */}
-      <div className={contentOffset} style={{ paddingTop: HEADER_H }}>
-        <div
-          className="flex transition-all duration-300"
-          style={{ height: `calc(100vh - ${HEADER_H}px)` }}
-        >
+      <div className={contentOffset} style={{ paddingTop: 64 }}>
+        <div className="flex transition-all duration-300" style={{ height: `calc(100vh - ${64}px)` }}>
           <div className="flex-1 flex flex-col">
             {/* scrollable message lane */}
             <div className="flex-1 overflow-y-auto px-6">
@@ -318,57 +385,7 @@ export default function ChatPage() {
                   {messages.map((m) => (
                     <MessageBubble key={m.id} message={m} />
                   ))}
-
                   {liveText !== null && <LiveBubble text={liveText} />}
-
-                  {drop?.phase === "offer" && (
-                    <div className="flex justify-start mb-6">
-                      <div className="max-w-[560px] w-full">
-                        <InterventionCard
-                          title={TITLES[drop.state]}
-                          subtitle="Noticed intense language—want a 60-sec reset right here?"
-                          onStart={startExercise}
-                          onSkip={skipExercise}
-                        />
-                      </div>
-                    </div>
-                  )}
-
-                  {drop?.phase === "exercise" && (
-                    <div className="flex justify-start mb-6">
-                      <div className="relative max-w-[720px] w-full rounded-2xl overflow-hidden">
-                        <div className="absolute left-4 top-4 z-10 flex items-center gap-2">
-                          <Button
-                            size="sm"
-                            variant="secondary"
-                            className="rounded-full px-3 h-8 bg-slate-200/50 dark:bg-slate-800/60 backdrop-blur border border-slate-300/40 dark:border-slate-700/60"
-                            onClick={() => setPaused((p) => !p)}
-                          >
-                            {paused ? "Resume" : "Pause"}
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="secondary"
-                            className="rounded-full px-3 h-8 bg-slate-200/50 dark:bg-slate-800/60 backdrop-blur border border-slate-300/40 dark:border-slate-700/60"
-                            onClick={finishExercise}
-                            title="Close"
-                          >
-                            Close
-                          </Button>
-                        </div>
-                        <BreathingInline
-                          onDone={() => {
-                            void finishExercise();
-                          }}
-                          onCancel={() => {
-                            void skipExercise();
-                          }}
-                          seconds={60}
-                        />
-                      </div>
-                    </div>
-                  )}
-
                   {isTyping && liveText === null && <TypingIndicator />}
                   <div ref={endRef} />
                 </div>
@@ -392,6 +409,9 @@ export default function ChatPage() {
           </div>
         </div>
       </div>
+
+      {/* Drop-ins float bottom-right; non-blocking */}
+      <DropInRenderer dropIns={dropIns} onDismiss={dismissDropIn} />
     </div>
   );
 }

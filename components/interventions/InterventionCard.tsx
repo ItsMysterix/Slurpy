@@ -23,6 +23,9 @@ export function InterventionCard({
       initial={{ opacity: 0, y: 10, scale: 0.98 }}
       animate={{ opacity: 1, y: 0, scale: 1 }}
       className="mx-auto max-w-xl w-full mb-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="intervention-title"
     >
       <div className="relative rounded-2xl border border-slate-200/60 dark:border-slate-700/60 bg-white/90 dark:bg-slate-900/90 shadow-xl backdrop-blur-md">
         <button
@@ -34,7 +37,9 @@ export function InterventionCard({
         </button>
 
         <div className="p-5">
-          <h3 className="text-lg font-medium text-slate-800 dark:text-slate-100">{title}</h3>
+          <h3 id="intervention-title" className="text-lg font-medium text-slate-800 dark:text-slate-100">
+            {title}
+          </h3>
           {subtitle && (
             <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">{subtitle}</p>
           )}
@@ -42,7 +47,7 @@ export function InterventionCard({
           <div className="mt-4 flex gap-3">
             <button
               onClick={onStart}
-              className="inline-flex items-center gap-2 rounded-lg px-4 py-2 text-white bg-gradient-to-r from-slate-700 via-zinc-700 to-stone-700 hover:from-slate-800 hover:via-zinc-800 hover:to-stone-800 shadow"
+              className="inline-flex items-center gap-2 rounded-lg px-4 py-2 text-white bg-gradient-to-r from-emerald-600 via-teal-600 to-cyan-600 hover:from-emerald-700 hover:via-teal-700 hover:to-cyan-700 shadow"
             >
               <Play className="w-4 h-4" />
               {startText}

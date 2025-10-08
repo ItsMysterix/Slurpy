@@ -1,4 +1,3 @@
-// app/api/journal/route.ts
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -7,6 +6,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { createClient } from "@supabase/supabase-js";
 import { randomUUID } from "crypto";
+import { fruitForEmotion } from "@/lib/moodFruit";
 
 /* -------------------------- Supabase (server) -------------------------- */
 function sb() {
@@ -16,14 +16,45 @@ function sb() {
   return createClient(url, key, { auth: { persistSession: false } });
 }
 
+/* ------------------------- Fruit helper ------------------------ */
+/**
+ * Canonical fruit identifier for an emotion:
+ * 1) Prefer moodFruit.icon (path/URL used in UI).
+ * 2) Fallback to a minimal name→emoji map (if icon missing).
+ * 3) Default to 🍎.
+ */
+function fruitIdForEmotion(emotion?: string | null): string {
+  if (!emotion) return "🍎";
+  try {
+    const f = fruitForEmotion(String(emotion).trim());
+    if (f?.icon) return f.icon;
+    const name = (f?.name || "").toLowerCase();
+
+    const byName: Record<string, string> = {
+      "sweet orange": "🍊",
+      "sour lemon": "🍋",
+      "calm blueberry": "🫐",
+      "warm peach": "🍑",
+      "fiery chili": "🌶️",
+      "steady apple": "🍎",
+      "sunny pineapple": "🍍",
+      "gentle pear": "🍐",
+      "bright strawberry": "🍓",
+      "cool kiwi": "🥝",
+    };
+    return byName[name] || "🍎";
+  } catch {
+    return "🍎";
+  }
+}
+
 /* ----------------------------- helpers -------------------------------- */
 type Flavor = "snake" | "camel";
 type TableInfo = { name: "journal_entries" | "JournalEntry"; flavor: Flavor };
 
 async function detectTable(client: ReturnType<typeof sb>): Promise<TableInfo> {
   // Prefer snake_case; fallback to CamelCase
-  const trySelect = async (table: string) =>
-    client.from(table).select("id").limit(1);
+  const trySelect = async (table: string) => client.from(table).select("id").limit(1);
 
   let r = await trySelect("journal_entries");
   if (!r.error) return { name: "journal_entries", flavor: "snake" };
@@ -35,8 +66,8 @@ async function detectTable(client: ReturnType<typeof sb>): Promise<TableInfo> {
 }
 
 function normalizeTags(input: unknown): string[] {
-  if (Array.isArray(input)) return input.map(String).map(t => t.trim()).filter(Boolean);
-  if (typeof input === "string") return input.split(",").map(t => t.trim()).filter(Boolean);
+  if (Array.isArray(input)) return input.map(String).map((t) => t.trim()).filter(Boolean);
+  if (typeof input === "string") return input.split(",").map((t) => t.trim()).filter(Boolean);
   return [];
 }
 
@@ -50,22 +81,14 @@ function shapeOut(row: any) {
     fruit: row.fruit ?? null,
     tags: Array.isArray(row.tags) ? row.tags : [],
     userId: row.userId ?? row.user_id ?? null,
-    createdAt: row.createdAt ? new Date(row.createdAt) :
-               row.created_at ? new Date(row.created_at) : null,
-    updatedAt: row.updatedAt ? new Date(row.updatedAt) :
-               row.updated_at ? new Date(row.updated_at) : null,
-    date: row.date ? new Date(row.date) :
-          row.createdAt ? new Date(row.createdAt) :
-          row.created_at ? new Date(row.created_at) : null,
+    createdAt: row.createdAt ? new Date(row.createdAt) : row.created_at ? new Date(row.created_at) : null,
+    updatedAt: row.updatedAt ? new Date(row.updatedAt) : row.updated_at ? new Date(row.updated_at) : null,
+    date:
+      row.date ? new Date(row.date) : row.createdAt ? new Date(row.createdAt) : row.created_at ? new Date(row.created_at) : null,
   };
 }
 
-async function findEntryByIdForUser(
-  client: ReturnType<typeof sb>,
-  table: TableInfo,
-  id: string,
-  userId: string
-) {
+async function findEntryByIdForUser(client: ReturnType<typeof sb>, table: TableInfo, id: string, userId: string) {
   const cols =
     table.flavor === "snake"
       ? "id,title,content,mood,fruit,tags,user_id,created_at,updated_at,date"
@@ -73,12 +96,7 @@ async function findEntryByIdForUser(
 
   const userCol = table.flavor === "snake" ? "user_id" : "userId";
 
-  const { data, error } = await client
-    .from(table.name)
-    .select(cols)
-    .eq(userCol, userId)
-    .eq("id", id)
-    .maybeSingle();
+  const { data, error } = await client.from(table.name).select(cols).eq(userCol, userId).eq("id", id).maybeSingle();
 
   if (error || !data) return null;
   return data;
@@ -148,15 +166,18 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "title and content are required" }, { status: 400 });
     }
 
-    // Provide a date (column is NOT NULL in your camel schema)
+    // Provide a date (column may be NOT NULL)
     let dateVal: Date = new Date();
     if (body?.date) {
       const maybe = new Date(body.date);
       if (!isNaN(maybe.getTime())) dateVal = maybe;
     }
 
+    const mood: string | null = body?.mood ? String(body.mood).trim() : null;
+    const fruit: string | null = body?.fruit ? String(body.fruit) : (mood ? fruitIdForEmotion(mood) : null);
+
     const nowIso = new Date().toISOString();
-    const id = randomUUID(); // <-- REQUIRED: id is TEXT (no default) in your schema
+    const id = randomUUID(); // TEXT id
 
     const payload =
       table.flavor === "snake"
@@ -165,21 +186,20 @@ export async function POST(req: NextRequest) {
             user_id: userId,
             title,
             content,
-            mood: body?.mood ? String(body.mood) : null,
-            fruit: body?.fruit ? String(body.fruit) : null,
+            mood,
+            fruit,
             tags: normalizeTags(body?.tags),
             date: dateVal.toISOString(),
             created_at: nowIso,
             updated_at: nowIso,
-            // is_private?: true  // add if your snake table has it
           }
         : {
             id,
             userId,
             title,
             content,
-            mood: body?.mood ? String(body.mood) : null,
-            fruit: body?.fruit ? String(body.fruit) : null,
+            mood,
+            fruit,
             tags: normalizeTags(body?.tags),
             date: dateVal.toISOString(),
             createdAt: nowIso,
@@ -192,11 +212,7 @@ export async function POST(req: NextRequest) {
         ? "id,title,content,mood,fruit,tags,user_id,created_at,updated_at,date"
         : "id,title,content,mood,fruit,tags,userId,createdAt,updatedAt,date";
 
-    const { data, error } = await client
-      .from(table.name)
-      .insert([payload])
-      .select(cols)
-      .single();
+    const { data, error } = await client.from(table.name).insert([payload]).select(cols).single();
 
     if (error) throw error;
     return NextResponse.json(shapeOut(data), { status: 201 });
@@ -228,6 +244,18 @@ export async function PUT(req: NextRequest) {
       return NextResponse.json({ error: "title and content are required" }, { status: 400 });
     }
 
+    // mood / fruit patches
+    const moodPatch =
+      body?.mood !== undefined ? (body.mood ? String(body.mood).trim() : null) : existing.mood ?? null;
+
+    let fruitPatch: string | null | undefined = undefined;
+    if (body?.fruit !== undefined) {
+      fruitPatch = body.fruit ? String(body.fruit) : null;
+    } else if (body?.mood !== undefined && body.fruit === undefined) {
+      // If mood changed but fruit not provided, re-derive
+      fruitPatch = moodPatch ? fruitIdForEmotion(moodPatch) : null;
+    }
+
     let datePatch: string | undefined = undefined;
     if (body?.date) {
       const d = new Date(body.date);
@@ -240,18 +268,18 @@ export async function PUT(req: NextRequest) {
         ? {
             title,
             content,
-            mood: body?.mood !== undefined ? (body.mood ? String(body.mood) : null) : existing.mood,
-            fruit: body?.fruit !== undefined ? (body.fruit ? String(body.fruit) : null) : existing.fruit,
-            tags: body?.tags !== undefined ? normalizeTags(body.tags) : (existing.tags ?? []),
+            mood: moodPatch,
+            ...(fruitPatch !== undefined ? { fruit: fruitPatch } : {}),
+            tags: body?.tags !== undefined ? normalizeTags(body.tags) : existing.tags ?? [],
             updated_at: nowIso,
             ...(datePatch ? { date: datePatch } : {}),
           }
         : {
             title,
             content,
-            mood: body?.mood !== undefined ? (body.mood ? String(body.mood) : null) : existing.mood,
-            fruit: body?.fruit !== undefined ? (body.fruit ? String(body.fruit) : null) : existing.fruit,
-            tags: body?.tags !== undefined ? normalizeTags(body.tags) : (existing.tags ?? []),
+            mood: moodPatch,
+            ...(fruitPatch !== undefined ? { fruit: fruitPatch } : {}),
+            tags: body?.tags !== undefined ? normalizeTags(body.tags) : existing.tags ?? [],
             updatedAt: nowIso,
             ...(datePatch ? { date: datePatch } : {}),
           };
