@@ -5,6 +5,7 @@ import type React from "react"
 import { motion } from "framer-motion"
 import Link from "next/link"
 import { useState } from "react"
+import { useRouter } from "next/navigation"
 import { ArrowLeft, Mail, Send, CheckCircle, AlertCircle, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -13,6 +14,7 @@ import { Card, CardContent } from "@/components/ui/card"
 import { useSignIn } from "@clerk/nextjs"
 
 export default function ForgotPasswordPage() {
+  const router = useRouter()
   const [email, setEmail] = useState("")
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [isSubmitted, setIsSubmitted] = useState(false)
@@ -22,34 +24,27 @@ export default function ForgotPasswordPage() {
 
   const { signIn, isLoaded } = useSignIn()
 
-  const validateEmail = (email: string) => {
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
-    return emailRegex.test(email)
-  }
+  const validateEmail = (email: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
 
-  // ---- CHANGED: send a RESET LINK via Clerk (types may not include this strategy yet → cast) ----
-  const sendResetLink = async (identifier: string) => {
-    await (signIn as any).create({
-      strategy: "reset_password_email_link",
+  // Send an OTP code via email (matches the /reset-password OTP flow)
+  const sendResetCode = async (identifier: string) => {
+    await signIn!.create({
+      strategy: "reset_password_email_code",
       identifier,
-      redirectUrl: "/reset-password",
-      redirectUrlComplete: "/reset-password",
     })
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    
+
     if (!isLoaded) {
       setError("Authentication service is loading. Please try again.")
       return
     }
-
     if (!email) {
       setError("Please enter your email address")
       return
     }
-
     if (!validateEmail(email)) {
       setError("Please enter a valid email address")
       return
@@ -59,41 +54,47 @@ export default function ForgotPasswordPage() {
     setIsSubmitting(true)
 
     try {
-      await sendResetLink(email)
+      await sendResetCode(email)
+      // Go directly to the OTP + New Password page
+      router.push(`/reset-password?email=${encodeURIComponent(email)}`)
+      // Fallback UI state in case navigation is interrupted
       setIsSubmitted(true)
       setResendCount((prev) => prev + 1)
     } catch (err: any) {
-      console.error("Password reset link error:", err)
+      console.error("Password reset code error:", err)
       const first = err?.errors?.[0]
       if (first?.code === "form_identifier_not_found") {
         setError("No account found with this email address.")
       } else if (first?.code === "throttled") {
         setError("Too many attempts. Please wait before trying again.")
       } else {
-        setError(first?.message || err?.message || "Failed to send reset link. Please try again.")
+        setError(first?.message || err?.message || "Failed to send reset code. Please try again.")
       }
     } finally {
       setIsSubmitting(false)
     }
   }
 
+  // Optional: if you keep the “Resend” screen here as a fallback
   const handleResend = async () => {
-    if (!canResend || !isLoaded) return
+    if (!canResend || !isLoaded || !email) return
 
     setCanResend(false)
     setIsSubmitting(true)
 
     try {
-      await sendResetLink(email)
+      await sendResetCode(email)
       setResendCount((prev) => prev + 1)
+      // Re-route to ensure the OTP page always shows
+      router.push(`/reset-password?email=${encodeURIComponent(email)}`)
 
-      // Enable resend after 30 seconds
+      // Re-enable after a short cooldown in case the user lands back here
       setTimeout(() => setCanResend(true), 30000)
     } catch (err: any) {
       console.error("Resend error:", err)
       const first = err?.errors?.[0]
-      setError(first?.message || err?.message || "Failed to resend email. Please try again.")
-      setCanResend(true) // Re-enable resend if there's an error
+      setError(first?.message || err?.message || "Failed to resend code. Please try again.")
+      setCanResend(true)
     } finally {
       setIsSubmitting(false)
     }
@@ -113,6 +114,7 @@ export default function ForgotPasswordPage() {
     )
   }
 
+  // (Optional) Confirmation fallback if navigation was interrupted
   if (isSubmitted) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-sand-50 via-sage-50 to-clay-400/10 flex items-center justify-center p-4">
@@ -147,10 +149,14 @@ export default function ForgotPasswordPage() {
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.6, delay: 0.4 }}
               >
-                <p className="text-sage-500 mb-2 font-sans">We&apos;ve sent a password reset link to:</p>
-                <p className="text-sage-600 font-medium font-sans mb-6 bg-sage-100 px-4 py-2 rounded-xl">{email}</p>
+                <p className="text-sage-500 mb-2 font-sans">
+                  We&apos;ve sent a 6-digit reset code to:
+                </p>
+                <p className="text-sage-600 font-medium font-sans mb-6 bg-sage-100 px-4 py-2 rounded-xl">
+                  {email}
+                </p>
                 <p className="text-sm text-sage-400 mb-8 font-sans leading-relaxed">
-                  If you don&apos;t see the email, check your spam folder. The link will expire in 24 hours.
+                  Didn&apos;t get it? You can resend below or go directly to the code page.
                 </p>
               </motion.div>
 
@@ -160,11 +166,12 @@ export default function ForgotPasswordPage() {
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.6, delay: 0.5 }}
               >
-                <Link href="/sign-in">
-                  <Button className="w-full bg-sage-500 hover:bg-sage-400 text-white rounded-xl py-3 font-sans">
-                    Back to Sign In
-                  </Button>
-                </Link>
+                <Button
+                  className="w-full bg-sage-500 hover:bg-sage-400 text-white rounded-xl py-3 font-sans"
+                  onClick={() => router.push(`/reset-password?email=${encodeURIComponent(email)}`)}
+                >
+                  Enter Code
+                </Button>
 
                 <div className="flex gap-2">
                   <Button
@@ -186,7 +193,7 @@ export default function ForgotPasswordPage() {
                     className="flex-1 text-sage-600 hover:text-sage-500 font-sans disabled:opacity-50"
                   >
                     {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
-                    {canResend ? "Resend Email" : "Resent!"}
+                    {canResend ? "Resend Code" : "Resent!"}
                   </Button>
                 </div>
 
@@ -254,7 +261,7 @@ export default function ForgotPasswordPage() {
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.6, delay: 0.4 }}
             >
-              No worries! Enter your email and we&apos;ll send you a <b>reset link</b> to get back into your account.
+              No worries! Enter your email and we&apos;ll send you a <b>6-digit code</b> to reset your password.
             </motion.p>
           </div>
 
@@ -312,12 +319,12 @@ export default function ForgotPasswordPage() {
                 {isSubmitting ? (
                   <div className="flex items-center justify-center gap-2">
                     <Loader2 className="h-4 w-4 animate-spin" />
-                    Sending Reset Link...
+                    Sending Code...
                   </div>
                 ) : (
                   <>
                     <Send className="w-4 h-4 mr-2" />
-                    Send Reset Link
+                    Send Code
                   </>
                 )}
               </Button>
