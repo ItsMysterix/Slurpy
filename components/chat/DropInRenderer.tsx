@@ -4,7 +4,7 @@
 import { motion } from "framer-motion";
 import type { DropIn } from "@/lib/dropins";
 
-// import from the barrel to avoid name mismatches
+// Import from the barrel to avoid name mismatches
 import {
   BreathingInline,
   HeatReleaseInline,
@@ -32,23 +32,32 @@ import {
   StreakCareInline,
 } from "@/components/interventions";
 
-export default function DropInRenderer({
-  dropIns,
-  onDismiss,
-}: {
+type Props = {
   dropIns: DropIn[];
   onDismiss: (id: string) => void;
-}) {
+  /** inline = render in the chat stream; float = fixed bottom-right */
+  variant?: "inline" | "float";
+};
+
+export default function DropInRenderer({ dropIns, onDismiss, variant = "inline" }: Props) {
   if (!dropIns.length) return null;
 
+  const wrapperClass =
+    variant === "float"
+      ? "fixed bottom-4 right-4 z-40 flex flex-col gap-3 max-w-sm w-[min(420px,calc(100vw-1rem))]"
+      : "w-full flex flex-col gap-3"; // inline: use full width of chat column
+
+  const cardClass =
+    "rounded-2xl border border-sage-200/60 dark:border-gray-700/60 bg-white/90 dark:bg-gray-800/90 backdrop-blur p-3 shadow-lg";
+
   return (
-    <div className="fixed bottom-4 right-4 z-40 flex flex-col gap-3 max-w-sm w-[min(420px,calc(100vw-1rem))]">
+    <div className={wrapperClass}>
       {dropIns.map((d) => (
         <motion.div
           key={d.id}
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
-          className="rounded-2xl border border-sage-200/60 dark:border-gray-700/60 bg-white/90 dark:bg-gray-800/90 backdrop-blur p-3 shadow-lg"
+          className={cardClass}
         >
           {/* De-escalation / grounding */}
           {d.kind === "grounding-54321" && (

@@ -18,10 +18,10 @@ import { useChatStore } from "@/lib/chat-store";
 import type { ModeId } from "@/lib/persona";
 import type { DropIn as OriginalDropIn, DropInKind } from "@/lib/dropins";
 
-// The original type from the library is missing a field we use.
+// Extend with local optional fields
 type DropIn = OriginalDropIn & { ttlMs?: number; priority?: number; cooldownKey?: string };
 
-// -------- tiny helpers --------
+// ---- tiny helpers ----
 const CLEAN_OPENERS = [/^\s*got it[.!—-]*\s*/i, /^\s*sure[.!—-]*\s*/i];
 function cleanLLMText(t: string) {
   let out = t?.trim() ?? "";
@@ -70,7 +70,7 @@ function finalizeSession(
   } catch {}
 }
 
-// -------- lightweight client-side drop-in detector --------
+// ---- client-side drop-in detector ----
 type Cooldowns = Record<string, number>;
 const now = () => Date.now();
 const within = (ms: number, last?: number) => (last ? now() - last < ms : false);
@@ -91,25 +91,25 @@ function detectDropIns(textRaw: string, cooldowns: Cooldowns): DropIn[] {
 
   const out: DropIn[] = [];
 
-  // Anger → box breathing / heat release
+  // Anger
   if (/(i'm gonna snap|so mad|furious|rage|fuming|pissed)/i.test(text)) {
     const d = add("box-breathing", "anger-breath", "Breathe it down (4–4–4–4)");
     if (d) out.push(d);
   }
 
-  // Anxiety/panic → 5-4-3-2-1 grounding or vagus hum
+  // Anxiety / panic
   if (/(panic|anxious|heart racing|overthinking|can't breathe|spiral)/i.test(text)) {
     const d = add("grounding-54321", "anxiety-ground", "Ground with 5–4–3–2–1");
     if (d) out.push(d);
   }
 
-  // Overwhelm → triage 10-3-1
+  // Overwhelm
   if (/(too much|overwhelmed|so many things|don'?t know where to start|idk where to start)/i.test(text)) {
     const d = add("triage-10-3-1", "overwhelm-triage", "Let’s shrink the pile (10→3→1)", { extract: textRaw.slice(0, 400) });
     if (d) out.push(d);
   }
 
-  // Low mood → reach-out + activation
+  // Low mood
   if (/(empty|down|sad|hopeless|numb)/i.test(text)) {
     const d1 = add("reach-out", "low-reachout", "Nudge a friendly ping?");
     if (d1) out.push(d1);
@@ -117,31 +117,30 @@ function detectDropIns(textRaw: string, cooldowns: Cooldowns): DropIn[] {
     if (d2) out.push(d2);
   }
 
-  // Late-night + arousal → sleep wind-down
+  // Late night wind-down
   const hour = new Date().getHours();
   if ((hour >= 23 || hour < 5) && /(tired|can't sleep|up late|insomnia|awake since)/i.test(text)) {
     const d = add("sleep-winddown", "sleep-winddown", "2-min wind-down?");
     if (d) out.push(d);
   }
 
-  // Accomplishment → tiny-win capture
+  // Celebration
   if (/(i did it|finished|shipped|got through|completed|nailed it)/i.test(text)) {
     const d = add("tiny-win", "tiny-win", "Bank the W?");
     if (d) out.push(d);
   }
 
-  // Nervous about event → calendar suggest
+  // Calendar suggestion
   if (/(nervous|anxious) (about|for) (.+?)( tomorrow| next| on | at |$)/i.test(text)) {
     const title = (text.match(/(about|for)\s+(.+?)(?:$|tomorrow|next|on|at)/i)?.[2] || "Important event").trim();
     const d = add("calendar-suggest", "calendar-suggest", "Add this to your calendar?", { defaultTitle: title });
     if (d) out.push(d);
   }
 
-  // Keep max 2, sort by priority
   return out.sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0)).slice(0, 2);
 }
 
-const HEADER_H = 64; // px — keep in sync with ChatHeader height
+const HEADER_H = 64;
 
 export default function ChatPage() {
   const { user } = useUser();
@@ -154,7 +153,7 @@ export default function ChatPage() {
   const [showModePopup, setShowModePopup] = React.useState(false);
   const [popupModes, setPopupModes] = React.useState<ModeId[]>([]);
 
-  // drop-ins (local; no backend needed)
+  // drop-ins
   const [dropIns, setDropIns] = React.useState<DropIn[]>([]);
   const [cooldowns, setCooldowns] = React.useState<Cooldowns>({});
 
@@ -193,7 +192,7 @@ export default function ChatPage() {
     return () => window.removeEventListener("beforeunload", handler);
   }, [sessionId, messages]);
 
-  // typewriter then commit to store
+  // typewriter then commit
   const typewriterCommit = (finalText: string, meta: { emotion?: string; modes?: ModeId[] }) =>
     new Promise<void>((resolve) => {
       const text = cleanLLMText(finalText);
@@ -273,12 +272,11 @@ export default function ChatPage() {
     }
   };
 
-  // ---- Drop-in lifecycle helpers ----
+  // ---- Drop-in lifecycle ----
   const enqueueDropIns = React.useCallback((candidates: DropIn[]) => {
     if (!candidates.length) return;
     setDropIns((prev) => {
-      // TTL & max 3 visible at once
-      const next = [...prev, ...candidates].slice(-3);
+      const next = [...prev, ...candidates].slice(-3); // cap visible
       return next;
     });
     setCooldowns((prev) => {
@@ -295,11 +293,16 @@ export default function ChatPage() {
   }, []);
 
   React.useEffect(() => {
-    // TTL cleanup
     if (!dropIns.length) return;
     const id = window.setInterval(() => {
       const t = now();
-      setDropIns((prev) => prev.filter((d) => !d.ttlMs || t - parseInt(d.id.split("-").pop() || "0", 10) < d.ttlMs!));
+      setDropIns((prev) =>
+        prev.filter((d) => {
+          if (!d.ttlMs) return true;
+          const ts = parseInt(d.id.split("-").pop() || "0", 10);
+          return t - ts < d.ttlMs;
+        })
+      );
     }, 10_000);
     return () => window.clearInterval(id);
   }, [dropIns.length]);
@@ -308,7 +311,6 @@ export default function ChatPage() {
     const textToSend = typeof messageText === "string" ? messageText : input.trim();
     if (!textToSend || isTyping) return;
 
-    // append user message locally
     addMessage({
       id: `${Date.now()}-${Math.random()}`,
       content: textToSend,
@@ -317,11 +319,10 @@ export default function ChatPage() {
     });
     setInput("");
 
-    // detect + enqueue drop-ins (non-blocking)
+    // detect + enqueue (non-blocking)
     const suggestions = detectDropIns(textToSend, cooldowns);
     enqueueDropIns(suggestions);
 
-    // proceed with normal send
     await proceedSend(textToSend);
   };
 
@@ -342,7 +343,6 @@ export default function ChatPage() {
     }
   };
 
-  // shared left offset for header + content
   const contentOffset = sidebarOpen ? "ml-64" : "ml-16";
 
   return (
@@ -357,9 +357,9 @@ export default function ChatPage() {
       {/* Mode-change toast */}
       <AnimatePresence>{showModePopup && <ModeChangePopup modes={popupModes} />}</AnimatePresence>
 
-      {/* Content under header; use inline styles for exact spacing */}
-      <div className={contentOffset} style={{ paddingTop: 64 }}>
-        <div className="flex transition-all duration-300" style={{ height: `calc(100vh - ${64}px)` }}>
+      {/* Content under header */}
+      <div className={contentOffset} style={{ paddingTop: HEADER_H }}>
+        <div className="flex transition-all duration-300" style={{ height: `calc(100vh - ${HEADER_H}px)` }}>
           <div className="flex-1 flex flex-col">
             {/* scrollable message lane */}
             <div className="flex-1 overflow-y-auto px-6">
@@ -385,6 +385,14 @@ export default function ChatPage() {
                   {messages.map((m) => (
                     <MessageBubble key={m.id} message={m} />
                   ))}
+
+                  {/* Render interventions as part of the thread */}
+                  <div className="flex justify-start mb-4">
+                    <div className="max-w-[620px] w-full">
+                      <DropInRenderer dropIns={dropIns} onDismiss={dismissDropIn} />
+                    </div>
+                  </div>
+
                   {liveText !== null && <LiveBubble text={liveText} />}
                   {isTyping && liveText === null && <TypingIndicator />}
                   <div ref={endRef} />
@@ -392,7 +400,7 @@ export default function ChatPage() {
               )}
             </div>
 
-            {/* sticky input inside the page */}
+            {/* sticky input */}
             <div className="px-6">
               <div className="sticky bottom-0 z-30 border-t border-slate-200/50 dark:border-slate-700/50 bg-slate-50/80 dark:bg-slate-900/70 backdrop-blur supports-[backdrop-filter]:bg-slate-50/40 rounded-t-2xl">
                 <ChatInput
@@ -410,8 +418,7 @@ export default function ChatPage() {
         </div>
       </div>
 
-      {/* Drop-ins float bottom-right; non-blocking */}
-      <DropInRenderer dropIns={dropIns} onDismiss={dismissDropIn} />
+      {/* No floating renderer anymore; everything is inline */}
     </div>
   );
 }

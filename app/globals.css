@@ -2,13 +2,13 @@
 @tailwind components;
 @tailwind utilities;
 
-
 @layer utilities {
   .text-balance {
     text-wrap: balance;
   }
 }
 
+/* ---------------- Theme tokens ---------------- */
 @layer base {
   :root {
     --background: 0 0% 100%;
@@ -36,6 +36,8 @@
     --chart-4: 43 74% 66%;
     --chart-5: 27 87% 67%;
     --radius: 0.5rem;
+
+    /* sidebar */
     --sidebar-background: 0 0% 98%;
     --sidebar-foreground: 240 5.3% 26.1%;
     --sidebar-primary: 240 5.9% 10%;
@@ -45,39 +47,37 @@
     --sidebar-border: 220 13% 91%;
     --sidebar-ring: 217.2 91.2% 59.8%;
   }
+
   .dark {
-    --background: 0 0% 3.9%;
+    --background: 220 36% 5%;
     --foreground: 0 0% 98%;
-    --card: 0 0% 3.9%;
+    --card: 220 36% 6.5%;
     --card-foreground: 0 0% 98%;
-    --popover: 0 0% 3.9%;
+    --popover: 220 36% 6.5%;
     --popover-foreground: 0 0% 98%;
     --primary: 0 0% 98%;
     --primary-foreground: 0 0% 9%;
-    --secondary: 0 0% 14.9%;
+    --secondary: 215 19% 16%;
     --secondary-foreground: 0 0% 98%;
-    --muted: 0 0% 14.9%;
-    --muted-foreground: 0 0% 63.9%;
-    --accent: 0 0% 14.9%;
+    --muted: 215 19% 16%;
+    --muted-foreground: 215 12% 72%;
+    --accent: 215 19% 16%;
     --accent-foreground: 0 0% 98%;
     --destructive: 0 62.8% 30.6%;
     --destructive-foreground: 0 0% 98%;
-    --border: 0 0% 14.9%;
-    --input: 0 0% 14.9%;
-    --ring: 0 0% 83.1%;
-    --chart-1: 220 70% 50%;
-    --chart-2: 160 60% 45%;
-    --chart-3: 30 80% 55%;
-    --chart-4: 280 65% 60%;
-    --chart-5: 340 75% 55%;
-    --sidebar-background: 240 5.9% 10%;
-    --sidebar-foreground: 240 4.8% 95.9%;
-    --sidebar-primary: 224.3 76.3% 48%;
+    --border: 215 19% 20%;
+    --input: 215 19% 16%;
+    --ring: 156 22% 70%;
+
+    /* sidebar */
+    --sidebar-background: 220 36% 6%;
+    --sidebar-foreground: 0 0% 96%;
+    --sidebar-primary: 156 38% 46%;
     --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 240 3.7% 15.9%;
-    --sidebar-accent-foreground: 240 4.8% 95.9%;
-    --sidebar-border: 240 3.7% 15.9%;
-    --sidebar-ring: 217.2 91.2% 59.8%;
+    --sidebar-accent: 220 26% 12%;
+    --sidebar-accent-foreground: 0 0% 96%;
+    --sidebar-border: 220 26% 12%;
+    --sidebar-ring: 156 38% 46%;
   }
 }
 
@@ -88,4 +88,33 @@
   body {
     @apply bg-background text-foreground;
   }
+}
+
+/* ---------------- Inputs: date picker fixes ---------------- */
+
+/* Make OS date picker match dark theme, and stop its native icon from
+   overlapping our Lucide Calendar icon. */
+.date-input {
+  color-scheme: dark;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+/* Hide the native calendar glyph but keep its hit-area for clicks */
+.date-input::-webkit-calendar-picker-indicator {
+  opacity: 0;
+  display: block;
+  width: 1.25rem;
+  height: 1.25rem;
+  cursor: pointer;
+}
+
+/* Firefox: remove inner padding icon space */
+.date-input::-moz-focus-inner {
+  border: 0;
+}
+
+/* Optional: nicer placeholder color on dark backgrounds */
+input::placeholder {
+  color: rgb(148 163 184 / 0.7); /* slate-400/70 */
 }

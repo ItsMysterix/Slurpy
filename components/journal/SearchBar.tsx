@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Image from "next/image";
-import { Search, Filter } from "lucide-react";
+import { Search, Filter, Calendar } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -29,9 +29,6 @@ export default function SearchBar({
   filters: JournalFilterState;
   onFiltersChange: (next: JournalFilterState) => void;
 }) {
-  // sanity ping
-  console.log("SearchBar (journal) loaded");
-
   const activeCount =
     (filters.fruits?.length ?? 0) +
     (filters.from ? 1 : 0) +
@@ -47,25 +44,32 @@ export default function SearchBar({
           value={value}
           onChange={(e) => onChange(e.target.value)}
           placeholder="Search your journal entries..."
-          className="pl-10 rounded-xl border-sage-200/50 dark:border-gray-600/50 bg-white/60 dark:bg-gray-700/60 focus:border-sage-300 dark:focus:border-sand-400 backdrop-blur-sm"
+          className="pl-10 rounded-xl border-sage-200/40 dark:border-gray-700/60 bg-white/60 dark:bg-slate-900/60 focus:border-sage-300 dark:focus:border-sand-400 backdrop-blur-sm"
         />
       </div>
 
       {/* filters */}
       <Popover>
         <PopoverTrigger asChild>
-          <Button variant="outline" className="rounded-xl border-sage-200/50">
+          <Button
+            variant="outline"
+            className="rounded-xl border-sage-200/50 dark:border-gray-700/70 bg-white/70 dark:bg-slate-900/70 text-clay-700 dark:text-sand-100 hover:bg-white/90 dark:hover:bg-slate-800/80"
+          >
             <Filter className="h-4 w-4 mr-2" />
             Filters {activeCount ? `(${activeCount})` : ""}
           </Button>
         </PopoverTrigger>
 
-        <PopoverContent align="end" className="w-80 rounded-2xl">
+        {/* Panel styled for dark theme */}
+        <PopoverContent
+          align="end"
+          className="w-[22rem] rounded-2xl border border-gray-700/70 bg-[#0B1220]/95 text-sand-100 shadow-2xl backdrop-blur-md"
+        >
           <div className="space-y-4">
             {/* MoodFruit multi-select */}
             <section>
-              <Label className="text-sage-700 dark:text-sand-200">Mood</Label>
-              <div className="mt-2 grid grid-cols-5 gap-2">
+              <Label className="text-sand-200">Mood</Label>
+              <div className="mt-3 grid grid-cols-5 gap-2">
                 {ALL_FRUITS.map(({ id, name, icon }) => {
                   const active = filters.fruits?.includes(id);
                   return (
@@ -78,70 +82,99 @@ export default function SearchBar({
                         set.has(id) ? set.delete(id) : set.add(id);
                         onFiltersChange({ ...filters, fruits: Array.from(set) });
                       }}
-                      className={`h-12 w-12 rounded-xl border flex items-center justify-center transition ${
-                        active
-                          ? "bg-sage-100 border-sage-300"
-                          : "bg-white/50 border-sand-200 hover:bg-sage-50"
-                      }`}
+                      className={[
+                        "h-12 w-12 rounded-xl border flex items-center justify-center transition",
+                        "bg-slate-900/70 border-slate-700/70 hover:bg-slate-800/70",
+                        active &&
+                          "ring-2 ring-sage-400/50 border-sage-400/70 bg-sage-500/15 hover:bg-sage-500/20",
+                      ].join(" ")}
                     >
-                      <Image src={icon} alt={name} width={28} height={28} className="object-contain" />
+                      <Image
+                        src={icon}
+                        alt={name}
+                        width={28}
+                        height={28}
+                        className="object-contain"
+                      />
                     </button>
                   );
                 })}
               </div>
             </section>
 
-            <Separator />
+            <Separator className="bg-slate-700/60" />
 
             {/* Date range */}
             <section className="grid grid-cols-2 gap-3">
-              <div className="space-y-1">
-                <Label htmlFor="from">From</Label>
-                <Input
-                  id="from"
-                  type="date"
-                  value={filters.from ?? ""}
-                  onChange={(e) => onFiltersChange({ ...filters, from: e.target.value })}
-                  className="rounded-xl"
-                />
+              <div className="space-y-2">
+                <Label htmlFor="from" className="text-sand-200">
+                  From
+                </Label>
+                <div className="relative">
+                  <Input
+                    id="from"
+                    type="date"
+                    value={filters.from ?? ""}
+                    onChange={(e) => onFiltersChange({ ...filters, from: e.target.value })}
+                    className="date-input rounded-2xl bg-slate-900/70 text-sand-100 border border-slate-700/70 focus:border-sage-400 focus:ring-2 focus:ring-sage-400/30 px-4 pr-11 py-3"
+                  />
+                  <Calendar className="pointer-events-none absolute right-3 top-1/2 h-5 w-5 -translate-y-1/2 text-sand-300" />
+                </div>
               </div>
-              <div className="space-y-1">
-                <Label htmlFor="to">To</Label>
-                <Input
-                  id="to"
-                  type="date"
-                  value={filters.to ?? ""}
-                  onChange={(e) => onFiltersChange({ ...filters, to: e.target.value })}
-                  className="rounded-xl"
-                />
+
+              <div className="space-y-2">
+                <Label htmlFor="to" className="text-sand-200">
+                  To
+                </Label>
+                <div className="relative">
+                  <Input
+                    id="to"
+                    type="date"
+                    value={filters.to ?? ""}
+                    onChange={(e) => onFiltersChange({ ...filters, to: e.target.value })}
+                    className="date-input rounded-2xl bg-slate-900/70 text-sand-100 border border-slate-700/70 focus:border-sage-400 focus:ring-2 focus:ring-sage-400/30 px-4 pr-11 py-3"
+                  />
+                  <Calendar className="pointer-events-none absolute right-3 top-1/2 h-5 w-5 -translate-y-1/2 text-sand-300" />
+                </div>
               </div>
             </section>
 
-            <Separator />
+            <Separator className="bg-slate-700/60" />
 
             {/* Favorites only */}
             <section className="flex items-center gap-2">
               <Checkbox
                 id="fav"
                 checked={!!filters.favoritesOnly}
-                onCheckedChange={(ck) =>
-                  onFiltersChange({ ...filters, favoritesOnly: Boolean(ck) })
-                }
+                onCheckedChange={(ck) => onFiltersChange({ ...filters, favoritesOnly: Boolean(ck) })}
               />
-              <Label htmlFor="fav">Favorites only</Label>
+              <Label htmlFor="fav" className="text-sand-200">
+                Favorites only
+              </Label>
             </section>
 
             <div className="flex justify-between pt-2">
               <Button
                 type="button"
                 variant="ghost"
+                className="text-sand-200 hover:bg-slate-800/60"
                 onClick={() =>
-                  onFiltersChange({ fruits: [], from: undefined, to: undefined, favoritesOnly: false })
+                  onFiltersChange({
+                    fruits: [],
+                    from: undefined,
+                    to: undefined,
+                    favoritesOnly: false,
+                  })
                 }
               >
                 Clear
               </Button>
-              <Button type="button">Apply</Button>
+              <Button
+                type="button"
+                className="rounded-xl bg-sage-600 text-white hover:bg-sage-500"
+              >
+                Apply
+              </Button>
             </div>
           </div>
         </PopoverContent>
