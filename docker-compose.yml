@@ -21,9 +21,13 @@ services:
     # Supply environment via variables, not mounted files
     environment:
       FRONTEND_ORIGIN: http://localhost:3000
-      CORS_ALLOW_ALL: "true"
-      # if you want memory locally, point MCP to qdrant in the network
+      CORS_ALLOW_ALL: "false"
+      ALLOWED_ORIGINS: "http://localhost:3000"
       QDRANT_URL: http://qdrant:6333
+      QDRANT_API_KEY: ${QDRANT_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      OPENAI_TEMPERATURE: ${OPENAI_TEMPERATURE:-0.7}
     depends_on:
       - qdrant
     ports:
@@ -51,12 +55,25 @@ services:
     # Supply environment via variables, not mounted files
     environment:
       API_DEBUG: "true"
-      DEV_NO_AUTH: "true"
+      DEV_NO_AUTH: "false"  # Enable auth in production-ready mode
       FRONTEND_ORIGIN: http://localhost:3000
-      CORS_ALLOW_ALL: "true"
+      CORS_ALLOW_ALL: "false"  # Restrict CORS for production
+      ALLOWED_ORIGINS: "http://localhost:3000"
       MCP_BASE_URL: http://mcp:9001
-      # use the qdrant container instead of localhost (inside Docker, localhost ≠ host)
       QDRANT_URL: http://qdrant:6333
+      # Clerk Authentication
+      CLERK_SECRET_KEY: ${CLERK_SECRET_KEY}
+      CLERK_JWKS_URL: ${CLERK_JWKS_URL:-https://api.clerk.com/v1/jwks}
+      # Supabase
+      SUPABASE_URL: ${SUPABASE_URL}
+      SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY}
+      SUPABASE_SERVICE_ROLE: ${SUPABASE_SERVICE_ROLE}
+      # OpenAI
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      OPENAI_TEMPERATURE: ${OPENAI_TEMPERATURE:-0.7}
+      # Qdrant (if using cloud)
+      QDRANT_API_KEY: ${QDRANT_API_KEY:-}
     depends_on:
       - mcp
     ports:
@@ -86,16 +103,27 @@ services:
       args:
         NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY}
         CLERK_SECRET_KEY: ${CLERK_SECRET_KEY}
+        NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY}
         # expose API base to the build if your client bundle uses it
         NEXT_PUBLIC_RAG_API: ${NEXT_PUBLIC_RAG_API:-http://localhost:8000/v1/mcp/stream}
     # Supply environment via variables, not mounted files
     environment:
-      # available at **runtime** (SSR/middleware)
-      NEXT_PUBLIC_RAG_API: ${NEXT_PUBLIC_RAG_API:-http://localhost:8000/v1/mcp/stream}
+      # Clerk Authentication (runtime)
+      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY}
+      CLERK_SECRET_KEY: ${CLERK_SECRET_KEY}
       NEXT_PUBLIC_CLERK_SIGN_IN_URL: /sign-in
       NEXT_PUBLIC_CLERK_SIGN_UP_URL: /sign-up
       NEXT_PUBLIC_CLERK_AFTER_SIGN_IN_URL: /chat
       NEXT_PUBLIC_CLERK_AFTER_SIGN_UP_URL: /chat
+      # Supabase (runtime)
+      NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY}
+      SUPABASE_SERVICE_ROLE: ${SUPABASE_SERVICE_ROLE}
+      # API endpoints
+      NEXT_PUBLIC_RAG_API: ${NEXT_PUBLIC_RAG_API:-http://localhost:8000/v1/mcp/stream}
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+      # App settings
       SLURPY_MOOD_MODEL: DailyMood
       NODE_OPTIONS: --dns-result-order=ipv4first
     depends_on:
