@@ -12,7 +12,8 @@ import { useTheme } from "next-themes"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 
-export const revalidate = 0
+export const dynamic = "force-dynamic"
+export const runtime = "nodejs"
 
 export default function EmailVerificationPage() {
   return (

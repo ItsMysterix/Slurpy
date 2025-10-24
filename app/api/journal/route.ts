@@ -3,17 +3,21 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@clerk/nextjs/server";
+import { getAuthOrThrow, UnauthorizedError } from "@/lib/auth-server";
 import { createClient } from "@supabase/supabase-js";
+import { createServerServiceClient } from "@/lib/supabase/server";
 import { randomUUID } from "crypto";
 import { fruitForEmotion } from "@/lib/moodFruit";
+import { logger } from "@/lib/logger";
+import { z, ensureJsonUnder, boundedString, httpError } from "@/lib/validate";
+import { guardRate } from "@/lib/guards";
+import { deriveRoles, requireSelfOrRole, ForbiddenError } from "@/lib/authz";
+import { withCORS } from "@/lib/cors";
+import { assertSameOrigin, assertDoubleSubmit } from "@/lib/csrf";
 
 /* -------------------------- Supabase (server) -------------------------- */
 function sb() {
-  const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE; // server-only
-  if (!url || !key) throw new Error("Missing SUPABASE_URL / SUPABASE_SERVICE_ROLE env");
-  return createClient(url, key, { auth: { persistSession: false } });
+  return createServerServiceClient();
 }
 
 /* ------------------------- Fruit helper ------------------------ */
@@ -106,17 +110,35 @@ async function findEntryByIdForUser(client: ReturnType<typeof sb>, table: TableI
 // GET /api/journal?id=<id>
 export async function GET(req: NextRequest) {
   try {
-    const { userId } = await auth();
-    if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const { userId } = await getAuthOrThrow();
 
     const client = sb();
     const table = await detectTable(client);
 
     const url = new URL(req.url);
-    const id = url.searchParams.get("id");
-    const requestedUserId = url.searchParams.get("userId");
+  const id = url.searchParams.get("id");
+  const requestedUserId = url.searchParams.get("userId");
+    const Query = z
+      .object({
+        cursor: boundedString(128).optional(),
+        limit: z
+          .string()
+          .optional()
+          .transform((v) => (v ? Number(v) : undefined))
+          .pipe(z.number().int().min(1).max(100).optional())
+          .transform((v) => v ?? 50),
+      })
+      .strip();
+    const q = Query.safeParse(Object.fromEntries(url.searchParams.entries()));
+    if (!q.success) return httpError(400, "Invalid query");
     if (requestedUserId && requestedUserId !== userId) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      // Allow ops/admin to read others; otherwise 403
+      const roles = await deriveRoles(userId);
+      try {
+        requireSelfOrRole({ requesterId: userId, ownerId: requestedUserId, roles }, "ops", "admin");
+      } catch (e) {
+        return NextResponse.json({ error: "forbidden" }, { status: 403 });
+      }
     }
 
     if (id) {
@@ -144,40 +166,92 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json((data ?? []).map(shapeOut));
   } catch (e) {
-    console.error("GET /api/journal error:", e);
+    if (e instanceof ForbiddenError) return NextResponse.json({ error: "forbidden" }, { status: 403 });
+    if (e instanceof Response) return e; // propagate httpError from size guard/validation
+    if (e instanceof UnauthorizedError) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    logger.error("GET /api/journal error:", e);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }
 
 /* --------------------------------- POST ------------------------------- */
 // POST /api/journal { title, content, mood?, fruit?, tags?, date? }
-export async function POST(req: NextRequest) {
+export const POST = withCORS(async function POST(req: NextRequest) {
   try {
-    const { userId } = await auth();
-    if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-    const client = sb();
-    const table = await detectTable(client);
-    const body = await req.json();
-
-    const title = String(body?.title ?? "").trim();
-    const content = String(body?.content ?? "").trim();
-    if (!title || !content) {
-      return NextResponse.json({ error: "title and content are required" }, { status: 400 });
+    const { userId } = await getAuthOrThrow();
+    // Rate limit write ops 20/min/user
+    {
+      const limited = await guardRate(req, { key: "journal-write", limit: 20, windowMs: 60_000 });
+      if (limited) return limited;
     }
+    // E2E stub path for tests to avoid DB dependency
+    const e2eStub = process.env.NEXT_PUBLIC_E2E_BYPASS_AUTH === "true" && req.headers.get("x-e2e-stub-journal") === "1";
+    // CSRF
+    {
+      const r = await assertSameOrigin(req);
+      if (r) return r;
+      const r2 = assertDoubleSubmit(req);
+      if (r2) return r2;
+    }
+    // Read-once JSON with size cap
+    const lenHdr = req.headers.get("content-length");
+    if (lenHdr && Number(lenHdr) > 64 * 1024) return httpError(413, "Payload too large");
+    let raw: any = {};
+    try {
+      const txt = await req.text();
+      if (txt && new TextEncoder().encode(txt).byteLength > 64 * 1024) return httpError(413, "Payload too large");
+      raw = txt ? JSON.parse(txt) : {};
+    } catch {
+      return httpError(400, "Bad JSON");
+    }
+
+    const UpsertJournalIn = z
+      .object({
+        id: boundedString(64).optional(),
+        title: boundedString(200),
+        body: boundedString(20000),
+        mood: z
+          .enum(["cherry", "grape", "mango", "papaya", "lemon", "banana", "kiwi", "strawberry", "watermelon"]) 
+          .optional(),
+        ts: z.number().int().min(0).optional(),
+        tags: z.array(boundedString(64)).optional(),
+        date: boundedString(64).optional(),
+        fruit: boundedString(64).optional(),
+      })
+      .strip();
+
+    const candidate = {
+      id: raw?.id,
+      title: raw?.title,
+      body: raw?.body ?? raw?.content,
+      mood: raw?.mood,
+      ts: raw?.ts,
+      tags: raw?.tags,
+      date: raw?.date,
+      fruit: raw?.fruit,
+    };
+    const parsed = UpsertJournalIn.safeParse(candidate);
+    if (!parsed.success) return httpError(400, "Invalid request");
+    const input = parsed.data;
+
+  const client = sb();
+    const table = await detectTable(client);
+
+    const title = input.title;
+    const content = input.body;
 
     // Provide a date (column may be NOT NULL)
     let dateVal: Date = new Date();
-    if (body?.date) {
-      const maybe = new Date(body.date);
+    if (input?.date) {
+      const maybe = new Date(input.date);
       if (!isNaN(maybe.getTime())) dateVal = maybe;
     }
 
-    const mood: string | null = body?.mood ? String(body.mood).trim() : null;
-    const fruit: string | null = body?.fruit ? String(body.fruit) : (mood ? fruitIdForEmotion(mood) : null);
+    const mood: string | null = input?.mood ? String(input.mood).trim() : null;
+    const fruit: string | null = input?.fruit ? String(input.fruit) : (mood ? fruitIdForEmotion(mood) : null);
 
     const nowIso = new Date().toISOString();
-    const id = randomUUID(); // TEXT id
+    const id = input.id || randomUUID(); // TEXT id
 
     const payload =
       table.flavor === "snake"
@@ -188,7 +262,7 @@ export async function POST(req: NextRequest) {
             content,
             mood,
             fruit,
-            tags: normalizeTags(body?.tags),
+            tags: normalizeTags(input?.tags),
             date: dateVal.toISOString(),
             created_at: nowIso,
             updated_at: nowIso,
@@ -200,7 +274,7 @@ export async function POST(req: NextRequest) {
             content,
             mood,
             fruit,
-            tags: normalizeTags(body?.tags),
+            tags: normalizeTags(input?.tags),
             date: dateVal.toISOString(),
             createdAt: nowIso,
             updatedAt: nowIso,
@@ -212,53 +286,118 @@ export async function POST(req: NextRequest) {
         ? "id,title,content,mood,fruit,tags,user_id,created_at,updated_at,date"
         : "id,title,content,mood,fruit,tags,userId,createdAt,updatedAt,date";
 
+    if (e2eStub) {
+      // Return a synthetic row
+      const fake = {
+        id,
+        title,
+        content,
+        mood,
+        fruit,
+        tags: normalizeTags(input?.tags),
+        userId: userId,
+        user_id: userId,
+        date: dateVal.toISOString(),
+        created_at: nowIso,
+        updated_at: nowIso,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+      } as any;
+      return NextResponse.json(shapeOut(fake), { status: 201 });
+    }
+
     const { data, error } = await client.from(table.name).insert([payload]).select(cols).single();
 
     if (error) throw error;
     return NextResponse.json(shapeOut(data), { status: 201 });
   } catch (e) {
-    console.error("POST /api/journal error:", e);
+    if (e instanceof ForbiddenError) return NextResponse.json({ error: "forbidden" }, { status: 403 });
+    if (e instanceof Response) return e;
+    if (e instanceof UnauthorizedError) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    logger.error("POST /api/journal error:", e);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
-}
+}, { credentials: true });
 
 /* --------------------------------- PUT -------------------------------- */
 // PUT /api/journal { id, title?, content?, mood?, fruit?, tags?, date? }
-export async function PUT(req: NextRequest) {
+export const PUT = withCORS(async function PUT(req: NextRequest) {
   try {
-    const { userId } = await auth();
-    if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
+    const { userId } = await getAuthOrThrow();
     const client = sb();
     const table = await detectTable(client);
-    const body = await req.json();
+    // Rate limit write ops 20/min/user
+    {
+      const limited = await guardRate(req, { key: "journal-write", limit: 20, windowMs: 60_000 });
+      if (limited) return limited;
+    }
+    // CSRF
+    {
+      const r = await assertSameOrigin(req);
+      if (r) return r;
+      const r2 = assertDoubleSubmit(req);
+      if (r2) return r2;
+    }
+
+    // Read-once JSON with size cap
+    const lenHdr = req.headers.get("content-length");
+    if (lenHdr && Number(lenHdr) > 64 * 1024) return httpError(413, "Payload too large");
+    let body: any = {};
+    try {
+      const txt = await req.text();
+      if (txt && new TextEncoder().encode(txt).byteLength > 64 * 1024) return httpError(413, "Payload too large");
+      body = txt ? JSON.parse(txt) : {};
+    } catch {
+      return httpError(400, "Bad JSON");
+    }
     const id = String(body?.id ?? "").trim();
     if (!id) return NextResponse.json({ error: "id is required" }, { status: 400 });
 
     const existing = await findEntryByIdForUser(client, table, id, userId);
     if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
+    // enforce self or admin on write
+    const roles = await deriveRoles(userId);
+    try { requireSelfOrRole({ requesterId: userId, ownerId: userId, roles }, "admin"); } catch (e) {
+      return NextResponse.json({ error: "forbidden" }, { status: 403 });
+    }
 
-    const title = body?.title !== undefined ? String(body.title).trim() : existing.title;
-    const content = body?.content !== undefined ? String(body.content).trim() : existing.content;
+    const UpsertPatch = z
+      .object({
+        title: boundedString(200).optional(),
+        body: boundedString(20000).optional(),
+        mood: z
+          .enum(["cherry", "grape", "mango", "papaya", "lemon", "banana", "kiwi", "strawberry", "watermelon"]) 
+          .optional(),
+        ts: z.number().int().min(0).optional(),
+        tags: z.array(boundedString(64)).optional(),
+        date: boundedString(64).optional(),
+        fruit: boundedString(64).optional(),
+      })
+      .strip();
+    const cand = { title: body?.title, body: body?.body ?? body?.content, mood: body?.mood, ts: body?.ts, tags: body?.tags, date: body?.date, fruit: body?.fruit };
+    const parsed = UpsertPatch.safeParse(cand);
+    if (!parsed.success) return httpError(400, "Invalid request");
+    const title = parsed.data.title !== undefined ? parsed.data.title : existing.title;
+    const content = parsed.data.body !== undefined ? parsed.data.body : existing.content;
     if (!title || !content) {
       return NextResponse.json({ error: "title and content are required" }, { status: 400 });
     }
 
     // mood / fruit patches
     const moodPatch =
-      body?.mood !== undefined ? (body.mood ? String(body.mood).trim() : null) : existing.mood ?? null;
+      parsed.data.mood !== undefined ? (parsed.data.mood ? String(parsed.data.mood).trim() : null) : existing.mood ?? null;
 
     let fruitPatch: string | null | undefined = undefined;
-    if (body?.fruit !== undefined) {
-      fruitPatch = body.fruit ? String(body.fruit) : null;
-    } else if (body?.mood !== undefined && body.fruit === undefined) {
+    if (parsed.data.fruit !== undefined) {
+      fruitPatch = parsed.data.fruit ? String(parsed.data.fruit) : null;
+    } else if (parsed.data.mood !== undefined && parsed.data.fruit === undefined) {
       // If mood changed but fruit not provided, re-derive
       fruitPatch = moodPatch ? fruitIdForEmotion(moodPatch) : null;
     }
 
     let datePatch: string | undefined = undefined;
-    if (body?.date) {
-      const d = new Date(body.date);
+    if (parsed.data.date) {
+      const d = new Date(parsed.data.date);
       if (!isNaN(d.getTime())) datePatch = d.toISOString();
     }
 
@@ -270,7 +409,7 @@ export async function PUT(req: NextRequest) {
             content,
             mood: moodPatch,
             ...(fruitPatch !== undefined ? { fruit: fruitPatch } : {}),
-            tags: body?.tags !== undefined ? normalizeTags(body.tags) : existing.tags ?? [],
+            tags: parsed.data.tags !== undefined ? normalizeTags(parsed.data.tags) : existing.tags ?? [],
             updated_at: nowIso,
             ...(datePatch ? { date: datePatch } : {}),
           }
@@ -279,7 +418,7 @@ export async function PUT(req: NextRequest) {
             content,
             mood: moodPatch,
             ...(fruitPatch !== undefined ? { fruit: fruitPatch } : {}),
-            tags: body?.tags !== undefined ? normalizeTags(body.tags) : existing.tags ?? [],
+            tags: parsed.data.tags !== undefined ? normalizeTags(parsed.data.tags) : existing.tags ?? [],
             updatedAt: nowIso,
             ...(datePatch ? { date: datePatch } : {}),
           };
@@ -301,26 +440,45 @@ export async function PUT(req: NextRequest) {
     if (error) throw error;
     return NextResponse.json(shapeOut(data));
   } catch (e) {
-    console.error("PUT /api/journal error:", e);
+    if (e instanceof ForbiddenError) return NextResponse.json({ error: "forbidden" }, { status: 403 });
+    if (e instanceof Response) return e;
+    if (e instanceof UnauthorizedError) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    logger.error("PUT /api/journal error:", e);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
-}
+}, { credentials: true });
 
 /* -------------------------------- DELETE ------------------------------ */
 // DELETE /api/journal?id=<id>
-export async function DELETE(req: NextRequest) {
+export const DELETE = withCORS(async function DELETE(req: NextRequest) {
   try {
-    const { userId } = await auth();
-    if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const { userId } = await getAuthOrThrow();
+    // Rate limit write ops 20/min/user
+    {
+      const limited = await guardRate(req, { key: "journal-write", limit: 20, windowMs: 60_000 });
+      if (limited) return limited;
+    }
+    // CSRF
+    {
+      const r = await assertSameOrigin(req);
+      if (r) return r;
+      const r2 = assertDoubleSubmit(req);
+      if (r2) return r2;
+    }
 
-    const client = sb();
-    const table = await detectTable(client);
+  const client = sb();
+  const table = await detectTable(client);
     const url = new URL(req.url);
     const id = url.searchParams.get("id");
     if (!id) return NextResponse.json({ error: "id is required" }, { status: 400 });
 
     const existing = await findEntryByIdForUser(client, table, id, userId);
     if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
+    // enforce self or admin on delete
+    const roles = await deriveRoles(userId);
+    try { requireSelfOrRole({ requesterId: userId, ownerId: userId, roles }, "admin"); } catch (e) {
+      return NextResponse.json({ error: "forbidden" }, { status: 403 });
+    }
 
     const userCol = table.flavor === "snake" ? "user_id" : "userId";
     const { error } = await client.from(table.name).delete().eq("id", id).eq(userCol, userId);
@@ -328,7 +486,10 @@ export async function DELETE(req: NextRequest) {
 
     return NextResponse.json({ success: true });
   } catch (e) {
-    console.error("DELETE /api/journal error:", e);
+    if (e instanceof ForbiddenError) return NextResponse.json({ error: "forbidden" }, { status: 403 });
+    if (e instanceof Response) return e;
+    if (e instanceof UnauthorizedError) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    logger.error("DELETE /api/journal error:", e);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
-}
+}, { credentials: true });

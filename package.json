@@ -6,7 +6,10 @@
     "build": "next build",
     "dev": "next dev",
     "lint": "next lint",
-    "start": "next start"
+    "start": "next start",
+    "test": "playwright test",
+    "test:ui": "playwright test --ui",
+    "test:signup": "playwright test tests/auth.signup.spec.ts"
   },
   "dependencies": {
     "@clerk/nextjs": "^6.25.4",
@@ -39,6 +42,7 @@
     "@radix-ui/react-toggle": "1.1.1",
     "@radix-ui/react-toggle-group": "1.1.1",
     "@radix-ui/react-tooltip": "1.1.6",
+    "@sentry/nextjs": "^10.21.0",
     "@supabase/supabase-js": "^2.56.0",
     "@types/uuid": "^10.0.0",
     "@xenova/transformers": "^2.17.2",
@@ -63,6 +67,7 @@
     "react-textarea-autosize": "^8.5.9",
     "recharts": "2.15.0",
     "sonner": "^1.7.4",
+    "stripe": "^14.25.0",
     "tailwind-merge": "^2.5.5",
     "uuid": "^11.1.0",
     "vaul": "^0.9.6",

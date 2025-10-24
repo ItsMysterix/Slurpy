@@ -1,0 +1,43 @@
+name: Container Smoke
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'infra/docker/**'
+      - 'scripts/container_smoke.sh'
+      - 'docker-compose.yml'
+      - 'docker-compose.local.yml'
+      - 'app/**'
+      - 'backend/**'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'infra/docker/**'
+      - 'scripts/container_smoke.sh'
+      - 'docker-compose.yml'
+      - 'docker-compose.local.yml'
+      - 'app/**'
+      - 'backend/**'
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Ensure jq and curl are installed
+        run: sudo apt-get update && sudo apt-get install -y jq curl
+
+      - name: Show Docker info
+        run: docker info
+
+      - name: Run container smoke script
+        run: |
+          chmod +x scripts/container_smoke.sh
+          ./scripts/container_smoke.sh

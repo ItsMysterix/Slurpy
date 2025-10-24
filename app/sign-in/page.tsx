@@ -11,6 +11,9 @@ import { useRouter } from "next/navigation"
 import { useSignIn, useAuth } from "@clerk/nextjs"
 import { useTheme } from "next-themes"
 
+export const dynamic = "force-dynamic"
+export const runtime = "nodejs"
+
 export default function SignInPage() {
   const router = useRouter()
   const { isSignedIn } = useAuth()
@@ -68,8 +71,10 @@ export default function SignInPage() {
     console.log("Attempting form sign in")
     
     try {
+      // Trim only the identifier to avoid whitespace issues; never trim the password.
+      const identifier = formData.identifier.trim()
       const result = await signIn.create({
-        identifier: formData.identifier,
+        identifier,
         password: formData.password,
       })
       
@@ -79,17 +84,45 @@ export default function SignInPage() {
         console.log("Form sign in successful")
         await setActive({ session: result.createdSessionId })
         router.push("/chat")
+        return
+      }
+
+      // Handle other Clerk flows explicitly (e.g., 2FA)
+      if ((result as any)?.status === "needs_second_factor") {
+        alert("Two-factor authentication is required. Please complete the verification step in your account.")
+        return
       }
     } catch (err: any) {
       console.error("Sign in error:", err)
-      const errorCode = err?.errors?.[0]?.code
-      
-      if (errorCode === "form_identifier_not_found") {
-        alert("Account not found. Please check your credentials or sign up.")
-      } else if (errorCode === "form_password_incorrect") {
-        alert("Incorrect password. Please try again.")
-      } else {
-        alert("Invalid credentials. Please try again.")
+      const errorCode = err?.errors?.[0]?.code as string | undefined
+      const message = err?.errors?.[0]?.message as string | undefined
+      const identifier = formData.identifier.trim()
+
+      switch (errorCode) {
+        case "form_identifier_not_found":
+        case "identifier_not_found":
+          alert("We couldn't find an account with those details. Please check your email/username or sign up.")
+          break
+        case "form_password_incorrect":
+          alert("Incorrect password. You can try again or reset your password.")
+          break
+        // Some users created via Google/OAuth don't have a password yet.
+        // Clerk may return one of these codes/messages — redirect them to set a password.
+        case "form_password_not_set":
+        case "password_not_set":
+          router.push(`/forgot-password?email=${encodeURIComponent(identifier)}`)
+          break
+        case "throttled":
+        case "too_many_requests":
+          alert("Too many attempts. Please wait a moment and try again.")
+          break
+        default:
+          // If Clerk hints that a password isn't set via message text
+          if (message && /password (has not|is not) set/i.test(message)) {
+            router.push(`/forgot-password?email=${encodeURIComponent(identifier)}`)
+          } else {
+            alert(message || "Invalid credentials. Please try again.")
+          }
       }
     } finally {
       setIsFormLoading(false)

@@ -4,8 +4,8 @@ import type React from "react"
 
 import { motion } from "framer-motion"
 import Link from "next/link"
-import { useState } from "react"
-import { useRouter } from "next/navigation"
+import { Suspense, useEffect, useState } from "react"
+import { useRouter, useSearchParams } from "next/navigation"
 import { ArrowLeft, Mail, Send, CheckCircle, AlertCircle, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -13,8 +13,11 @@ import { Label } from "@/components/ui/label"
 import { Card, CardContent } from "@/components/ui/card"
 import { useSignIn } from "@clerk/nextjs"
 
-export default function ForgotPasswordPage() {
+export const dynamic = "force-dynamic"
+
+function ForgotPasswordInner() {
   const router = useRouter()
+  const search = useSearchParams()
   const [email, setEmail] = useState("")
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [isSubmitted, setIsSubmitted] = useState(false)
@@ -23,6 +26,13 @@ export default function ForgotPasswordPage() {
   const [canResend, setCanResend] = useState(true)
 
   const { signIn, isLoaded } = useSignIn()
+
+  // Prefill email from query string when redirected from sign-in
+  useEffect(() => {
+    const e = search.get("email")
+    if (e) setEmail(e)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const validateEmail = (email: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
 
@@ -376,5 +386,24 @@ export default function ForgotPasswordPage() {
         </motion.div>
       </motion.div>
     </div>
+  )
+}
+
+export default function ForgotPasswordPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen bg-gradient-to-br from-sand-50 via-sage-50 to-clay-400/10 flex items-center justify-center p-4">
+          <Card className="bg-sand-50/70 backdrop-blur-lg shadow-soft border border-white/20">
+            <CardContent className="p-10 text-center">
+              <Loader2 className="w-8 h-8 animate-spin mx-auto mb-4 text-sage-500" />
+              <p className="text-sage-500 font-sans">Loading…</p>
+            </CardContent>
+          </Card>
+        </div>
+      }
+    >
+      <ForgotPasswordInner />
+    </Suspense>
   )
 }

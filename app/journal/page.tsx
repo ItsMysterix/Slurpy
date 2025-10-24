@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Loader2 } from "lucide-react";
-import { useAuth, useUser } from "@clerk/nextjs";
+import { useAuth, useUser } from "@/lib/clerk-hooks";
 
 import SlideDrawer from "@/components/slide-drawer";
 import JournalHeader from "@/components/journal/JournalHeader";

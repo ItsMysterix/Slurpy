@@ -4,16 +4,17 @@ export const revalidate = 0;
 
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
-import { createClient } from "@supabase/supabase-js";
+import { createServerServiceClient } from "@/lib/supabase/server";
 import { randomUUID } from "crypto";
+import { guardRate } from "@/lib/guards";
+import { withCORS } from "@/lib/cors";
+import { assertSameOrigin, assertDoubleSubmit } from "@/lib/csrf";
 import { fruitForEmotion } from "@/lib/moodFruit";
+import { AppError, withErrorHandling } from "@/lib/errors";
 
 /* -------------------------- Supabase -------------------------- */
 function sb() {
-  const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE;
-  if (!url || !key) throw new Error("Missing SUPABASE_URL / SUPABASE_SERVICE_ROLE env");
-  return createClient(url, key, { auth: { persistSession: false } });
+  return createServerServiceClient();
 }
 
 /* ----------------------------- Types -------------------------- */
@@ -83,10 +84,9 @@ function fruitIdForEmotion(emotion?: string | null): string {
 }
 
 /* ------------------------------ GET --------------------------- */
-export async function GET(req: NextRequest) {
-  try {
+export const GET = withErrorHandling(async function GET(req: NextRequest) {
     const { userId } = await auth();
-    if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    if (!userId) throw new AppError("unauthorized", "Unauthorized", 401);
 
     const supabase = sb();
     const url = new URL(req.url);
@@ -293,25 +293,33 @@ export async function GET(req: NextRequest) {
         emotionDistribution,
       },
     });
-  } catch (error: any) {
-    console.error("Error fetching calendar data:", error);
-    return NextResponse.json({ error: String(error?.message ?? error) }, { status: 500 });
-  }
-}
+});
 
 /* ------------------------------ POST -------------------------- */
 // Upsert Daily Mood for a given day
-export async function POST(req: NextRequest) {
-  try {
+export const POST = withCORS(withErrorHandling(async function POST(req: NextRequest) {
     const { userId } = await auth();
-    if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    if (!userId) throw new AppError("unauthorized", "Unauthorized", 401);
+    // Limit calendar write ops to 30/min/user
+    {
+      const limited = await guardRate(req, { key: "calendar-write", limit: 30, windowMs: 60_000 });
+      if (limited) return limited;
+    }
+
+    // CSRF
+    {
+      const r = await assertSameOrigin(req);
+      if (r) return r;
+      const r2 = assertDoubleSubmit(req);
+      if (r2) return r2;
+    }
 
     const supabase = sb();
     const body = await req.json();
     const { date, emotion, intensity, notes } = body || {};
 
     if (!date || !emotion || intensity == null) {
-      return NextResponse.json({ error: "date, emotion, and intensity are required" }, { status: 400 });
+      throw new AppError("bad_request", "date, emotion, and intensity are required", 400);
     }
 
     const d = fromISO(String(date));
@@ -353,23 +361,31 @@ export async function POST(req: NextRequest) {
         notes: data.notes,
       },
     });
-  } catch (error: any) {
-    console.error("Error saving daily mood:", error);
-    return NextResponse.json({ error: String(error?.message ?? error) }, { status: 500 });
-  }
-}
+}), { credentials: true });
 
 /* ----------------------------- DELETE ------------------------- */
 // Delete Daily Mood for a given day (UTC day window)
-export async function DELETE(req: NextRequest) {
-  try {
+export const DELETE = withCORS(withErrorHandling(async function DELETE(req: NextRequest) {
     const { userId } = await auth();
-    if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    if (!userId) throw new AppError("unauthorized", "Unauthorized", 401);
+    // Limit calendar write ops to 30/min/user
+    {
+      const limited = await guardRate(req, { key: "calendar-write", limit: 30, windowMs: 60_000 });
+      if (limited) return limited;
+    }
+
+    // CSRF
+    {
+      const r = await assertSameOrigin(req);
+      if (r) return r;
+      const r2 = assertDoubleSubmit(req);
+      if (r2) return r2;
+    }
 
     const supabase = sb();
-    const url = new URL(req.url);
+  const url = new URL(req.url);
     const dateParam = url.searchParams.get("date");
-    if (!dateParam) return NextResponse.json({ error: "date parameter is required" }, { status: 400 });
+  if (!dateParam) throw new AppError("bad_request", "date parameter is required", 400);
 
     const d = fromISO(dateParam);
     const dayStart = toUTCStartOfDay(d);
@@ -385,8 +401,4 @@ export async function DELETE(req: NextRequest) {
     if (error) throw error;
 
     return NextResponse.json({ success: true });
-  } catch (error: any) {
-    console.error("Error deleting daily mood:", error);
-    return NextResponse.json({ error: String(error?.message ?? error) }, { status: 500 });
-  }
-}
+}), { credentials: true });

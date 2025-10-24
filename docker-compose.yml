@@ -4,13 +4,21 @@ services:
     ports:
       - "6333:6333"
     restart: unless-stopped
+    cap_drop: ["ALL"]
+    # Qdrant needs to write data, so we provide a volume instead of read_only
+    volumes:
+      - qdrant_storage:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:6333/healthz || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
 
   mcp:
     build:
       context: .
       dockerfile: infra/docker/Dockerfile.mcp
-    env_file:
-      - .env.backend
+    # Supply environment via variables, not mounted files
     environment:
       FRONTEND_ORIGIN: http://localhost:3000
       CORS_ALLOW_ALL: "true"
@@ -21,13 +29,26 @@ services:
     ports:
       - "9001:9001"
     restart: unless-stopped
+    cap_drop: ["ALL"]
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9001/healthz || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "1.0"
 
   backend:
     build:
       context: .
       dockerfile: infra/docker/Dockerfile.backend
-    env_file:
-      - .env.backend
+    # Supply environment via variables, not mounted files
     environment:
       API_DEBUG: "true"
       DEV_NO_AUTH: "true"
@@ -41,6 +62,20 @@ services:
     ports:
       - "8000:8000"
     restart: unless-stopped
+    cap_drop: ["ALL"]
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/health/healthz || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 2048M
+          cpus: "2.0"
 
   frontend:
     build:
@@ -53,8 +88,7 @@ services:
         CLERK_SECRET_KEY: ${CLERK_SECRET_KEY}
         # expose API base to the build if your client bundle uses it
         NEXT_PUBLIC_RAG_API: ${NEXT_PUBLIC_RAG_API:-http://localhost:8000/v1/mcp/stream}
-    env_file:
-      - .env.frontend
+    # Supply environment via variables, not mounted files
     environment:
       # available at **runtime** (SSR/middleware)
       NEXT_PUBLIC_RAG_API: ${NEXT_PUBLIC_RAG_API:-http://localhost:8000/v1/mcp/stream}
@@ -69,3 +103,21 @@ services:
     ports:
       - "3000:3000"
     restart: unless-stopped
+    cap_drop: ["ALL"]
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:3000/api/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 1024M
+          cpus: "1.0"
+
+volumes:
+  qdrant_storage:
+    driver: local

@@ -1,21 +1,23 @@
 # ---------- deps ----------
-FROM node:20-bookworm-slim AS deps
+FROM node:20-alpine AS deps
 WORKDIR /app
 COPY package.json package-lock.json* ./
-# Avoid peer dependency conflicts
-RUN npm ci --legacy-peer-deps
+# Exclude optional onnxruntime-node (native binary, not needed in browser)
+RUN npm ci --legacy-peer-deps --omit=optional
 
 # ---------- build ----------
-FROM node:20-bookworm-slim AS builder
+FROM node:20-alpine AS builder
 WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1
+# Skip static page generation during build to avoid Clerk context errors
+ENV NEXT_PRIVATE_SKIP_STATIC_PAGE_GENERATION_ON_DATA_FETCH=1
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 # Next.js standalone build
 RUN npm run build
 
 # ---------- runtime ----------
-FROM node:20-bookworm-slim AS runner
+FROM node:20-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
@@ -24,6 +26,12 @@ ENV NEXT_TELEMETRY_DISABLED=1
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
 COPY --from=builder /app/public ./public
+
+# Ensure runtime user is non-root
+USER node
+
+# Allow temporary writes only to /tmp when filesystem is mounted read-only
+VOLUME ["/tmp"]
 
 EXPOSE 3000
 # Start the Next.js standalone server

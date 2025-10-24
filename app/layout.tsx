@@ -5,6 +5,7 @@ import { ClerkProvider } from "@clerk/nextjs";
 import { Cormorant_Garamond, Plus_Jakarta_Sans } from "next/font/google";
 import { ThemeProvider } from "next-themes";
 import "./globals.css";
+import { makeNonce } from "@/lib/csp";
 
 const cormorant = Cormorant_Garamond({
   subsets: ["latin"],
@@ -27,6 +28,7 @@ export const metadata: Metadata = {
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
+  const nonce = makeNonce();
   return (
     <ClerkProvider
       publishableKey={process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY}
@@ -44,6 +46,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         suppressHydrationWarning
       >
         <body className="font-sans antialiased">
+          <meta name="csp-nonce" content={nonce} />
           <ThemeProvider
             attribute="class"
             defaultTheme="system"

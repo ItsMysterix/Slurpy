@@ -11,6 +11,7 @@ export async function askRag(
   text: string,
   sessionId: string | undefined,
   clerkJwt: string,
+  tenantId?: string,
 ): Promise<RagResponse> {
   const payload: Record<string, unknown> = { text };
   if (sessionId) payload.session_id = sessionId;
@@ -26,7 +27,8 @@ export async function askRag(
 
   const url = process.env.NEXT_PUBLIC_RAG_API ?? "http://127.0.0.1:8000/chat";
 
-  console.log("[rag] POST →", url, payload);
+  if (tenantId) headers["X-Tenant-Id"] = tenantId;
+  console.log("[rag] POST →", url, { ...payload, tenant_id: tenantId ? "<set>" : undefined });
 
   const res = await fetch(url, {
     method: "POST",

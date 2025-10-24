@@ -1,48 +1,75 @@
-FROM python:3.11-slim
+############################
+# Builder: create slim venv and warm caches
+############################
+FROM python:3.11-slim AS builder
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc \
-    python3-dev \
-    build-essential \
-    curl \
+      gcc python3-dev build-essential curl \
     && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /app
-RUN python -m pip install --upgrade pip setuptools wheel
+WORKDIR /build
 
-# Install backend deps first (so warmup has the libraries)
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+RUN python -m pip install --upgrade pip setuptools wheel
 COPY requirements/backend.txt ./requirements.txt
 RUN pip install --no-cache-dir \
-    --index-url https://download.pytorch.org/whl/cpu \
-    --extra-index-url https://pypi.org/simple \
-    torch==2.6.0+cpu torchvision==0.21.0 torchaudio==2.6.0 \
+      --index-url https://download.pytorch.org/whl/cpu \
+      --extra-index-url https://pypi.org/simple \
+      torch==2.6.0+cpu torchvision==0.21.0 torchaudio==2.6.0 \
  && pip install --no-cache-dir sentence-transformers==2.7.0 \
  && pip install --no-cache-dir -r requirements.txt
 
 # --- NLP cache & warmup ---
-ENV HF_HOME=/root/.cache/huggingface
+ENV HF_HOME=/opt/hf-cache
 RUN pip install --no-cache-dir \
   https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.7.1/en_core_web_sm-3.7.1-py3-none-any.whl
 RUN python - <<'PY'
 from transformers import pipeline
 print("Warming transformers pipelines...")
 pipeline("text-classification", model="cardiffnlp/twitter-roberta-base-sentiment-latest")
-# OLD (fails): joeddav/distilbert-base-uncased-go-emotions
 pipeline("text-classification", model="SamLowe/roberta-base-go_emotions", return_all_scores=True)
 pipeline("text-classification", model="unitary/unbiased-toxic-roberta", return_all_scores=True)
 print("Done.")
 PY
 
-# App code last (so deps/model-cache layers are reused)
+############################
+# Runtime: minimal, non-root
+############################
+FROM python:3.11-slim AS runtime
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    HF_HOME=/opt/hf-cache
+
+# Create unprivileged user
+RUN useradd -u 10002 -m app
+
+WORKDIR /app
+
+# Copy virtualenv and warmed caches
+COPY --from=builder /opt/venv /opt/venv
+COPY --from=builder /opt/hf-cache /opt/hf-cache
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Set PYTHONPATH so imports like `from slurpy.domain...` resolve
+ENV PYTHONPATH=/app/backend
+
+# Copy application code
 COPY backend ./backend
 COPY emotion ./emotion
+RUN chown -R app:app /app /opt/hf-cache
+
+USER app
 
 EXPOSE 9001
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
   CMD curl -f http://localhost:9001/healthz || exit 1
 
-CMD ["uvicorn", "backend.mcp_server:app", "--host", "0.0.0.0", "--port", "9001"]
+CMD ["uvicorn", "backend.slurpy.workers.mcp_server:app", "--host", "0.0.0.0", "--port", "9001"]

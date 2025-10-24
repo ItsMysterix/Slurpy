@@ -3,14 +3,16 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
 import {
-  Menu, X, MoreVertical, Calendar, BookOpen, MessageCircle, BarChart3, LogOut
+  Menu, X, MoreVertical, Calendar, BookOpen, MessageCircle, BarChart3, LogOut, Sparkles
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { FloatingLeaves } from "@/components/floating-leaves";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useClerk, useUser } from "@clerk/nextjs";
+import { getCheckoutUrl } from "@/lib/pay";
+import { usePlan } from "@/lib/use-plan";
 
 interface SlideDrawerProps {
   onSidebarToggle?: (isOpen: boolean) => void;
@@ -19,14 +21,18 @@ interface SlideDrawerProps {
 export default function SlideDrawer({ onSidebarToggle }: SlideDrawerProps) {
   const [isOpen, setIsOpen] = useState(false);
   const pathname = usePathname();
+  const router = useRouter();
   const { signOut } = useClerk();
   const { user } = useUser();
+  const { isPro, loading } = usePlan();
 
   const navigationItems = [
     { id: "chats",     label: "Chats",            icon: MessageCircle, href: "/chat",     description: "AI conversations",     gradient: "from-sage-400 to-sage-500" },
     { id: "insights",  label: "Session Insights", icon: BarChart3,     href: "/insights", description: "Emotion analytics",     gradient: "from-clay-400 to-clay-500" },
     { id: "calendar",  label: "Calendar",         icon: Calendar,      href: "/calendar", description: "Track your patterns",   gradient: "from-sage-500 to-clay-400" },
     { id: "journal",   label: "Journal",          icon: BookOpen,      href: "/journal",  description: "Reflect your thoughts", gradient: "from-clay-400 to-sage-400" },
+    // Only show Plans link if NOT pro. (If user upgrades, this “disappears”.)
+    ...(isPro ? [] : [{ id: "plans", label: "Plans", icon: Sparkles, href: "/plans", description: "Upgrade your powers", gradient: "from-yellow-500 to-orange-500" }]),
   ];
 
   const isActivePage = (href: string) => pathname === href;
@@ -37,20 +43,29 @@ export default function SlideDrawer({ onSidebarToggle }: SlideDrawerProps) {
     onSidebarToggle?.(next);
   };
 
+  const handleBuyPro = async () => {
+    try {
+      const url = await getCheckoutUrl(); // backend defaults to STRIPE_PRICE_ID_MONTHLY
+      window.location.href = url;
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
   return (
     <>
       <div
         className={[
           "fixed inset-y-0 left-0 z-40 transition-all duration-300",
-          "w-12",                               // mobile: narrow rail only
-          isOpen ? "md:w-64" : "md:w-16",       // desktop: expand/collapse
+          "w-12",
+          isOpen ? "md:w-64" : "md:w-16",
           "bg-gradient-to-b from-white/95 via-sage-25/90 to-clay-50/95",
           "dark:from-gray-950/95 dark:via-gray-900/90 dark:to-gray-950/95",
           "backdrop-blur-lg border-r border-sage-200/50 dark:border-gray-700/50",
           "flex flex-col shadow-lg overflow-hidden"
         ].join(" ")}
       >
-        {/* Floating Leaves only on desktop + open */}
+        {/* Floaties */}
         <div className="hidden md:block">
           {isOpen && (
             <div className="absolute inset-0 pointer-events-none">
@@ -59,7 +74,7 @@ export default function SlideDrawer({ onSidebarToggle }: SlideDrawerProps) {
           )}
         </div>
 
-        {/* Top: Hamburger (always visible) */}
+        {/* Top: Hamburger */}
         <div className={`flex ${isOpen ? "justify-start" : "justify-center"} p-2 relative z-10 md:justify-start`}>
           <Button
             onClick={toggleSidebar}
@@ -75,7 +90,7 @@ export default function SlideDrawer({ onSidebarToggle }: SlideDrawerProps) {
           </Button>
         </div>
 
-        {/* ===== MOBILE =====  — only hamburger */}
+        {/* ===== MOBILE ===== */}
         <div className="md:hidden flex-1" />
 
         {/* ===== DESKTOP CONTENT ===== */}
@@ -121,6 +136,27 @@ export default function SlideDrawer({ onSidebarToggle }: SlideDrawerProps) {
                       </motion.div>
                     );
                   })}
+
+                  {/* Pro CTA card (only if not Pro and not loading) */}
+                  {!loading && !isPro && (
+                    <div className="mt-2">
+                      <div
+                        role="button"
+                        onClick={handleBuyPro}
+                        className="rounded-xl p-3 border transition-all duration-200 cursor-pointer hover:shadow-lg backdrop-blur-sm bg-gradient-to-r from-yellow-500/90 via-amber-500/90 to-orange-500/90 text-white border-yellow-400/50 hover:scale-[1.01] active:scale-[0.99]"
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 rounded-lg bg-white/20 flex items-center justify-center shadow-sm">
+                            <Sparkles className="w-4 h-4 text-white" />
+                          </div>
+                          <div className="flex flex-col">
+                            <span className="font-sans text-sm font-semibold">Go Pro</span>
+                            <span className="text-xs opacity-90">Unlock deeper insights & unlimited journaling</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -160,7 +196,7 @@ export default function SlideDrawer({ onSidebarToggle }: SlideDrawerProps) {
               </div>
             </>
           ) : (
-            // Collapsed desktop: icons at top, avatar/logout pinned to bottom
+            // Collapsed desktop
             <div className="flex flex-1 flex-col">
               {/* top: nav icons */}
               <div className="flex flex-col items-center py-4 space-y-4 relative z-10">
@@ -187,12 +223,32 @@ export default function SlideDrawer({ onSidebarToggle }: SlideDrawerProps) {
                           ].join(" ")}
                           title={item.label}
                         >
-                          <Icon className="w-5 h-5 text-inherit" />
+                          <item.icon className="w-5 h-5 text-inherit" />
                         </Button>
                       </Link>
                     </motion.div>
                   );
                 })}
+
+                {/* Buy Pro icon (only if not pro) */}
+                {!loading && !isPro && (
+                  <motion.div
+                    initial={{ opacity: 0, scale: 0.8 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    transition={{ duration: 0.4 }}
+                    whileHover={{ scale: 1.1, y: -5, transition: { duration: 0.2 } }}
+                  >
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={handleBuyPro}
+                      className="w-11 h-11 rounded-xl transition-all duration-200 bg-gradient-to-br from-yellow-500 via-amber-500 to-orange-500 text-white shadow-lg border border-yellow-400/60"
+                      title="Go Pro"
+                    >
+                      <Sparkles className="w-5 h-5" />
+                    </Button>
+                  </motion.div>
+                )}
               </div>
 
               {/* spacer to push bottom */}

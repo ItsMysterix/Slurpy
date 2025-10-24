@@ -161,6 +161,15 @@ def _warm_models() -> None:
         logger.info("[NLP] warmup complete")
     except Exception as e:
         logger.warning(f"[NLP] warmup warning: {e}")
+    # Best-effort EmotionBrain warmup (always try; feature-gated use elsewhere)
+    try:
+        from slurpy.domain.nlp.service import get_emotion_brain
+        eb = get_emotion_brain()
+        if eb is not None:
+            eb.warmup()
+            logger.info("[EmotionV2] warmup complete")
+    except Exception as e:
+        logger.warning(f"[EmotionV2] warmup warning: {e}")
 
 # -------------------------------------------------------------------
 # Health

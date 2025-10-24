@@ -21,10 +21,24 @@ from slurpy.interfaces.http.routers import (
 def create_app() -> FastAPI:
     app = FastAPI(title="Slurpy API", version="0.1.0")
 
-    # CORS (tweak as needed)
+    # CORS - PRODUCTION: Update with your actual domains!
+    # TODO: Replace ["*"] with your production domains before deploying
+    allowed_origins = [
+        "http://localhost:3000",      # Local development
+        "http://localhost:3001",      # Local development alternative
+        # "https://your-domain.com",  # Add your production frontend domain
+        # "https://www.your-domain.com",
+    ]
+    
+    # In production, read from environment variable
+    import os
+    env_origins = os.getenv("ALLOWED_ORIGINS")
+    if env_origins:
+        allowed_origins.extend(env_origins.split(","))
+    
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=allowed_origins if os.getenv("ENVIRONMENT") == "production" else ["*"],
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],

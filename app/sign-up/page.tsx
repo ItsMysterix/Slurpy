@@ -4,12 +4,15 @@ import * as React from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { Chrome, Mail, Lock, User, Eye, EyeOff, Loader2, AtSign } from "lucide-react"
-import { useSignUp, useAuth } from "@clerk/nextjs"
+import { useSignUp, useAuth } from "@/lib/clerk-hooks"
 import { useTheme } from "next-themes"
 
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+
+export const dynamic = "force-dynamic"
+export const runtime = "nodejs"
 
 export default function SignUpPage() {
   const router = useRouter()

@@ -6,12 +6,13 @@ export const revalidate = 0;
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { createClient } from "@supabase/supabase-js";
+import { createServerServiceClient } from "@/lib/supabase/server";
+import { guardRate } from "@/lib/guards";
+import { withCORS } from "@/lib/cors";
+import { assertSameOrigin, assertDoubleSubmit } from "@/lib/csrf";
 
 function sb() {
-  const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE;
-  if (!url || !key) throw new Error("Missing SUPABASE_URL / SUPABASE_SERVICE_ROLE env");
-  return createClient(url, key, { auth: { persistSession: false } });
+  return createServerServiceClient();
 }
 
 const toYMD = (isoOrDate: string | Date) => {
@@ -19,10 +20,24 @@ const toYMD = (isoOrDate: string | Date) => {
   return d.toISOString().slice(0, 10); // "YYYY-MM-DD"
 }
 
-export async function POST(req: NextRequest) {
+export const POST = withCORS(async function POST(req: NextRequest) {
   try {
     const { userId } = await auth();
     if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+    // Limit calendar write ops to 30/min/user
+    {
+      const limited = await guardRate(req, { key: "calendar-write", limit: 30, windowMs: 60_000 });
+      if (limited) return limited;
+    }
+
+    // CSRF
+    {
+      const r = await assertSameOrigin(req);
+      if (r) return r;
+      const r2 = assertDoubleSubmit(req);
+      if (r2) return r2;
+    }
 
     const { date, title, location, location_lat, location_lng, emotion, intensity, notes } = await req.json();
 
@@ -55,4 +70,4 @@ export async function POST(req: NextRequest) {
     console.error("Error creating event:", e);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
-}
+}, { credentials: true });

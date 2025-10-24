@@ -1,9 +1,7 @@
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
-import { pipeline, env as xenEnv } from "@xenova/transformers";
 import { franc } from "franc";
-
-// keep wasm conservative on threads in edge-ish envs
-xenEnv.backends.onnx.wasm.numThreads = 1;
 
 // lazy singletons
 let sentimentPipe: any | null = null;
@@ -12,6 +10,9 @@ let toxicPipe: any | null = null;
 
 async function getSentiment() {
   if (!sentimentPipe) {
+    const { pipeline, env: xenEnv } = await import("@xenova/transformers");
+    // keep wasm conservative on threads in edge-ish envs
+    try { xenEnv.backends.onnx.wasm.numThreads = 1; } catch {}
     sentimentPipe = await pipeline(
       "text-classification",
       "Xenova/distilbert-base-uncased-finetuned-sst-2-english"
@@ -22,6 +23,8 @@ async function getSentiment() {
 
 async function getEmotion() {
   if (!emotionPipe) {
+    const { pipeline, env: xenEnv } = await import("@xenova/transformers");
+    try { xenEnv.backends.onnx.wasm.numThreads = 1; } catch {}
     emotionPipe = await pipeline(
       "text-classification",
       "Xenova/joeddav-distilbert-go-emotions"
@@ -32,6 +35,8 @@ async function getEmotion() {
 
 async function getToxic() {
   if (!toxicPipe) {
+    const { pipeline, env: xenEnv } = await import("@xenova/transformers");
+    try { xenEnv.backends.onnx.wasm.numThreads = 1; } catch {}
     toxicPipe = await pipeline(
       "text-classification",
       "Xenova/unitary-toxic-bert"

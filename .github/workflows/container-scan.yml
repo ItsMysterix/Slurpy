@@ -1,0 +1,53 @@
+name: Container Scan
+
+on:
+  pull_request:
+  push:
+    branches: [ main ]
+
+jobs:
+  build-and-scan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build frontend image
+        run: |
+          docker build -f infra/docker/Dockerfile.frontend -t slurpy-frontend:pr .
+
+      - name: Build backend image
+        run: |
+          docker build -f infra/docker/Dockerfile.backend -t slurpy-backend:pr .
+
+      - name: Trivy scan frontend
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          image-ref: slurpy-frontend:pr
+          format: sarif
+          output: trivy-frontend.sarif
+          severity: CRITICAL,HIGH
+          exit-code: 1
+
+      - name: Trivy scan backend
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          image-ref: slurpy-backend:pr
+          format: sarif
+          output: trivy-backend.sarif
+          severity: CRITICAL,HIGH
+          exit-code: 1
+
+      - name: Upload SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-frontend.sarif

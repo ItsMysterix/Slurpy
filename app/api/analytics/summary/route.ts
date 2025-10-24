@@ -4,15 +4,16 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@clerk/nextjs/server";
+import { getAuthOrThrow, UnauthorizedError } from "@/lib/auth-server";
 import { createClient } from "@supabase/supabase-js";
+import { createServerServiceClient } from "@/lib/supabase/server";
+import { logger } from "@/lib/logger";
+import { z } from "@/lib/validate";
+import { guardRate } from "@/lib/guards";
 
 /* -------------------------- Supabase (server) -------------------------- */
 function sb() {
-  const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE; // server-only
-  if (!url || !key) throw new Error("Missing SUPABASE_URL / SUPABASE_SERVICE_ROLE env");
-  return createClient(url, key, { auth: { persistSession: false } });
+  return createServerServiceClient();
 }
 
 /* --------------------------------- types -------------------------------- */
@@ -187,12 +188,21 @@ function generateHeuristicInsights(messages: ChatMessageRow[], sessions: ChatSes
 /* ---------------------------------- GET --------------------------------- */
 export async function GET(req: NextRequest) {
   try {
-    const { userId } = await auth();
-    if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const { userId } = await getAuthOrThrow();
+    // Rate limit analytics queries 30/min/user
+    {
+      const limited = await guardRate(req, { key: "analytics-summary", limit: 30, windowMs: 60_000 });
+      if (limited) return limited;
+    }
 
     const supabase = sb();
     const url = new URL(req.url);
-    const timeframe = url.searchParams.get("timeframe") || "week";
+    const Input = z
+      .object({ timeframe: z.enum(["day", "week", "month", "year"]).default("week") })
+      .strip();
+    const parsed = Input.safeParse(Object.fromEntries(url.searchParams.entries()));
+    if (!parsed.success) return NextResponse.json({ error: "Invalid query" }, { status: 400 });
+    const timeframe = parsed.data.timeframe;
     const debug = url.searchParams.get("debug") === "1";
 
     const { start, end } = getDateRange(timeframe);
@@ -389,6 +399,29 @@ export async function GET(req: NextRequest) {
       __debug?: any;
     } = { currentSession, weeklyTrends, emotionBreakdown, insights };
 
+    // Output contract and caps
+    const Out = z.object({
+      currentSession: z.object({
+        duration: z.string(),
+        messagesExchanged: z.number().int().min(0).max(1_000_000),
+        dominantEmotion: z.string(),
+        emotionIntensity: z.number().min(0).max(1),
+        fruit: z.string().max(8),
+        topics: z.array(z.string().max(64)).max(12),
+      }),
+      weeklyTrends: z.array(
+        z.object({ day: z.string().max(16), mood: z.number().min(1).max(10), sessions: z.number().int().min(0).max(1000), date: z.string() })
+      ).max(366),
+      emotionBreakdown: z.array(
+        z.object({ emotion: z.string().max(32), count: z.number().int().min(0).max(1_000_000), percentage: z.number().min(0).max(100), color: z.string().max(64) })
+      ).max(12),
+      insights: z.array(
+        z.object({ title: z.string().max(200), description: z.string().max(500), icon: z.string().max(64), trend: z.enum(["positive","neutral","negative"]) })
+      ).max(50),
+      __debug: z.any().optional(),
+    });
+    const safe = Out.parse(payload);
+
     if (debug) {
       payload.__debug = {
         timeframe,
@@ -401,9 +434,10 @@ export async function GET(req: NextRequest) {
       };
     }
 
-    return NextResponse.json(payload);
+    return NextResponse.json(safe);
   } catch (e) {
-    console.error("GET /api/analytics/summary error:", e);
+    if (e instanceof UnauthorizedError) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    logger.error("GET /api/analytics/summary error:", e);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }

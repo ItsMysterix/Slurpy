@@ -17,7 +17,7 @@ services:
       - "9001:9001"
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:9001/health || exit 1"]
+      test: ["CMD-SHELL", "curl -f http://localhost:9001/healthz || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -44,7 +44,7 @@ services:
       - "8000:8000"
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/health/healthz || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 5

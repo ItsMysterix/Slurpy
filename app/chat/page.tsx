@@ -13,7 +13,7 @@ import FloatingSuggestionButtons from "@/components/chat/FloatingSuggestions";
 import LiveBubble from "@/components/chat/LiveBubble";
 import DropInRenderer from "@/components/chat/DropInRenderer";
 
-import { useUser } from "@clerk/nextjs";
+import { useUser } from "@/lib/clerk-hooks";
 import { useChatStore } from "@/lib/chat-store";
 import type { ModeId } from "@/lib/persona";
 import type { DropIn as OriginalDropIn, DropInKind } from "@/lib/dropins";

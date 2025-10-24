@@ -3,16 +3,20 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
-import { auth, clerkClient } from "@clerk/nextjs/server";
+import { clerkClient } from "@clerk/nextjs/server";
+import { getAuthOrThrow, UnauthorizedError } from "@/lib/auth-server";
+import { logger } from "@/lib/logger";
+import { deriveRoles, requireSelfOrRole, ForbiddenError } from "@/lib/authz";
 import { createClient } from "@supabase/supabase-js";
+import { createServerServiceClient } from "@/lib/supabase/server";
+import { guardRate } from "@/lib/guards";
+import { withCORS } from "@/lib/cors";
+import { assertSameOrigin, assertDoubleSubmit } from "@/lib/csrf";
 
 /* ------------------------ Supabase helpers ------------------------ */
 
 function sb() {
-  const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE;
-  if (!url || !key) throw new Error("Missing SUPABASE_URL / SUPABASE_SERVICE_ROLE env");
-  return createClient(url, key, { auth: { autoRefreshToken: false, persistSession: false } });
+  return createServerServiceClient();
 }
 
 async function tryDeleteAll(client: ReturnType<typeof sb>, table: string, userId: string) {
@@ -80,10 +84,27 @@ async function deleteQdrantByUser(userId: string) {
 
 /* --------------------------- Handler ------------------------------ */
 
-export async function POST(_req: NextRequest) {
+export const POST = withCORS(async function POST(_req: NextRequest) {
   try {
-    const { userId } = await auth();
-    if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const { userId } = await getAuthOrThrow();
+    const roles = await deriveRoles(userId);
+    try { requireSelfOrRole({ requesterId: userId, ownerId: userId, roles }, "admin"); } catch (e) {
+      return NextResponse.json({ error: "forbidden" }, { status: 403 });
+    }
+
+    // Limit destructive deletes to 3/day/user
+    {
+      const limited = await guardRate(_req, { key: "account-delete", limit: 3, windowMs: 86_400_000 });
+      if (limited) return limited;
+    }
+
+    // CSRF
+    {
+      const r = await assertSameOrigin(_req);
+      if (r) return r;
+      const r2 = assertDoubleSubmit(_req);
+      if (r2) return r2;
+    }
 
     // 1) Purge app data in Supabase
     const supabase = sb();
@@ -121,7 +142,9 @@ for (const t of supabaseTables) {
 
     return NextResponse.json({ ok: true, supabase: sbResults, qdrant });
   } catch (e: any) {
-    console.error("account/delete failed:", e?.message || e);
+    if (e instanceof ForbiddenError) return NextResponse.json({ error: "forbidden" }, { status: 403 });
+    if (e instanceof UnauthorizedError) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    logger.error("account/delete failed:", e?.message || e);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
-}
+}, { credentials: true });

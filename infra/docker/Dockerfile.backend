@@ -1,24 +1,55 @@
-FROM python:3.11-slim
+############################
+# Builder: create slim venv
+############################
+FROM python:3.11-slim AS builder
 
-ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1
+ENV PYTHONDONTWRITEBYTECODE=1 \
+      PYTHONUNBUFFERED=1 \
+      PIP_NO_CACHE_DIR=1
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      gcc python3-dev build-essential \
-    && rm -rf /var/lib/apt/lists/*
+        gcc python3-dev build-essential \
+      && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /app
+WORKDIR /build
 
-# install python deps
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
 RUN python -m pip install --upgrade pip setuptools wheel
 COPY requirements/backend.txt ./requirements.txt
 RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu \
-      torch==2.4.1 torchvision==0.19.1 torchaudio==2.4.1 \
+        torch==2.4.1 torchvision==0.19.1 torchaudio==2.4.1 \
  && pip install --no-cache-dir sentence-transformers==2.7.0 \
  && pip install --no-cache-dir -r requirements.txt
 
-# app code
+############################
+# Runtime: minimal, non-root
+############################
+FROM python:3.11-slim AS runtime
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+      PYTHONUNBUFFERED=1 \
+      PIP_NO_CACHE_DIR=1
+
+# Create unprivileged user
+RUN useradd -u 10001 -m app
+
+WORKDIR /app
+
+# Copy virtualenv
+COPY --from=builder /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Set PYTHONPATH so imports like `from slurpy.domain...` resolve
+ENV PYTHONPATH=/app/backend
+
+# Copy application code
 COPY backend ./backend
 COPY emotion ./emotion
+RUN chown -R app:app /app
+
+USER app
 
 EXPOSE 8000
-CMD ["sh","-c","uvicorn backend.api:app --host 0.0.0.0 --port ${PORT:-8000}"]
+CMD ["sh","-c","uvicorn backend.slurpy.interfaces.http.main:app --host 0.0.0.0 --port ${PORT:-8000}"]

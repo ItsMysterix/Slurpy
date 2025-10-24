@@ -72,6 +72,9 @@ jsonpointer==3.0.0
 PyYAML==6.0.2
 lxml==5.2.1
 loguru==0.7.3
+# Text normalization
+emoji>=2.8.0
+ekphrasis==0.5.4
 # ------------------------
 # DB / ORM
 # ------------------------
