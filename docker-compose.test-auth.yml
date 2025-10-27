@@ -1,0 +1,10 @@
+services:
+  backend:
+    environment:
+      # Enforce real auth for tests
+      DEV_NO_AUTH: "false"
+
+  frontend:
+    environment:
+      # Disable any local/test bypass so real auth is required
+      NEXT_PUBLIC_E2E_BYPASS_AUTH: "false"

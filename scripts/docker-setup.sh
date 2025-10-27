@@ -39,8 +39,6 @@ echo ""
 
 # Check for required variables
 REQUIRED_VARS=(
-    "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY"
-    "CLERK_SECRET_KEY"
     "NEXT_PUBLIC_SUPABASE_URL"
     "NEXT_PUBLIC_SUPABASE_ANON_KEY"
     "SUPABASE_SERVICE_ROLE"
@@ -143,7 +141,7 @@ echo -e "  ${BLUE}Qdrant:${NC}    http://localhost:6333/dashboard"
 echo ""
 echo "Available features:"
 echo ""
-echo "  ✅ Sign up / Sign in (Clerk)"
+echo "  ✅ Sign up / Sign in (Supabase Auth)"
 echo "  ✅ Forgot password flow"
 echo "  ✅ Email verification"
 echo "  ✅ Chat with AI"

@@ -7,7 +7,7 @@ test.describe("Authentication", () => {
     // Assert URL
     await expect(page).toHaveURL(/\/sign-up$/)
 
-    // Clerk usually renders one of these:
+  // Auth form should render email/identifier and a continue button
     const emailInput = page.locator('input[name="emailAddress"], input[type="email"]')
     const continueBtn = page.getByRole("button", { name: /continue/i })
 

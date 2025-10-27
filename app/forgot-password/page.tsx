@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Card, CardContent } from "@/components/ui/card"
-import { useSignIn } from "@clerk/nextjs"
+import { supabase } from "@/lib/supabaseClient"
 
 export const dynamic = "force-dynamic"
 
@@ -25,7 +25,7 @@ function ForgotPasswordInner() {
   const [resendCount, setResendCount] = useState(0)
   const [canResend, setCanResend] = useState(true)
 
-  const { signIn, isLoaded } = useSignIn()
+  // Supabase-driven reset flow: send a password reset link via email
 
   // Prefill email from query string when redirected from sign-in
   useEffect(() => {
@@ -36,21 +36,18 @@ function ForgotPasswordInner() {
 
   const validateEmail = (email: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
 
-  // Send an OTP code via email (matches the /reset-password OTP flow)
-  const sendResetCode = async (identifier: string) => {
-    await signIn!.create({
-      strategy: "reset_password_email_code",
-      identifier,
-    })
+  // Send a password reset link via email
+  const sendResetLink = async (identifier: string) => {
+    const origin = typeof window !== "undefined" ? window.location.origin : process.env.NEXT_PUBLIC_SITE_URL || "";
+    const { error } = await supabase.auth.resetPasswordForEmail(identifier, {
+      redirectTo: `${origin}/reset-password`,
+    });
+    if (error) throw error;
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
 
-    if (!isLoaded) {
-      setError("Authentication service is loading. Please try again.")
-      return
-    }
     if (!email) {
       setError("Please enter your email address")
       return
@@ -64,21 +61,22 @@ function ForgotPasswordInner() {
     setIsSubmitting(true)
 
     try {
-      await sendResetCode(email)
-      // Go directly to the OTP + New Password page
-      router.push(`/reset-password?email=${encodeURIComponent(email)}`)
+  await sendResetLink(email)
+  // Redirect to reset page which will handle the Supabase code exchange
+  router.push(`/reset-password?email=${encodeURIComponent(email)}`)
       // Fallback UI state in case navigation is interrupted
       setIsSubmitted(true)
       setResendCount((prev) => prev + 1)
     } catch (err: any) {
       console.error("Password reset code error:", err)
-      const first = err?.errors?.[0]
-      if (first?.code === "form_identifier_not_found") {
-        setError("No account found with this email address.")
-      } else if (first?.code === "throttled") {
+      const first = (err as any)?.errors?.[0]
+      const msg = first?.message || (err as any)?.message
+      if (String(msg || "").toLowerCase().includes("rate")) {
         setError("Too many attempts. Please wait before trying again.")
+      } else if (String(msg || "").toLowerCase().includes("not")) {
+        setError("No account found with this email address.")
       } else {
-        setError(first?.message || err?.message || "Failed to send reset code. Please try again.")
+        setError(msg || "Failed to send reset link. Please try again.")
       }
     } finally {
       setIsSubmitting(false)
@@ -87,13 +85,13 @@ function ForgotPasswordInner() {
 
   // Optional: if you keep the “Resend” screen here as a fallback
   const handleResend = async () => {
-    if (!canResend || !isLoaded || !email) return
+    if (!canResend || !email) return
 
     setCanResend(false)
     setIsSubmitting(true)
 
     try {
-      await sendResetCode(email)
+  await sendResetLink(email)
       setResendCount((prev) => prev + 1)
       // Re-route to ensure the OTP page always shows
       router.push(`/reset-password?email=${encodeURIComponent(email)}`)
@@ -110,19 +108,7 @@ function ForgotPasswordInner() {
     }
   }
 
-  // Loading state while Clerk initializes
-  if (!isLoaded) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-sand-50 via-sage-50 to-clay-400/10 flex items-center justify-center p-4">
-        <Card className="bg-sand-50/70 backdrop-blur-lg shadow-soft border border-white/20">
-          <CardContent className="p-10 text-center">
-            <Loader2 className="w-8 h-8 animate-spin mx-auto mb-4 text-sage-500" />
-            <p className="text-sage-500 font-sans">Loading authentication...</p>
-          </CardContent>
-        </Card>
-      </div>
-    )
-  }
+  // No auth SDK loading state is required for Supabase reset email
 
   // (Optional) Confirmation fallback if navigation was interrupted
   if (isSubmitted) {
@@ -151,7 +137,7 @@ function ForgotPasswordInner() {
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.6, delay: 0.3 }}
               >
-                Check Your Email
+                Check your email
               </motion.h2>
 
               <motion.div
@@ -160,13 +146,13 @@ function ForgotPasswordInner() {
                 transition={{ duration: 0.6, delay: 0.4 }}
               >
                 <p className="text-sage-500 mb-2 font-sans">
-                  We&apos;ve sent a 6-digit reset code to:
+                  We&apos;ve sent a password reset link to:
                 </p>
                 <p className="text-sage-600 font-medium font-sans mb-6 bg-sage-100 px-4 py-2 rounded-xl">
                   {email}
                 </p>
                 <p className="text-sm text-sage-400 mb-8 font-sans leading-relaxed">
-                  Didn&apos;t get it? You can resend below or go directly to the code page.
+                  Didn&apos;t get it? You can resend below or go directly to the reset page.
                 </p>
               </motion.div>
 
@@ -180,7 +166,7 @@ function ForgotPasswordInner() {
                   className="w-full bg-sage-500 hover:bg-sage-400 text-white rounded-xl py-3 font-sans"
                   onClick={() => router.push(`/reset-password?email=${encodeURIComponent(email)}`)}
                 >
-                  Enter Code
+                  Open reset page
                 </Button>
 
                 <div className="flex gap-2">
@@ -271,7 +257,7 @@ function ForgotPasswordInner() {
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.6, delay: 0.4 }}
             >
-              No worries! Enter your email and we&apos;ll send you a <b>6-digit code</b> to reset your password.
+              No worries! Enter your email and we&apos;ll send you a secure reset link to change your password.
             </motion.p>
           </div>
 

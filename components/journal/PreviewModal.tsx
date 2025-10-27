@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Calendar, Eye, X, Edit3 } from "lucide-react";
 import { motion } from "framer-motion";
-import type { JournalEntry } from "./EntryCard";
+import type { JournalEntry } from "./types";
 
 export default function PreviewModal({
   entry,
@@ -87,7 +87,7 @@ export default function PreviewModal({
               <div className="border-t border-gray-200 dark:border-gray-700 pt-6">
                 <h3 className="text-lg font-display font-medium text-clay-700 dark:text-sand-200 mb-3">Tags</h3>
                 <div className="flex flex-wrap gap-2">
-                  {entry.tags.map((tag) => (
+                  {entry.tags.map((tag: string) => (
                     <span key={tag} className="inline-flex items-center rounded bg-sage-100 dark:bg-gray-800 text-clay-600 dark:text-sand-300 text-sm px-3 py-1">
                       #{tag}
                     </span>

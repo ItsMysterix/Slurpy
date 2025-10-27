@@ -4,7 +4,7 @@
 import * as React from "react";
 import { motion } from "framer-motion";
 import { User, Bot } from "lucide-react";
-import { useUser } from "@clerk/nextjs";
+import { useUser } from "@/lib/auth-hooks";
 import type { Message } from "@/lib/chat-store";
 import { PERSONA_MODES } from "@/lib/persona";
 import { CopyButton, TTSButton, STTButton } from "@/components/chat/MessageActions"; // optional if you added these

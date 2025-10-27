@@ -32,11 +32,7 @@ class Settings(BaseSettings):
     SUPABASE_ANON_KEY: str | None = None
     SUPABASE_SCHEMA: str = Field(default=os.getenv("SUPABASE_SCHEMA", "public"))
 
-    # Clerk
-    CLERK_JWKS_URL: AnyHttpUrl | None = None
-    CLERK_JWT_ALG: str = Field(default=os.getenv("CLERK_JWT_ALG", "RS256"))
-    CLERK_JWT_LEEWAY: int = Field(default=int(os.getenv("CLERK_JWT_LEEWAY", "60")))
-    CLERK_AUDIENCE: str | None = Field(default=os.getenv("CLERK_AUDIENCE"))
+    
 
     class Config:
         env_file = (".env.backend", ".env.local", ".env")

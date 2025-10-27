@@ -101,7 +101,7 @@ fly deploy
   "timestamp": "2025-10-24T12:00:00Z",
   "version": "0.1.0",
   "services": {
-    "clerk": "connected",
+    "auth": "connected",
     "supabase": "connected",
     "backend": "connected"
   }

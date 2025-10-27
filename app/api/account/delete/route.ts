@@ -3,7 +3,6 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
-import { clerkClient } from "@clerk/nextjs/server";
 import { getAuthOrThrow, UnauthorizedError } from "@/lib/auth-server";
 import { logger } from "@/lib/logger";
 import { deriveRoles, requireSelfOrRole, ForbiddenError } from "@/lib/authz";
@@ -136,11 +135,10 @@ for (const t of supabaseTables) {
     // 2) Purge vectors in Qdrant (if configured)
     const qdrant = await deleteQdrantByUser(userId);
 
-    // 3) Delete the Clerk user (server-side)
-    const client = await clerkClient();
-    await client.users.deleteUser(userId);
+  // 3) Optionally deactivate auth user in your provider here.
+  // NOTE: Removed legacy provider deletion. Implement deletion in Supabase/Auth if desired.
 
-    return NextResponse.json({ ok: true, supabase: sbResults, qdrant });
+  return NextResponse.json({ ok: true, supabase: sbResults, qdrant });
   } catch (e: any) {
     if (e instanceof ForbiddenError) return NextResponse.json({ error: "forbidden" }, { status: 403 });
     if (e instanceof UnauthorizedError) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

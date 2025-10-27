@@ -10,30 +10,37 @@ type RagResponse = {
 export async function askRag(
   text: string,
   sessionId: string | undefined,
-  clerkJwt: string,
+  authJwt: string,
   tenantId?: string,
 ): Promise<RagResponse> {
-  const payload: Record<string, unknown> = { text };
-  if (sessionId) payload.session_id = sessionId;
+  // Use BACKEND_URL for server-side calls from Next.js API routes
+  // This is set via Fly.io environment variables
+  const backendUrl = process.env.BACKEND_URL || "http://127.0.0.1:8000";
+  
+  // Backend expects query params, not JSON body for /rag/rag/chat endpoint
+  const params = new URLSearchParams({
+    msg: text,
+    mode: "default",
+  });
+  if (sessionId) params.append("session_id", sessionId);
+  
+  const url = `${backendUrl}/rag/rag/chat?${params.toString()}`;
 
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
-    Authorization: `Bearer ${clerkJwt}`,
+    Authorization: `Bearer ${authJwt}`,
   };
 
   // Optional internal key
   const apiKey = process.env.NEXT_PUBLIC_SLURPY_API_KEY;
   if (apiKey) headers["X-API-KEY"] = apiKey;
 
-  const url = process.env.NEXT_PUBLIC_RAG_API ?? "http://127.0.0.1:8000/chat";
-
   if (tenantId) headers["X-Tenant-Id"] = tenantId;
-  console.log("[rag] POST →", url, { ...payload, tenant_id: tenantId ? "<set>" : undefined });
+  console.log("[rag] GET →", url, { tenant_id: tenantId ? "<set>" : undefined });
 
   const res = await fetch(url, {
-    method: "POST",
+    method: "GET",
     headers,
-    body: JSON.stringify(payload),
   });
 
   let maybeJson: any = null;
@@ -51,5 +58,12 @@ export async function askRag(
     );
   }
 
-  return maybeJson as RagResponse;
+  // Map backend response format to our expected format
+  return {
+    success: maybeJson?.reply ? true : false,
+    session_id: sessionId || "",
+    message: maybeJson?.reply || maybeJson?.message || "",
+    emotion: maybeJson?.emotion || "neutral",
+    fruit: maybeJson?.fruit || "",
+  };
 }

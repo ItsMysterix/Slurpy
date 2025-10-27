@@ -5,7 +5,7 @@ import os
 from typing import Optional, Dict, Any, Annotated
 
 from fastapi import Header, HTTPException
-from slurpy.adapters.clerk_client import verify_clerk_token
+from slurpy.adapters.supabase_auth import verify_supabase_token, SupabaseAuthError
 
 # NOTE: Put *no* default inside Header(); use alias to bind "Authorization".
 # The default (None) lives on the function parameter.
@@ -17,7 +17,7 @@ DEV_BYPASS_AUTH = os.getenv("DEV_BYPASS_AUTH", "").lower() in {"1", "true", "yes
 
 def _claims_to_user(claims: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Normalize Clerk claims into a compact user dict the app expects.
+    Normalize auth claims into a compact user dict the app expects.
     """
     return {"id": claims.get("sub"), "claims": claims}
 
@@ -45,10 +45,10 @@ def get_current_user(authorization: AuthHeader = None) -> Dict[str, Any]:
 
     token = _extract_bearer(authorization)
     try:
-        claims = verify_clerk_token(token)
-    except Exception as e:
+        claims = verify_supabase_token(token)
+    except SupabaseAuthError:
         # Keep errors terse; avoid leaking internals
-        raise HTTPException(status_code=401, detail=f"Invalid token")
+        raise HTTPException(status_code=401, detail="Invalid token")
     return _claims_to_user(claims)
 
 
@@ -66,7 +66,7 @@ def get_optional_user(authorization: AuthHeader = None) -> Optional[Dict[str, An
         return None
     try:
         token = _extract_bearer(authorization)
-        claims = verify_clerk_token(token)
+        claims = verify_supabase_token(token)
         return _claims_to_user(claims)
     except Exception:
         return None

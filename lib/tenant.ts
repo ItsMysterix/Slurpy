@@ -1,6 +1,6 @@
 // lib/tenant.ts
 import type { Role } from "@/lib/authz";
-import { createServerSupabase } from "@/lib/supabase/server";
+import { createServerServiceClient } from "@/lib/supabase/server";
 import { ForbiddenError } from "@/lib/authz";
 
 export async function assertProjectAccess(
@@ -9,7 +9,7 @@ export async function assertProjectAccess(
 ) {
   if (ctx.roles.includes("admin") || ctx.roles.includes("ops")) return;
   try {
-    const sb = createServerSupabase();
+  const sb = createServerServiceClient();
     const { data, error } = await sb
       .from("users_projects")
       .select("project_id")

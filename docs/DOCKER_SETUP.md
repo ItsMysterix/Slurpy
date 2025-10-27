@@ -1,12 +1,11 @@
 # Docker Production Setup Guide
 
-This guide will help you run Slurpy in Docker with full Clerk authentication, forgot password, and all features working correctly.
+This guide will help you run Slurpy in Docker with Supabase authentication, forgot password, and all features working correctly.
 
 ## Prerequisites
 
 1. **Docker & Docker Compose** installed
 2. **Accounts setup:**
-   - Clerk account (https://dashboard.clerk.com)
    - Supabase account (https://supabase.com)
    - OpenAI API key (https://platform.openai.com)
 
@@ -27,11 +26,7 @@ nano .env  # or use your favorite editor
 Update these in your `.env` file:
 
 ```bash
-# Clerk (REQUIRED for authentication)
-NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_xxxxx  # From Clerk Dashboard
-CLERK_SECRET_KEY=sk_test_xxxxx                   # From Clerk Dashboard
-
-# Supabase (REQUIRED for database)
+# Supabase (REQUIRED for auth + database)
 NEXT_PUBLIC_SUPABASE_URL=https://xxxxx.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJxxxx
 SUPABASE_SERVICE_ROLE=eyJxxxx
@@ -77,7 +72,7 @@ Once the script completes, open your browser to:
 
 ```
 ┌─────────────────┐
-│   Frontend      │ :3000 (Next.js + Clerk)
+│   Frontend      │ :3000 (Next.js + Supabase Auth)
 │  (slurpy-web)   │
 └────────┬────────┘
          │
@@ -107,52 +102,19 @@ The docker-compose.yml is configured for **production-ready** mode:
 - ✅ Non-root users
 - ✅ Health checks configured
 
-### Clerk Configuration
-
-Clerk settings in docker-compose.yml:
-
-```yaml
-# Build-time (needed for middleware compilation)
-args:
-  NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY}
-  CLERK_SECRET_KEY: ${CLERK_SECRET_KEY}
-
-# Runtime (needed for SSR and API routes)
-environment:
-  NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY}
-  CLERK_SECRET_KEY: ${CLERK_SECRET_KEY}
-  NEXT_PUBLIC_CLERK_SIGN_IN_URL: /sign-in
-  NEXT_PUBLIC_CLERK_SIGN_UP_URL: /sign-up
-  NEXT_PUBLIC_CLERK_AFTER_SIGN_IN_URL: /chat
-  NEXT_PUBLIC_CLERK_AFTER_SIGN_UP_URL: /chat
-```
+<!-- Auth provider configuration notes removed -->
 
 ## Troubleshooting
 
-### Clerk errors in logs
-
-**Problem**: `CLERK_SECRET_KEY is not defined`
-
-**Solution**: Make sure you've set all Clerk variables in `.env`:
-```bash
-NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_...
-CLERK_SECRET_KEY=sk_test_...
-```
-
-Then rebuild:
-```bash
-docker compose down
-docker compose build frontend
-docker compose up -d
-```
+<!-- Provider-specific troubleshooting notes removed -->
 
 ### Password reset not working
 
 **Problem**: "Failed to send reset code"
 
-**Solution**: 
-1. Check Clerk dashboard → Email templates are enabled
-2. Verify email is configured in Clerk settings
+**Solution**:
+1. Check Supabase Auth settings → Email confirmations enabled
+2. Confirm your SMTP/email provider is configured for Supabase (if applicable)
 3. Check frontend logs: `docker compose logs frontend`
 
 ### Backend shows "Unauthorized"
@@ -161,7 +123,7 @@ docker compose up -d
 
 **Solution**:
 1. Ensure `DEV_NO_AUTH=false` in docker-compose.yml
-2. Verify `CLERK_SECRET_KEY` is set in backend environment
+2. Make sure requests include a valid `Authorization: Bearer <user_token>` header (Supabase session token)
 3. Check backend logs: `docker compose logs backend`
 
 ### Database connection errors
@@ -255,7 +217,7 @@ For deploying to Fly.io or other platforms, see:
    - Go to http://localhost:3000
    - Click "Sign Up"
    - Enter email and password
-   - Verify email (check Clerk dashboard for test mode)
+   - Verify email via the link sent by Supabase
 
 2. **Sign In**
    - Go to http://localhost:3000/sign-in

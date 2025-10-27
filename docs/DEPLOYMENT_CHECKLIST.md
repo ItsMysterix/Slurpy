@@ -12,10 +12,9 @@ Use this checklist before deploying to production. Check off each item as you co
 - [ ] **Secrets not in code** - All sensitive values in environment variables
 
 ### Authentication
-- [ ] **Clerk production keys** - Using `pk_live_*` and `sk_live_*` (not test keys)
-- [ ] **Clerk webhook secret** - Set up webhook endpoints in Clerk dashboard
-- [ ] **Session security** - Review Clerk session settings (timeout, MFA options)
-- [ ] **Email verification** - Enabled in Clerk settings
+- [ ] **Supabase auth configured** - Project URL and keys set; email confirmation settings as desired
+- [ ] **Session security** - Review auth session settings (timeout, refresh, MFA if enabled)
+- [ ] **Email verification** - Enabled in Supabase Auth settings
 
 ### Database
 - [ ] **Supabase production** - Using production project (not development)
@@ -27,7 +26,6 @@ Use this checklist before deploying to production. Check off each item as you co
 ### Secrets Management
 - [ ] **All secrets in Fly.io** - No secrets in code or docker-compose.yml
   ```bash
-  fly secrets set CLERK_SECRET_KEY=sk_live_xxx --app slurpy-frontend
   fly secrets set SUPABASE_SERVICE_ROLE_KEY=eyJxxx --app slurpy-backend
   fly secrets set OPENAI_API_KEY=sk-xxx --app slurpy-mcp
   ```
@@ -112,7 +110,7 @@ Use this checklist before deploying to production. Check off each item as you co
 ### Service Plans
 - [ ] **Fly.io plan** - Free tier sufficient? Or upgrade to Launch/Scale?
 - [ ] **Supabase plan** - Free tier sufficient? (500MB DB, 1GB bandwidth)
-- [ ] **Clerk plan** - Free tier (10k MAU) or Pro?
+-- [ ] **Auth plan** - Supabase plan sufficient for MAU and auth email volume?
 - [ ] **OpenAI budget** - Set usage limits in OpenAI dashboard
 - [ ] **Sentry plan** - Free tier (5k events) or Team plan?
 
@@ -275,7 +273,6 @@ Before you click "Deploy to Production":
 ### Get Help
 - **Fly.io**: community.fly.io
 - **Supabase**: Discord or support ticket
-- **Clerk**: Discord or email support
 - **Sentry**: docs.sentry.io
 
 ---

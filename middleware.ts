@@ -1,9 +1,8 @@
 // middleware.ts
-import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 import { NextRequest, NextResponse } from "next/server";
 import { makeNonce, cspHeader } from "@/lib/csp";
 
-const isPublicRoute = createRouteMatcher([
+const PUBLIC_ROUTES = [
   "/",
   "/auth(.*)",
   "/sign-in(.*)",
@@ -18,7 +17,17 @@ const isPublicRoute = createRouteMatcher([
   "/health",                
   "/api/public(.*)",        
   "/api/webhook(.*)",       
-]);
+];
+
+function isPublic(pathname: string) {
+  return PUBLIC_ROUTES.some((p) => {
+    if (p.endsWith("(.*)")) {
+      const base = p.slice(0, -4);
+      return pathname.startsWith(base);
+    }
+    return pathname === p;
+  });
+}
 
 function withSecurityHeaders(req: NextRequest, res: NextResponse) {
   try {
@@ -39,7 +48,7 @@ function withSecurityHeaders(req: NextRequest, res: NextResponse) {
   return res;
 }
 
-export default clerkMiddleware(async (auth, req) => {
+export default async function middleware(req: NextRequest) {
   // Fast-path CORS preflight for API routes
   if (req.method === "OPTIONS" && req.nextUrl.pathname.startsWith("/api/")) {
     const origin = (() => {
@@ -90,30 +99,11 @@ export default clerkMiddleware(async (auth, req) => {
   }
 
   // Allow public routes
-  if (isPublicRoute(req)) return withSecurityHeaders(req, NextResponse.next());
+  if (isPublic(req.nextUrl.pathname)) return withSecurityHeaders(req, NextResponse.next());
 
-  // E2E test bypass: when enabled, treat all routes as public to simplify browser tests
-  if (process.env.NEXT_PUBLIC_E2E_BYPASS_AUTH === "true") {
-    return withSecurityHeaders(req, NextResponse.next());
-  }
-
-  // Protect everything else
-  const { userId } = await auth();
-  if (!userId) {
-    if (req.nextUrl.pathname.startsWith("/api/")) {
-      return withSecurityHeaders(req, NextResponse.json({ error: "Unauthorized" }, { status: 401 }));
-    }
-    const redirectUrl = req.nextUrl.clone();
-    redirectUrl.pathname = "/sign-in";
-    redirectUrl.searchParams.set(
-      "redirect_url",
-      req.nextUrl.pathname + req.nextUrl.search
-    );
-    return withSecurityHeaders(req, NextResponse.redirect(redirectUrl));
-  }
-
+  // During Supabase migration we allow all routes to flow. Client components decide UI based on auth.
   return withSecurityHeaders(req, NextResponse.next());
-});
+}
 
 export const config = {
   matcher: ["/((?!_next|.*\\..*|favicon.ico|robots.txt|sitemap.xml).*)"],

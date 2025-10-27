@@ -4,7 +4,7 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@clerk/nextjs/server";
+import { getAuthOrThrow } from "@/lib/auth-server";
 import { cookies, headers } from "next/headers";
 
 const BACKEND_URL = (process.env.BACKEND_URL ?? "http://localhost:8000").replace(/\/$/, "");
@@ -15,31 +15,26 @@ function bad(status: number, error: string) {
 
 export async function POST(req: NextRequest) {
   try {
-    // user must be signed in
-    const { userId, getToken } = await auth();
-    if (!userId) return bad(401, "Unauthorized");
+  // user must be signed in
+  const { userId, bearer: initialBearer } = await getAuthOrThrow();
+  if (!userId) return bad(401, "Unauthorized");
 
     // grab body as raw text (pass-through JSON)
     const bodyText = await req.text();
     if (!bodyText) return bad(400, "Empty body");
 
-    // get Clerk JWT (prefer the 'backend' template)
-    let clerkJwt = "";
-    try {
-      clerkJwt = (await getToken({ template: "backend" })) || "";
-    } catch {
-      /* fallback below */
-    }
-    if (!clerkJwt) {
+    // Resolve bearer
+    let bearer = initialBearer || "";
+    if (!bearer) {
       const hdrs = await headers();
       const authz = hdrs.get("authorization") || hdrs.get("Authorization");
-      if (authz?.startsWith("Bearer ")) clerkJwt = authz.slice(7).trim();
+      if (authz?.startsWith("Bearer ")) bearer = authz.slice(7).trim();
     }
-    if (!clerkJwt) {
+    if (!bearer) {
       const jar = await cookies();
-      clerkJwt = jar.get("__session")?.value ?? "";
+      bearer = jar.get("__session")?.value ?? "";
     }
-    if (!clerkJwt) return bad(401, "Missing Clerk session token");
+    if (!bearer) return bad(401, "Missing auth session token");
 
     // propagate client abort to upstream
     const controller = new AbortController();
@@ -50,7 +45,7 @@ export async function POST(req: NextRequest) {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${clerkJwt}`,
+  Authorization: `Bearer ${bearer}`,
       },
       body: bodyText,
       signal: controller.signal,

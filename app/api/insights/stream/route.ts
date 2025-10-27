@@ -1,6 +1,6 @@
 // app/api/insights/stream/route.ts
 import { NextRequest } from "next/server";
-import { auth } from "@clerk/nextjs/server";
+import { getAuthOrThrow } from "@/lib/auth-server";
 import { guardRate } from "@/lib/guards";
 import { createLimiter } from "@/lib/rate-limit";
 import { sseBus, InsightsUpdate } from "@/lib/sse-bus";
@@ -19,7 +19,7 @@ function toSSE(event: string, data: unknown) {
 }
 
 export const GET = withCORS(async function GET(req: NextRequest) {
-  const { userId } = await auth();
+  const { userId } = await getAuthOrThrow();
   if (!userId) return new Response("Unauthorized", { status: 401 });
 
   // Connection starts limited to 20/min/user

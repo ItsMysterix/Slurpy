@@ -13,8 +13,9 @@ import FloatingSuggestionButtons from "@/components/chat/FloatingSuggestions";
 import LiveBubble from "@/components/chat/LiveBubble";
 import DropInRenderer from "@/components/chat/DropInRenderer";
 
-import { useUser } from "@/lib/clerk-hooks";
-import { useChatStore } from "@/lib/chat-store";
+import { useUser } from "@/lib/auth-hooks";
+import { supabase } from "@/lib/supabaseClient";
+import { useChatStore, type Message as ChatMessage } from "@/lib/chat-store";
 import type { ModeId } from "@/lib/persona";
 import type { DropIn as OriginalDropIn, DropInKind } from "@/lib/dropins";
 
@@ -29,20 +30,92 @@ function cleanLLMText(t: string) {
   return out;
 }
 
-async function sendToSlurpy(text: string, sessionId?: string | null, modes: ModeId[] = []) {
+// Streaming chat to reduce latency: uses NDJSON frames from /api/proxy-chat-stream
+async function streamFromSlurpy(
+  text: string,
+  sessionId?: string | null,
+  modes: ModeId[] = [],
+  onDelta?: (delta: string) => void,
+): Promise<{ session_id: string; message: string; emotion?: string; modes: ModeId[] }> {
   const roleplayPersona = modes[0] ?? null;
-  const res = await fetch("/api/proxy-chat", {
+  // Attach Supabase access token so Next API can forward it to backend
+  let bearer = "";
+  try {
+    const { data } = await supabase.auth.getSession();
+    bearer = data.session?.access_token || "";
+  } catch {}
+  const res = await fetch("/api/proxy-chat-stream", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text, session_id: sessionId, modes, roleplay: roleplayPersona, therapeutic_context: null }),
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/x-ndjson",
+      ...(bearer ? { Authorization: `Bearer ${bearer}` } : {}),
+      ...(typeof document !== "undefined"
+        ? (() => {
+            const m = /(?:^|;\s*)slurpy\.csrf=([^;]+)/i.exec(document.cookie || "");
+            const t = m ? decodeURIComponent(m[1]) : "";
+            return t ? { "x-csrf": t } as Record<string, string> : {};
+          })()
+        : {}),
+    },
+    body: JSON.stringify({ text, session_id: sessionId, mode: roleplayPersona ?? undefined }),
   });
-  if (!res.ok) throw new Error(`Backend ${res.status}`);
-  const data = await res.json();
+  if (!res.ok || !res.body) throw new Error(`Backend ${res.status}`);
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let assembled = "";
+  // Fallback emotion if backend emits one later; optional
+  let emotion: string | undefined;
+
+  try {
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value) {
+        buffer += decoder.decode(value, { stream: true });
+        let idx = buffer.indexOf("\n");
+        while (idx !== -1) {
+          const line = buffer.slice(0, idx);
+          buffer = buffer.slice(idx + 1);
+          if (line.trim()) {
+            try {
+              const evt = JSON.parse(line);
+              if (evt?.type === "delta") {
+                const d = String(evt.delta || "");
+                assembled += d;
+                onDelta?.(assembled);
+              } else if (evt?.type === "start") {
+                // If upstream includes emotions array, pick top label as coarse emotion
+                const top = Array.isArray(evt.emotions) && evt.emotions[0] && typeof evt.emotions[0].label === "string"
+                  ? String(evt.emotions[0].label)
+                  : undefined;
+                if (top) emotion = top;
+              } else if (evt?.type === "error") {
+                throw new Error("stream_error");
+              } else if (evt?.type === "done") {
+                idx = -1; // break outer while after flushing
+                break;
+              }
+            } catch {
+              // ignore malformed JSON lines
+            }
+          }
+          idx = buffer.indexOf("\n");
+        }
+      }
+    }
+  } finally {
+    try { reader.releaseLock(); } catch {}
+  }
+
+  const finalText = assembled.trim() || "I'm here to help!";
   return {
-    session_id: data.session_id || sessionId || Date.now().toString(),
-    message: data.message || data.response || "I'm here to help!",
-    emotion: data.emotion || "supportive",
-    fruit: data.fruit || "🍓",
+    session_id: sessionId || Date.now().toString(),
+    message: finalText,
+    emotion,
     modes: modes as ModeId[],
   };
 }
@@ -158,15 +231,15 @@ export default function ChatPage() {
   const [cooldowns, setCooldowns] = React.useState<Cooldowns>({});
 
   // store
-  const messages = useChatStore((s) => s.messages);
-  const addMessage = useChatStore((s) => s.addMessage);
-  const sessionId = useChatStore((s) => s.sessionId);
-  const setSessionId = useChatStore((s) => s.setSessionId);
-  const currentModes = useChatStore((s) => s.currentModes);
-  const setCurrentModes = useChatStore((s) => s.setCurrentModes);
-  const hasStartedChat = useChatStore((s) => s.hasStartedChat);
-  const setHasStartedChat = useChatStore((s) => s.setHasStartedChat);
-  const resetForUser = useChatStore((s) => s.resetForUser);
+  const messages = useChatStore((s: any) => s.messages);
+  const addMessage = useChatStore((s: any) => s.addMessage);
+  const sessionId = useChatStore((s: any) => s.sessionId);
+  const setSessionId = useChatStore((s: any) => s.setSessionId);
+  const currentModes = useChatStore((s: any) => s.currentModes);
+  const setCurrentModes = useChatStore((s: any) => s.setCurrentModes);
+  const hasStartedChat = useChatStore((s: any) => s.hasStartedChat);
+  const setHasStartedChat = useChatStore((s: any) => s.setHasStartedChat);
+  const resetForUser = useChatStore((s: any) => s.resetForUser);
 
   const endRef = React.useRef<HTMLDivElement>(null);
   React.useEffect(() => {
@@ -183,40 +256,28 @@ export default function ChatPage() {
     if (!sessionId) return;
     const handler = () => {
       const hints = messages
-        .filter((m) => m.sender !== "user" && m.emotion)
+        .filter((m: ChatMessage) => m.sender !== "user" && !!m.emotion)
         .slice(-3)
-        .map((m) => ({ label: m.emotion as string }));
+        .map((m: ChatMessage) => ({ label: m.emotion as string }));
       finalizeSession(sessionId, { lastEmotions: hints });
     };
     window.addEventListener("beforeunload", handler);
     return () => window.removeEventListener("beforeunload", handler);
   }, [sessionId, messages]);
 
-  // typewriter then commit
-  const typewriterCommit = (finalText: string, meta: { emotion?: string; modes?: ModeId[] }) =>
-    new Promise<void>((resolve) => {
-      const text = cleanLLMText(finalText);
-      setLiveText("");
-      let i = 0;
-      const tick = () => {
-        i += Math.max(1, Math.floor(text.length / 80));
-        setLiveText(text.slice(0, i));
-        if (i < text.length) setTimeout(tick, 18);
-        else {
-          addMessage({
-            id: `${Date.now()}-${Math.random()}`,
-            content: text,
-            sender: "slurpy",
-            timestamp: new Date().toISOString(),
-            emotion: meta.emotion,
-            modes: meta.modes,
-          });
-          setLiveText(null);
-          resolve();
-        }
-      };
-      tick();
+  // Commit streamed text into the transcript
+  function commitStreamedText(finalText: string, meta: { emotion?: string; modes?: ModeId[] }) {
+    const text = cleanLLMText(finalText);
+    addMessage({
+      id: `${Date.now()}-${Math.random()}`,
+      content: text,
+      sender: "slurpy",
+      timestamp: new Date().toISOString(),
+      emotion: meta.emotion,
+      modes: meta.modes,
     });
+    setLiveText(null);
+  }
 
   async function persistMessage(opts: {
     sessionId: string;
@@ -227,9 +288,14 @@ export default function ChatPage() {
     topics?: string[];
   }) {
     try {
+      let bearer = "";
+      try {
+        const { data } = await supabase.auth.getSession();
+        bearer = data.session?.access_token || "";
+      } catch {}
       await fetch("/api/insights", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...(bearer ? { Authorization: `Bearer ${bearer}` } : {}) },
         body: JSON.stringify({
           sessionId: opts.sessionId,
           message: opts.message,
@@ -251,14 +317,15 @@ export default function ChatPage() {
     void persistMessage({ sessionId: sid, message: textToSend, role: "user" });
 
     try {
-      const data = await sendToSlurpy(textToSend, sid, currentModes);
-      await typewriterCommit(data.message, { emotion: data.emotion, modes: data.modes as ModeId[] });
-      void persistMessage({
-        sessionId: sid,
-        message: data.message,
-        role: "assistant",
-        emotion: data.emotion ?? null,
-      });
+      // Live stream render — keep spinner until first token arrives
+      const data = await streamFromSlurpy(
+        textToSend,
+        sid,
+        currentModes,
+        (assembled) => setLiveText(cleanLLMText(assembled)),
+      );
+      commitStreamedText(data.message, { emotion: data.emotion, modes: data.modes as ModeId[] });
+      void persistMessage({ sessionId: sid, message: data.message, role: "assistant", emotion: data.emotion ?? null });
     } catch {
       addMessage({
         id: `${Date.now()}-${Math.random()}`,
@@ -366,7 +433,15 @@ export default function ChatPage() {
               {!hasStartedChat ? (
                 <div className="max-w-4xl mx-auto text-center h-full grid place-content-center">
                   <h1 className="text-5xl font-display font-light bg-gradient-to-r from-slate-600 via-zinc-600 to-stone-600 dark:from-slate-400 dark:via-zinc-400 dark:to-stone-400 bg-clip-text text-transparent mb-2">
-                    Hello{user?.firstName ? `, ${user.firstName}` : ""}
+                    {(() => {
+                      const m: any = (user?.user_metadata as any) || {};
+                      const username = m?.username || m?.user_name;
+                      const full = m?.name || m?.full_name;
+                      const gn = m?.given_name, fn = m?.family_name;
+                      const email = user?.email;
+                      const name = username || full || [gn, fn].filter(Boolean).join(" ") || (email ? email.split("@")[0] : "");
+                      return `Hello${name ? `, ${name}` : ""}`;
+                    })()}
                   </h1>
                   <p className="text-xl text-slate-600 dark:text-slate-300 font-light">
                     I&apos;m Slurpy, your mindful AI companion
@@ -382,7 +457,7 @@ export default function ChatPage() {
                 </div>
               ) : (
                 <div className="max-w-4xl mx-auto py-6">
-                  {messages.map((m) => (
+                  {messages.map((m: ChatMessage) => (
                     <MessageBubble key={m.id} message={m} />
                   ))}
 

@@ -230,7 +230,7 @@ def plot_session_depth(df):
 # ---------- Main ----------
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--user", help="Clerk userId to filter (optional)")
+    parser.add_argument("--user", help="User ID to filter (optional)")
     parser.add_argument("--days", type=int, default=30)
     args = parser.parse_args()
 

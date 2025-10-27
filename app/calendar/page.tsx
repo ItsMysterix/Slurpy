@@ -1,8 +1,9 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { useAuth } from "@clerk/nextjs"
-import { toast } from "sonner"
+import { useAuth } from "@/lib/auth-hooks"
+import { toast } from "@/hooks/use-toast"
+import { supabase } from "@/lib/supabaseClient"
 
 import SlideDrawer from "@/components/slide-drawer"
 import CalendarHeader from "@/components/calendar/CalendarHeader"
@@ -17,7 +18,26 @@ import {
   CalendarData,
   CalendarStats,
   formatDateKey,
+  type DailyMoodData,
+  type JournalEntry,
+  type ChatSession,
 } from "@/lib/calendar-types"
+
+// RightSidePanel expects events with a required `title: string`.
+// Define a local shape that satisfies its structural type.
+type PanelDayData = {
+  mood?: DailyMoodData;
+  journals?: JournalEntry[];
+  chatSessions?: ChatSession[];
+  events?: Array<{
+    id: string;
+    title: string;
+    location?: string;
+    emotion?: string;
+    intensity?: number;
+    notes?: string | null;
+  }>;
+};
 
 export default function CalendarPage() {
   const [currentDate, setCurrentDate] = useState(() => new Date())
@@ -51,9 +71,15 @@ export default function CalendarPage() {
     if (!isSignedIn) return
     setIsLoading(true)
     try {
+      let bearer = "";
+      try {
+        const { data } = await supabase.auth.getSession();
+        bearer = data.session?.access_token || "";
+      } catch {}
       // API expects 0-based month — passing currentMonth is correct
       const res = await fetch(`/api/calendar?year=${currentYear}&month=${currentMonth}`, {
         cache: "no-store",
+        headers: { ...(bearer ? { Authorization: `Bearer ${bearer}` } : {}) },
       })
       if (!res.ok) {
         const j = await res.json().catch(() => ({}))
@@ -69,7 +95,7 @@ export default function CalendarPage() {
         emotionDistribution: {},
       })
     } catch (e) {
-      toast.error("Failed to load calendar data")
+      toast({ title: "Failed to load calendar data", variant: "destructive" })
       console.error(e)
     } finally {
       setIsLoading(false)
@@ -158,13 +184,28 @@ export default function CalendarPage() {
         selectedDate={selectedDate}
         dayData={
           selectedDate
-            ? calendarData[
-                formatDateKey(
-                  selectedDate.getFullYear(),
-                  selectedDate.getMonth(),
-                  selectedDate.getDate()
-                )
-              ] || null
+            ? (() : PanelDayData | null => {
+                const data =
+                  calendarData[
+                    formatDateKey(
+                      selectedDate.getFullYear(),
+                      selectedDate.getMonth(),
+                      selectedDate.getDate()
+                    )
+                  ] || null
+                if (data && data.events) {
+                  return {
+                    ...data,
+                    events: data.events
+                      .filter((e): e is typeof e & { title: string } => typeof e.title === "string")
+                      .map(e => ({
+                        ...e,
+                        title: e.title,
+                      })),
+                  } as PanelDayData
+                }
+                return data as PanelDayData
+              })()
             : null
         }
         onDataUpdate={fetchCalendarData}

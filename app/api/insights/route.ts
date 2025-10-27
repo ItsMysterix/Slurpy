@@ -4,7 +4,7 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@clerk/nextjs/server";
+import { getAuthOrThrow } from "@/lib/auth-server";
 import { createClient } from "@supabase/supabase-js";
 import { notifyInsightsUpdate } from "@/lib/sse-bus";
 
@@ -137,7 +137,7 @@ export async function POST(req: NextRequest) {
     const secret = process.env.SLURPY_API_KEY;
     const bypass = Boolean(headerKey && secret && headerKey === secret);
 
-    const { userId: clerkUserId } = await auth();
+  const { userId } = await getAuthOrThrow();
     const body = await req.json().catch(() => ({}));
 
     const sessionId: string = body?.sessionId;
@@ -148,7 +148,7 @@ export async function POST(req: NextRequest) {
     const topics: string[] = parseTopics(body?.topics);
 
     const effectiveUserId: string =
-      bypass ? (body?.userId || "") : (clerkUserId || body?.userId || "");
+      bypass ? (body?.userId || "") : (userId || body?.userId || "");
 
     if (!effectiveUserId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     if (!sessionId || !message) return NextResponse.json({ error: "Missing sessionId or message" }, { status: 400 });
@@ -200,11 +200,11 @@ export async function GET(req: NextRequest) {
     const secret = process.env.SLURPY_API_KEY;
     const bypass = Boolean(headerKey && secret && headerKey === secret);
 
-    const { userId: clerkUserId } = await auth();
+  const { userId } = await getAuthOrThrow();
     const url = new URL(req.url);
     const timeframe = url.searchParams.get("timeframe") || "week";
 
-    const effectiveUserId = bypass ? (url.searchParams.get("userId") || "") : (clerkUserId || "");
+  const effectiveUserId = bypass ? (url.searchParams.get("userId") || "") : (userId || "");
     if (!effectiveUserId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     const supabase = sb();

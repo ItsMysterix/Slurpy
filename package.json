@@ -12,7 +12,6 @@
     "test:signup": "playwright test tests/auth.signup.spec.ts"
   },
   "dependencies": {
-    "@clerk/nextjs": "^6.25.4",
     "@emotion/is-prop-valid": "latest",
     "@hookform/resolvers": "^3.9.1",
     "@radix-ui/react-accordion": "1.2.2",

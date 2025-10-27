@@ -16,3 +16,14 @@ emotion/model/.cache
 .DS_Store
 exports
 outputs
+
+# heavy local indices and artifacts (not needed in container builds)
+ed_index_full/
+slurpy_qdrant_index/
+test-results/
+tests/
+__pycache__/
+*.ipynb
+*.pt
+*.bin
+*.ckpt

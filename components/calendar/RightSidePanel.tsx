@@ -16,8 +16,9 @@ import {
 import {
   BookOpen, Edit3, MessageCircle, Heart, X, Calendar as CalendarIcon, MapPin, Plus,
 } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/hooks/use-toast";
 import { iconForEmotion } from "@/lib/insights-types";
+import { supabase } from "@/lib/supabaseClient";
 
 type DailyMoodData = {
   emotion: string;
@@ -110,7 +111,7 @@ export default function RightSidePanel({
   useEffect(() => {
     if (dayData?.mood) {
       setEmotion(dayData.mood.emotion);
-      setIntensity(String(dayData.mood.intensity ?? 5));
+       setIntensity((dayData.mood.intensity ?? 5).toString());
       setNotes(dayData.mood.notes || "");
     } else {
       setEmotion("");
@@ -133,21 +134,30 @@ export default function RightSidePanel({
     if (!selectedDate || !emotion || !intensity) return;
     setIsLoading(true);
     try {
-      const res = await fetch("/api/calendar", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          date: selectedDate.toISOString(),
-          emotion,
-          intensity: parseInt(intensity, 10),
-          notes: notes.trim() || null,
-        }),
-      });
+      let bearer = "";
+      try { const { data } = await supabase.auth.getSession(); bearer = data.session?.access_token || ""; } catch {}
+       const headersPost: Record<string, string> = { "Content-Type": "application/json" };
+       if (typeof document !== "undefined") {
+         const m = /(?:^|;\s*)slurpy\.csrf=([^;]+)/i.exec(document.cookie || "");
+         const t = m ? decodeURIComponent(m[1]) : "";
+         if (t) headersPost["x-csrf"] = t;
+       }
+       if (bearer) headersPost["Authorization"] = `Bearer ${bearer}`;
+       const res = await fetch("/api/calendar", {
+         method: "POST",
+         headers: headersPost,
+         body: JSON.stringify({
+           date: selectedDate.toISOString(),
+           emotion,
+           intensity: parseInt(intensity, 10),
+           notes: notes.trim() || null,
+         }),
+       });
       if (!res.ok) throw new Error("Failed to save mood");
-      toast.success("Mood saved");
+  toast({ title: "Mood saved" });
       onDataUpdate();
     } catch (e) {
-      toast.error("Failed to save mood");
+  toast({ title: "Failed to save mood", variant: "destructive" });
       console.error(e);
     } finally {
       setIsLoading(false);
@@ -158,15 +168,27 @@ export default function RightSidePanel({
     if (!selectedDate) return;
     setIsLoading(true);
     try {
-      const res = await fetch(`/api/calendar?date=${selectedDate.toISOString()}`, { method: "DELETE" });
+      let bearer = "";
+      try { const { data } = await supabase.auth.getSession(); bearer = data.session?.access_token || ""; } catch {}
+       const headersDel: Record<string, string> = {};
+       if (typeof document !== "undefined") {
+         const m2 = /(?:^|;\s*)slurpy\.csrf=([^;]+)/i.exec(document.cookie || "");
+         const t2 = m2 ? decodeURIComponent(m2[1]) : "";
+         if (t2) headersDel["x-csrf"] = t2;
+       }
+       if (bearer) headersDel["Authorization"] = `Bearer ${bearer}`;
+       const res = await fetch(`/api/calendar?date=${selectedDate.toISOString()}`, {
+         method: "DELETE",
+         headers: headersDel,
+       });
       if (!res.ok) throw new Error("Failed to delete mood");
-      toast.success("Mood deleted");
+  toast({ title: "Mood deleted" });
       onDataUpdate();
       setEmotion("");
       setIntensity("5");
       setNotes("");
     } catch (e) {
-      toast.error("Failed to delete mood");
+  toast({ title: "Failed to delete mood", variant: "destructive" });
       console.error(e);
     } finally {
       setIsLoading(false);
@@ -175,25 +197,34 @@ export default function RightSidePanel({
 
   const handleSaveEvent = async () => {
     if (!selectedDate || !eventTitle.trim()) {
-      toast.error("Please add a title");
+  toast({ title: "Please add a title", variant: "destructive" });
       return;
     }
     setIsLoading(true);
     try {
-      const res = await fetch("/api/calendar/events", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          date: selectedDate.toISOString(),
-          title: eventTitle.trim(),
-          location: eventLocation.trim() || null,
-          emotion: eventEmotion || null,
-          intensity: eventEmotion ? parseInt(eventIntensity, 10) : null,
-          notes: eventNotes.trim() || null,
-        }),
-      });
+      let bearer = "";
+      try { const { data } = await supabase.auth.getSession(); bearer = data.session?.access_token || ""; } catch {}
+       const headersEvent: Record<string, string> = { "Content-Type": "application/json" };
+       if (typeof document !== "undefined") {
+         const m3 = /(?:^|;\s*)slurpy\.csrf=([^;]+)/i.exec(document.cookie || "");
+         const t3 = m3 ? decodeURIComponent(m3[1]) : "";
+         if (t3) headersEvent["x-csrf"] = t3;
+       }
+       if (bearer) headersEvent["Authorization"] = `Bearer ${bearer}`;
+       const res = await fetch("/api/calendar/event", {
+         method: "POST",
+         headers: headersEvent,
+         body: JSON.stringify({
+           date: selectedDate.toISOString(),
+           title: eventTitle.trim(),
+           location: eventLocation.trim() || null,
+           emotion: eventEmotion || null,
+           intensity: eventEmotion ? parseInt(eventIntensity, 10) : null,
+           notes: eventNotes.trim() || null,
+         }),
+       });
       if (!res.ok) throw new Error("Failed to save event");
-      toast.success("Event saved");
+  toast({ title: "Event saved" });
       // clear form
       setEventTitle("");
       setEventLocation("");
@@ -206,7 +237,7 @@ export default function RightSidePanel({
       setShowCheckupPrompt(true);
       window.setTimeout(() => setShowCheckupPrompt(false), 5000);
     } catch (e) {
-      toast.error("Failed to save event");
+  toast({ title: "Failed to save event", variant: "destructive" });
       console.error(e);
     } finally {
       setIsLoading(false);

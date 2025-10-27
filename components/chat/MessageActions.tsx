@@ -30,7 +30,7 @@ export function TTSButton({ text }: { text: string }) {
   return (
     <button
       type="button"
-      onClick={() => (speaking ? cancel() : speak(text, { rate: 1.03, maxChars: 500 }))}
+      onClick={() => (speaking ? cancel() : speak(text, { rate: 1.03 }))}
       className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded-md hover:bg-slate-200/40 dark:hover:bg-slate-700/40 text-slate-400 dark:text-slate-400"
       aria-label={speaking ? "Stop reading" : "Read aloud"}
       title={speaking ? "Stop reading" : "Read aloud"}

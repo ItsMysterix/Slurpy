@@ -27,4 +27,6 @@ primary_region = "iad"
 [[vm]]
   cpu_kind = "shared"
   cpus = 1
-  memory = "1536mb"
+  # Increased memory to support NLP model warmup and inference without OOM
+  # Note: Fly allocates up to 2048 MiB for this VM class, use 2048mb to comply
+  memory = "2048mb"

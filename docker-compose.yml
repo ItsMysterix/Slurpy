@@ -18,6 +18,8 @@ services:
     build:
       context: .
       dockerfile: infra/docker/Dockerfile.mcp
+    env_file:
+      - .env.mcp
     # Supply environment via variables, not mounted files
     environment:
       FRONTEND_ORIGIN: http://localhost:3000
@@ -31,7 +33,7 @@ services:
     depends_on:
       - qdrant
     ports:
-      - "9001:9001"
+      - "9002:9001"
     restart: unless-stopped
     cap_drop: ["ALL"]
     read_only: true
@@ -52,18 +54,17 @@ services:
     build:
       context: .
       dockerfile: infra/docker/Dockerfile.backend
+    env_file:
+      - .env.backend
     # Supply environment via variables, not mounted files
     environment:
       API_DEBUG: "true"
-      DEV_NO_AUTH: "false"  # Enable auth in production-ready mode
+      DEV_NO_AUTH: "true"  # Local docker testing: bypass auth
       FRONTEND_ORIGIN: http://localhost:3000
       CORS_ALLOW_ALL: "false"  # Restrict CORS for production
       ALLOWED_ORIGINS: "http://localhost:3000"
       MCP_BASE_URL: http://mcp:9001
       QDRANT_URL: http://qdrant:6333
-      # Clerk Authentication
-      CLERK_SECRET_KEY: ${CLERK_SECRET_KEY}
-      CLERK_JWKS_URL: ${CLERK_JWKS_URL:-https://api.clerk.com/v1/jwks}
       # Supabase
       SUPABASE_URL: ${SUPABASE_URL}
       SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY}
@@ -98,29 +99,24 @@ services:
     build:
       context: .
       dockerfile: infra/docker/Dockerfile.frontend
-      # Clerk/Next need these at **build time** to compile middleware/client bundle.
-      # Compose resolves build args from the project `.env` (NOT env_file).
       args:
-        NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY}
-        CLERK_SECRET_KEY: ${CLERK_SECRET_KEY}
         NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
         NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY}
         # expose API base to the build if your client bundle uses it
         NEXT_PUBLIC_RAG_API: ${NEXT_PUBLIC_RAG_API:-http://localhost:8000/v1/mcp/stream}
+    env_file:
+      - .env.frontend
     # Supply environment via variables, not mounted files
     environment:
-      # Clerk Authentication (runtime)
-      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY}
-      CLERK_SECRET_KEY: ${CLERK_SECRET_KEY}
-      NEXT_PUBLIC_CLERK_SIGN_IN_URL: /sign-in
-      NEXT_PUBLIC_CLERK_SIGN_UP_URL: /sign-up
-      NEXT_PUBLIC_CLERK_AFTER_SIGN_IN_URL: /chat
-      NEXT_PUBLIC_CLERK_AFTER_SIGN_UP_URL: /chat
+      # Local testing: bypass auth requirements to hit /chat without login
+      NEXT_PUBLIC_E2E_BYPASS_AUTH: "true"
       # Supabase (runtime)
       NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
       NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY}
       SUPABASE_SERVICE_ROLE: ${SUPABASE_SERVICE_ROLE}
       # API endpoints
+      # Internal service-to-service URL for proxy routes
+      BACKEND_URL: http://backend:8000
       NEXT_PUBLIC_RAG_API: ${NEXT_PUBLIC_RAG_API:-http://localhost:8000/v1/mcp/stream}
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
       # App settings
@@ -136,7 +132,8 @@ services:
     tmpfs:
       - /tmp:size=64m
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://localhost:3000/api/health || exit 1"]
+      # Use Node to perform an HTTP check to avoid needing curl in the image
+      test: ["CMD-SHELL", "node -e 'const http=require(\"http\");const r=http.request({host:\"localhost\",port:3000,path:\"/health\"},res=>{process.exit(res.statusCode===200?0:1)});r.on(\"error\",()=>process.exit(1));r.end();' "]
       interval: 30s
       timeout: 10s
       retries: 5

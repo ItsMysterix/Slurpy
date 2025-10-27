@@ -6,23 +6,26 @@ primary_region = "iad"
   context = "."
 
   [build.args]
-    NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = "pk_live_xxx"
     NEXT_PUBLIC_RAG_API = "https://api.slurpy.life/v1/mcp/stream"
     NEXT_TELEMETRY_DISABLED = "1"
+    NEXT_PUBLIC_SUPABASE_URL = "https://cmykvjwkhtxhlsijlqxb.supabase.co"
+    NEXT_PUBLIC_SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNteWt2andraHR4aGxzaWpscXhiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTM1NjQ1MDQsImV4cCI6MjA2OTE0MDUwNH0.gSxeYjaU96VL6J2-nz-jNvOg1pCD18d0ImLr0K9GwxU"
 
 [env]
 
-  NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = "pk_live_xxx"
+  # Public API base for client streaming
   NEXT_PUBLIC_RAG_API = "https://api.slurpy.life/v1/mcp/stream"
 
-  NEXT_PUBLIC_CLERK_SIGN_IN_URL = "/sign-in"
-  NEXT_PUBLIC_CLERK_SIGN_UP_URL = "/sign-up"
-  NEXT_PUBLIC_CLERK_AFTER_SIGN_IN_URL = "/chat"
-  NEXT_PUBLIC_CLERK_AFTER_SIGN_UP_URL = "/chat"
+  # Backend base URL for server-to-server calls from API routes
+  # This should point to the actual backend FastAPI service, not the MCP
+  BACKEND_URL = "https://slurpy.fly.dev"
 
-  NEXT_PUBLIC_CLERK_ALLOWED_ORIGINS = "https://slurpy.life,https://slurpy-web.fly.dev"
-
+  # Runtime Node options
   NODE_OPTIONS = "--dns-result-order=ipv4first"
+
+  # Note: Provide Supabase public envs at build time via environment/secrets
+  # - NEXT_PUBLIC_SUPABASE_URL
+  # - NEXT_PUBLIC_SUPABASE_ANON_KEY
 
 [http_service]
   internal_port = 3000

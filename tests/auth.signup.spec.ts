@@ -1,7 +1,7 @@
 import { test, expect, Page } from '@playwright/test'
 
-// Helper to inject E2E Clerk mocks before the app runs
-async function mockClerk(page: Page, variant: 'verify' | 'complete' | 'oauth') {
+// Helper to inject E2E auth mocks before the app runs
+async function mockAuth(page: Page, variant: 'verify' | 'complete' | 'oauth') {
   await page.addInitScript((mode: 'verify' | 'complete' | 'oauth') => {
     (window as any).__E2E_AUTH_MOCK__ = {
       useAuth: () => ({ isSignedIn: false }),
@@ -18,7 +18,7 @@ async function mockClerk(page: Page, variant: 'verify' | 'complete' | 'oauth') {
           prepareEmailAddressVerification: async () => ({ ok: true }),
           authenticateWithRedirect: async () => {
             if (mode === 'oauth') {
-              // Simulate Clerk redirect completing sign-up and taking user to /chat
+              // Simulate auth redirect completing sign-up and taking user to /chat
               window.location.href = '/chat'
             }
           },
@@ -37,9 +37,9 @@ const fillForm = async (page: Page) => {
   await page.getByLabel(/^password$/i).fill('StrongPass123!')
 }
 
-test.describe('Sign-up flow (E2E, mocked Clerk)', () => {
+test.describe('Sign-up flow (E2E, mocked auth)', () => {
   test('navigates to email verification screen when verification is required', async ({ page }) => {
-    await mockClerk(page, 'verify')
+    await mockAuth(page, 'verify')
     await page.goto('/sign-up')
 
     // Basic page load assertion
@@ -53,7 +53,7 @@ test.describe('Sign-up flow (E2E, mocked Clerk)', () => {
   })
 
   test('completes immediately and routes to /chat (or sign-in redirect)', async ({ page }) => {
-    await mockClerk(page, 'complete')
+    await mockAuth(page, 'complete')
     await page.goto('/sign-up')
 
     await fillForm(page)
@@ -66,7 +66,7 @@ test.describe('Sign-up flow (E2E, mocked Clerk)', () => {
   })
 
   test('Google sign-up button triggers OAuth redirect flow', async ({ page }) => {
-    await mockClerk(page, 'oauth')
+    await mockAuth(page, 'oauth')
     await page.goto('/sign-up')
 
     // Click the Google button

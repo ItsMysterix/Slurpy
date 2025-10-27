@@ -101,18 +101,18 @@ export const POST = withCORS(async function POST(req: NextRequest) {
       } catch {}
     }
 
-    // 3) Resolve a Clerk JWT (header/cookie fallbacks supported)
-    let clerkJwt = authBearer || "";
+    // 3) Resolve an auth bearer (header/cookie fallbacks supported)
+    let bearer = authBearer || "";
     try {
       const hdrs = await headers();
       const authz = hdrs.get("authorization") || hdrs.get("Authorization");
-      if (authz?.startsWith("Bearer ")) clerkJwt = authz.slice(7).trim();
+      if (authz?.startsWith("Bearer ")) bearer = authz.slice(7).trim();
     } catch {}
-    if (!clerkJwt) {
+    if (!bearer) {
       const jar = await cookies();
-      clerkJwt = jar.get("__session")?.value ?? "";
+      bearer = jar.get("__session")?.value ?? "";
     }
-    if (!clerkJwt) return bad(401, "Missing Clerk session token");
+    if (!bearer) return bad(401, "Missing auth session token");
 
     // 4) Call backend via your helper (which should forward Authorization: Bearer <token>)
     // E2E test echo: return forwarded tenant without calling backend
@@ -120,7 +120,7 @@ export const POST = withCORS(async function POST(req: NextRequest) {
       return NextResponse.json({ reply: "ok", meta: { forwardedTenant: userId, roles } }, { headers: { "Cache-Control": "no-store" } });
     }
 
-    const ragResponse = await askRag(input.text, sessionId, clerkJwt, userId);
+  const ragResponse = await askRag(input.text, sessionId, bearer, userId);
 
     const ChatOut = z
       .object({

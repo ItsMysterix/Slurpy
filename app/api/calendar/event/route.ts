@@ -4,8 +4,7 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@clerk/nextjs/server";
-import { createClient } from "@supabase/supabase-js";
+import { getAuthOrThrow } from "@/lib/auth-server";
 import { createServerServiceClient } from "@/lib/supabase/server";
 import { guardRate } from "@/lib/guards";
 import { withCORS } from "@/lib/cors";
@@ -22,7 +21,7 @@ const toYMD = (isoOrDate: string | Date) => {
 
 export const POST = withCORS(async function POST(req: NextRequest) {
   try {
-    const { userId } = await auth();
+    const { userId } = await getAuthOrThrow();
     if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     // Limit calendar write ops to 30/min/user

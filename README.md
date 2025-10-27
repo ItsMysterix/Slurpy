@@ -26,7 +26,7 @@
 - **Journal Insights**: AI-generated insights from your journal entries
 - **Geofencing & JITAI**: Just-in-Time Adaptive Interventions based on location and context
 - **Stripe Integration**: Subscription management for premium features
-- **Secure Authentication**: Clerk-based auth with SSO support
+- **Secure Authentication**: Supabase Auth (email/password; OAuth optional)
 - **Production-Ready**: Dockerized microservices with health checks and monitoring
 
 ---
@@ -42,7 +42,7 @@
 
 ### Key Technologies
 
-- **Frontend**: Next.js 15, React, TypeScript, Tailwind CSS, Clerk Auth
+- **Frontend**: Next.js 15, React, TypeScript, Tailwind CSS, Supabase Auth
 - **Backend**: Python 3.11, FastAPI, PyTorch, Transformers, Sentence-Transformers
 - **Database**: Supabase (PostgreSQL), Qdrant (Vector DB)
 - **Infrastructure**: Docker, Docker Compose, Fly.io deployment configs
@@ -57,7 +57,7 @@
 - Docker & Docker Compose
 - Node.js 20+ (for local development)
 - Python 3.11+ (for local development)
-- Clerk account (for authentication)
+- Supabase account (for authentication & database)
 - Supabase project (for database)
 - Stripe account (for payments)
 
@@ -66,15 +66,7 @@
 Create a `.env` file in the root directory:
 
 ```bash
-# Clerk Authentication
-NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_...
-CLERK_SECRET_KEY=sk_test_...
-NEXT_PUBLIC_CLERK_SIGN_IN_URL=/sign-in
-NEXT_PUBLIC_CLERK_SIGN_UP_URL=/sign-up
-NEXT_PUBLIC_CLERK_AFTER_SIGN_IN_URL=/chat
-NEXT_PUBLIC_CLERK_AFTER_SIGN_UP_URL=/chat
-
-# Supabase
+# Supabase Authentication
 NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJhbGc...
 SUPABASE_SERVICE_ROLE_KEY=eyJhbGc...
@@ -263,7 +255,7 @@ Health response includes:
 
 ## 🔐 Security Features
 
-- **Authentication**: Clerk-based auth with OAuth support
+- **Authentication**: Supabase Auth (email/password; OAuth optional)
 - **Authorization**: Row-level security (RLS) in Supabase
 - **CORS**: Configurable origin whitelisting
 - **CSRF**: Token-based protection for mutations
@@ -295,7 +287,6 @@ fly deploy -c fly.mcp.toml
 
 ```bash
 # Set secrets for each app
-fly secrets set CLERK_SECRET_KEY=sk_... -a slurpy-frontend
 fly secrets set SUPABASE_SERVICE_ROLE_KEY=eyJ... -a slurpy-backend
 fly secrets set OPENAI_API_KEY=sk-... -a slurpy-mcp
 ```
@@ -339,7 +330,7 @@ pip-audit
 
 All services expose health endpoints for monitoring:
 
-- **Frontend**: `GET /api/health` - Returns Clerk, Supabase, and backend status
+- **Frontend**: `GET /api/health` - Returns Supabase and backend status
 - **Backend**: `GET /health/healthz` - Returns database and Qdrant status  
 - **MCP**: `GET /healthz` - Returns service status
 
@@ -388,7 +379,6 @@ fly releases rollback --app slurpy-mcp
 **Expected monthly costs** (for small SaaS):
 - Fly.io: $0-20/month (free tier covers basic usage)
 - Supabase: $0-25/month (free tier → Pro as you grow)
-- Clerk: $0-25/month (free tier → Pro at 10k MAU)
 - OpenAI: $10-100/month (depends on usage)
 - Monitoring: $0 (free tiers of Sentry, UptimeRobot)
 
@@ -456,7 +446,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## 🙏 Acknowledgments
 
 - [Hugging Face](https://huggingface.co/) for transformer models
-- [Clerk](https://clerk.com/) for authentication
 - [Supabase](https://supabase.com/) for database & auth
 - [Qdrant](https://qdrant.tech/) for vector search
 - [Next.js](https://nextjs.org/) team for the amazing framework

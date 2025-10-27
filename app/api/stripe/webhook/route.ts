@@ -19,9 +19,10 @@ function mapPriceToPlan(priceId: string | null | undefined): Plan {
 
 async function setUserPlan(userId: string, plan: Plan) {
   try {
-    const { clerkClient } = await import("@clerk/nextjs/server");
-    const client = await clerkClient();
-    await client.users.updateUser(userId, { publicMetadata: { plan } });
+    const sb = createServerServiceClient();
+    // Update Supabase user metadata (requires service role)
+    const admin = (sb.auth as any).admin;
+    await admin.updateUserById(userId, { user_metadata: { plan } });
   } catch (e) {
     logger.error("setUserPlan error", (e as any)?.message || e);
   }

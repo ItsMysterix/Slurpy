@@ -39,7 +39,18 @@ export async function assertSameOrigin(req: NextRequest, allowedOrigins?: string
 
   const origin = originOf(req.headers.get("origin"));
   const referer = originOf(req.headers.get("referer"));
+  
+  // Derive the actual request origin from host header and protocol
+  // (nextUrl.origin is unreliable in production API routes)
+  const host = req.headers.get("host") || req.headers.get("x-forwarded-host");
+  const proto = req.headers.get("x-forwarded-proto") || "https";
+  const selfOrigin = host ? `${proto}://${host}` : null;
 
+  // Always allow strict same-origin requests (origin/referrer matches the request's own origin)
+  if (origin && selfOrigin && origin === selfOrigin) return undefined;
+  if (referer && selfOrigin && referer === selfOrigin) return undefined;
+
+  // Otherwise, fall back to configured allow-list
   if (origin && allow.includes(origin)) return undefined;
   if (referer && allow.includes(referer)) return undefined;
 
@@ -57,5 +68,7 @@ export function assertDoubleSubmit(req: NextRequest): Response | undefined {
       return httpError(403, "csrf");
     }
   }
+  // If no cookie is present, skip double-submit check entirely
+  // (rely on same-origin check instead)
   return undefined;
 }

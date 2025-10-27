@@ -4,11 +4,11 @@ import type React from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Chrome, Mail, Lock, Eye, EyeOff, Loader2, User } from "lucide-react"
+import { Mail, Lock, Eye, EyeOff, Loader2, User } from "lucide-react"
 import { useState, useEffect } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
-import { useSignIn, useAuth } from "@clerk/nextjs"
+import { useSignIn, useAuth } from "@/lib/auth-hooks"
 import { useTheme } from "next-themes"
 
 export const dynamic = "force-dynamic"
@@ -19,6 +19,7 @@ export default function SignInPage() {
   const { isSignedIn } = useAuth()
   const { isLoaded, signIn, setActive } = useSignIn()
   const { setTheme, theme } = useTheme()
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || ""
 
   const [showPassword, setShowPassword] = useState(false)
   const [isGoogleLoading, setIsGoogleLoading] = useState(false)
@@ -46,12 +47,11 @@ export default function SignInPage() {
     }
   }, [isSignedIn, router])
 
-  // Debug all Clerk state changes
+  // Debug all auth state changes
   useEffect(() => {
     if (isLoaded && signIn) {
-      console.log("=== CLERK DEBUG INFO ===")
+      console.log("=== AUTH DEBUG INFO ===")
       console.log("SignIn loaded:", isLoaded)
-      console.log("SignIn status:", signIn.status)
       console.log("Is signed in:", isSignedIn)
       console.log("Current URL:", window.location.href)
       console.log("========================")
@@ -87,7 +87,7 @@ export default function SignInPage() {
         return
       }
 
-      // Handle other Clerk flows explicitly (e.g., 2FA)
+  // Handle other flows explicitly (e.g., 2FA)
       if ((result as any)?.status === "needs_second_factor") {
         alert("Two-factor authentication is required. Please complete the verification step in your account.")
         return
@@ -107,7 +107,7 @@ export default function SignInPage() {
           alert("Incorrect password. You can try again or reset your password.")
           break
         // Some users created via Google/OAuth don't have a password yet.
-        // Clerk may return one of these codes/messages — redirect them to set a password.
+  // The provider may return one of these codes/messages — redirect to set a password.
         case "form_password_not_set":
         case "password_not_set":
           router.push(`/forgot-password?email=${encodeURIComponent(identifier)}`)
@@ -117,7 +117,7 @@ export default function SignInPage() {
           alert("Too many attempts. Please wait a moment and try again.")
           break
         default:
-          // If Clerk hints that a password isn't set via message text
+          // If the provider hints that a password isn't set via message text
           if (message && /password (has not|is not) set/i.test(message)) {
             router.push(`/forgot-password?email=${encodeURIComponent(identifier)}`)
           } else {
@@ -129,25 +129,16 @@ export default function SignInPage() {
     }
   }
 
-  const handleOAuthSignIn = async () => {
-    if (!isLoaded) return
-    
-    setIsGoogleLoading(true)
-    console.log("Starting Google OAuth")
-    
+  // Google OAuth
+  const handleGoogle = async () => {
     try {
-      await signIn.authenticateWithRedirect({
-        strategy: "oauth_google",
-        redirectUrl: "/sso-callback",
-        redirectUrlComplete: "/chat",
-      })
-    } catch (err: any) {
-      console.error("Google OAuth error:", err)
+      setIsGoogleLoading(true)
+      const origin = typeof window !== "undefined" ? window.location.origin : process.env.NEXT_PUBLIC_SITE_URL || ""
+      await signIn.authenticateWithRedirect({ strategy: "oauth_google", redirectUrlComplete: `${origin}/sso-callback` })
+    } catch (e) {
+      console.error("Google sign-in failed", e)
       setIsGoogleLoading(false)
-      
-      if (!err.message?.includes("redirect")) {
-        alert("Google authentication failed. Please try again.")
-      }
+      alert("Google sign-in failed. Please try again or use email/password.")
     }
   }
 
@@ -163,6 +154,12 @@ export default function SignInPage() {
     <div className="min-h-screen bg-gradient-to-br from-sand-50 via-sage-50 to-clay-400/10 flex items-center justify-center p-4">
       <div className="w-full max-w-md">
         <div className="bg-sand-50/70 backdrop-blur-lg rounded-3xl p-10 shadow-soft border border-white/20">
+          {/* Runtime guard for Supabase config */}
+          {!supabaseUrl && (
+            <div className="mb-4 rounded-lg border border-amber-300 bg-amber-50 text-amber-800 p-3 text-sm">
+              Authentication isn’t fully configured. Please set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY.
+            </div>
+          )}
           <div className="text-center mb-8">
             <h1 className="font-display text-3xl font-bold text-sage-500 mb-2">
               Welcome back 👋
@@ -172,15 +169,18 @@ export default function SignInPage() {
             </p>
           </div>
 
-          <div className="space-y-3 mb-8">
-            <Button
-              onClick={handleOAuthSignIn}
-              disabled={isGoogleLoading || isFormLoading}
-              variant="outline"
-              className="w-full flex items-center justify-center gap-3 rounded-xl border-sand-200 bg-white/50 hover:bg-sage-100 py-6 font-sans font-medium text-sage-600 transition-all duration-200 disabled:opacity-50"
-            >
-              {isGoogleLoading ? <Loader2 className="h-5 w-5 animate-spin" /> : <Chrome className="h-5 w-5" />}
-              Continue with Google
+          {/* OAuth */}
+          <div className="grid gap-3 mb-6">
+            <Button type="button" variant="outline" disabled={isGoogleLoading || isFormLoading} onClick={handleGoogle}
+              className="w-full rounded-xl py-6 font-sans">
+              {isGoogleLoading ? (
+                <span className="flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" /> Connecting…</span>
+              ) : (
+                <span className="flex items-center gap-2">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" className="h-4 w-4"><path fill="#FFC107" d="M43.611,20.083H42V20H24v8h11.303c-1.649,4.657-6.08,8-11.303,8c-6.627,0-12-5.373-12-12 s5.373-12,12-12c3.059,0,5.842,1.154,7.961,3.039l5.657-5.657C33.106,6.053,28.805,4,24,4C12.955,4,4,12.955,4,24 s8.955,20,20,20s20-8.955,20-20C44,22.659,43.862,21.35,43.611,20.083z"/><path fill="#FF3D00" d="M6.306,14.691l6.571,4.817C14.655,16.108,19.01,13,24,13c3.059,0,5.842,1.154,7.961,3.039l5.657-5.657 C33.106,6.053,28.805,4,24,4C16.318,4,9.656,8.337,6.306,14.691z"/><path fill="#4CAF50" d="M24,44c4.717,0,8.998-1.802,12.25-4.75l-5.657-5.657C28.614,35.091,26.387,36,24,36 c-5.202,0-9.619-3.33-11.274-7.967l-6.535,5.036C9.592,39.556,16.262,44,24,44z"/><path fill="#1976D2" d="M43.611,20.083H42V20H24v8h11.303c-0.792,2.237-2.231,4.188-4.123,5.657l0.003-0.002l6.535,5.036 C35.928,39.556,42.598,44,24,44c7.732,0,17-6.268,17-20C44,22.659,43.862,21.35,43.611,20.083z"/></svg>
+                  Continue with Google
+                </span>
+              )}
             </Button>
           </div>
 

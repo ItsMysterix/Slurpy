@@ -218,8 +218,8 @@ const securityHeaders = [
    ```
 
 3. **User-Generated Content**
-   - If storing files: Use S3 with versioning enabled
-   - If using Clerk for avatars: They handle backups
+   - If storing files: Use S3 (or Supabase Storage) with versioning enabled
+   - If using a third-party provider for profile assets: follow their backup guidance
 
 #### Backup Schedule
 
@@ -257,7 +257,7 @@ const securityHeaders = [
 - [ ] SSL certificates valid? (auto-renewed by Fly.io)
 
 **Business Metrics**:
-- [ ] New user signups (track in Clerk dashboard)
+- [ ] New user signups (track in Supabase Auth dashboard)
 - [ ] Active users today
 - [ ] API usage / quota
 - [ ] Stripe revenue (if monetizing)
@@ -295,7 +295,7 @@ const securityHeaders = [
 |---------|-----------|-----------|------------------|
 | **Fly.io** | 3 VMs + 160GB bandwidth | $0 | $0-20/mo |
 | **Supabase** | 500MB DB, 1GB bandwidth | Unlimited | $0-25/mo |
-| **Clerk** | 10k MAU | Unlimited | $0-25/mo |
+| **Supabase Auth** | Generous free tier | Pro | $0-25/mo |
 | **Sentry** | 5k events/mo | 50k events | $0-26/mo |
 | **OpenAI** | Pay per use | - | $10-100/mo* |
 | **Stripe** | Pay per transaction | - | 2.9% + $0.30 |
@@ -345,8 +345,6 @@ const securityHeaders = [
 
 ```bash
 # Frontend (.env.production)
-NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_live_xxx  # LIVE keys only
-CLERK_SECRET_KEY=sk_live_xxx
 NEXT_PUBLIC_SUPABASE_URL=https://xxx.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJxxx
 NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_live_xxx
@@ -377,7 +375,7 @@ SENTRY_DSN=https://xxx@sentry.io/xxx
 | OpenAI API Key | Every 90 days | Generate new in OpenAI dashboard |
 | Stripe Keys | On security incident | Regenerate in Stripe |
 | Supabase Keys | Every 90 days | Regenerate in Supabase |
-| Clerk Keys | On security incident | Regenerate in Clerk |
+| Supabase Keys | Every 90 days | Regenerate in Supabase |
 | Database Passwords | Every 90 days | Update in Supabase |
 
 #### Using Fly.io Secrets
@@ -385,7 +383,10 @@ SENTRY_DSN=https://xxx@sentry.io/xxx
 ```bash
 # Set secrets (never visible in fly.toml)
 fly secrets set OPENAI_API_KEY=sk-xxx --app slurpy-backend
-fly secrets set CLERK_SECRET_KEY=sk_live_xxx --app slurpy-frontend
+# Set Supabase keys for the backend and frontend as needed
+fly secrets set SUPABASE_SERVICE_ROLE_KEY=eyJxxx --app slurpy-backend
+fly secrets set NEXT_PUBLIC_SUPABASE_URL=https://xxx.supabase.co --app slurpy-frontend
+fly secrets set NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJxxx --app slurpy-frontend
 
 # List secret names (not values)
 fly secrets list
@@ -572,14 +573,20 @@ def get_embedding(text):
 Use for gradual rollouts:
 
 ```typescript
-// Example with Clerk metadata
-const user = await clerkClient.users.getUser(userId);
-const betaFeatures = user.publicMetadata.betaFeatures || [];
+// Example with Supabase user metadata
+import { createClient } from "@supabase/supabase-js";
+const supabase = createClient(
+   process.env.NEXT_PUBLIC_SUPABASE_URL!,
+   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+);
 
-if (betaFeatures.includes('new-chat-ui')) {
-  // Show new UI
+const { data } = await supabase.auth.getUser();
+const betaFeatures = (data.user?.user_metadata?.betaFeatures as string[]) || [];
+
+if (betaFeatures.includes("new-chat-ui")) {
+   // Show new UI
 } else {
-  // Show old UI
+   // Show old UI
 }
 ```
 
@@ -642,7 +649,7 @@ npx playwright test --config=playwright.prod.config.ts
 |---------|-------------|
 | Fly.io | https://status.flyio.net/ |
 | Supabase | https://status.supabase.com/ |
-| Clerk | https://status.clerk.com/ |
+| — | — |
 | Stripe | https://status.stripe.com/ |
 | OpenAI | https://status.openai.com/ |
 
@@ -650,7 +657,7 @@ npx playwright test --config=playwright.prod.config.ts
 
 - **Fly.io**: community.fly.io (usually <1h response)
 - **Supabase**: Discord or support ticket
-- **Clerk**: Discord or email support
+—
 - **Stripe**: Email support (24h response)
 - **OpenAI**: Help center or email
 

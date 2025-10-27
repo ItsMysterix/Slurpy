@@ -36,9 +36,16 @@ interface ChatState {
   resetAll: () => void;
 }
 
+// Local helper types to satisfy strict typing without relying on zustand's generics
+type SetStatePartial = (
+  partial: Partial<ChatState> | ((state: ChatState) => Partial<ChatState>),
+  replace?: boolean
+) => void;
+type GetStateFn = () => ChatState;
+
 export const useChatStore = create<ChatState>()(
   persist(
-    (set, get) => ({
+    (set: SetStatePartial, get: GetStateFn) => ({
       ownerId: null,
       sessionId: null,
       messages: [],
@@ -46,9 +53,9 @@ export const useChatStore = create<ChatState>()(
       hasStartedChat: false,
       isTyping: false,
 
-      setOwner: (userId) => set({ ownerId: userId }),
+  setOwner: (userId: string | null) => set({ ownerId: userId }),
 
-      resetForUser: (userId) => {
+      resetForUser: (userId: string | null) => {
         const { ownerId } = get();
         if (ownerId !== userId) {
           set({
@@ -62,8 +69,8 @@ export const useChatStore = create<ChatState>()(
         }
       },
 
-      addMessage: (msg) =>
-        set((s) => ({
+      addMessage: (msg: Omit<Message, "id" | "timestamp"> & { id?: string; timestamp?: string }) =>
+        set((s: ChatState) => ({
           messages: [
             ...s.messages,
             {
@@ -77,14 +84,17 @@ export const useChatStore = create<ChatState>()(
           ],
         })),
 
-      setSessionId: (sid) => set({ sessionId: sid }),
-      setCurrentModes: (modes) => set({ currentModes: modes }),
-      setHasStartedChat: (v) => set({ hasStartedChat: v }),
-      setIsTyping: (v) => set({ isTyping: v }),
+      setSessionId: (sid: string | null) => set({ sessionId: sid }),
+      setCurrentModes: (modes: ModeId[]) => set({ currentModes: modes }),
+      setHasStartedChat: (v: boolean) => set({ hasStartedChat: v }),
+      setIsTyping: (v: boolean) => set({ isTyping: v }),
 
-      updateMessage: (id, patch) =>
-        set((s) => ({
-          messages: s.messages.map((m) => (m.id === id ? { ...m, ...patch } : m)),
+      updateMessage: (
+        id: string,
+        patch: Partial<Omit<Message, "id" | "timestamp">> & { content?: string }
+      ) =>
+        set((s: ChatState) => ({
+          messages: s.messages.map((m: Message) => (m.id === id ? { ...m, ...patch } : m)),
         })),
 
       resetAll: () =>

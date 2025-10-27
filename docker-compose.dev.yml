@@ -1,0 +1,39 @@
+# docker-compose.dev.yml
+# Override for local development with Supabase
+# Usage: docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+
+services:
+  mcp:
+    env_file:
+      - .env.dev
+    environment:
+      # Override with dev settings
+      DEV_NO_AUTH: "false"
+      FRONTEND_ORIGIN: http://localhost:3000
+      CORS_ALLOW_ALL: "true"
+
+  backend:
+    env_file:
+      - .env.dev
+    environment:
+      # Override with dev settings
+      API_DEBUG: "true"
+      DEV_NO_AUTH: "false"  # Use real auth with dev keys
+      FRONTEND_ORIGIN: http://localhost:3000
+      CORS_ALLOW_ALL: "true"
+      MCP_BASE_URL: http://mcp:9001
+
+  frontend:
+    env_file:
+      - .env.dev
+    environment:
+      # Disable auth bypass - use real auth
+      NEXT_PUBLIC_E2E_BYPASS_AUTH: "false"
+      # API endpoints
+      BACKEND_URL: http://backend:8000
+      NEXT_PUBLIC_RAG_API: http://localhost:8000/v1/mcp/stream
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+      # Supabase from .env.dev
+      NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY}
+      SUPABASE_SERVICE_ROLE: ${SUPABASE_SERVICE_ROLE}

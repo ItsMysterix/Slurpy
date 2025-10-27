@@ -87,7 +87,6 @@ Quick reference guide for when things go wrong in production.
    - Check status pages:
      - https://status.flyio.net/
      - https://status.supabase.com/
-     - https://status.clerk.com/
      - https://status.openai.com/
 
 4. **Recent changes?**
@@ -215,7 +214,7 @@ fly logs --app slurpy-backend | grep ERROR
 **Solutions**:
 
 **Option 1: Rate limiting issue**
-- Check if being rate-limited by external API (OpenAI, Clerk)
+- Check if being rate-limited by external API (e.g., OpenAI)
 - Implement backoff/retry logic
 
 **Option 2: Bad deployment**
@@ -336,42 +335,25 @@ for stat in top_stats[:10]:
 **Symptoms**:
 - Users can't log in
 - "Unauthorized" errors
-- Clerk errors in Sentry
+- Elevated auth-related errors in Sentry
 
 **Diagnosis**:
 ```bash
-# Check Clerk status
-# Visit https://status.clerk.com/
+# Check Supabase status
+# Visit https://status.supabase.com/
 
-# Verify Clerk secrets
-fly secrets list --app slurpy-frontend
-
-# Test Clerk webhook
-curl -X POST https://your-domain.com/api/webhooks/clerk \
-  -H "Content-Type: application/json" \
-  -d '{"type": "user.created", "data": {...}}'
+# Verify environment variables for backend (service role, URL)
+fly secrets list --app slurpy-backend
 ```
 
-**Solutions**:
-
-**Option 1: Clerk API key rotated**
-```bash
-# Get new keys from Clerk dashboard
-fly secrets set CLERK_SECRET_KEY=sk_live_new --app slurpy-frontend
-```
-
-**Option 2: Webhook signature verification failing**
-```typescript
-// Check webhook secret
-const svix = new Webhook(process.env.CLERK_WEBHOOK_SECRET)
-```
-
-**Option 3: CORS blocking auth requests**
+**Potential Causes & Fixes**:
+- Invalid or expired user session tokens: prompt user to sign in again
+- Missing Authorization header: ensure frontend sends `Authorization: Bearer <token>`
+- CORS misconfiguration: confirm allowed origins match production domains
 ```python
 # Check CORS configuration
 allow_origins = [
-    "https://your-domain.com",
-    "https://accounts.clerk.dev",  # Add Clerk domain
+   "https://your-domain.com",
 ]
 ```
 
@@ -541,7 +523,6 @@ fly logs --app slurpy-backend > incident-logs-$(date +%Y%m%d-%H%M%S).log
 ### External Support
 - **Fly.io**: community.fly.io (public) or support ticket (paid)
 - **Supabase**: Discord or support email
-- **Clerk**: Discord or support email
 
 ---
 

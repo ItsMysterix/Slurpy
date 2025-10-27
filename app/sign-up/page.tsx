@@ -3,13 +3,14 @@
 import * as React from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
-import { Chrome, Mail, Lock, User, Eye, EyeOff, Loader2, AtSign } from "lucide-react"
-import { useSignUp, useAuth } from "@/lib/clerk-hooks"
+import { Mail, Lock, User, Eye, EyeOff, Loader2, AtSign } from "lucide-react"
+import { useSignUp, useAuth } from "@/lib/auth-hooks"
 import { useTheme } from "next-themes"
 
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { supabase } from "@/lib/supabaseClient"
 
 export const dynamic = "force-dynamic"
 export const runtime = "nodejs"
@@ -24,6 +25,8 @@ export default function SignUpPage() {
   const [isLoadingForm, setIsLoadingForm] = React.useState(false)
   const [isLoadingOAuth, setIsLoadingOAuth] = React.useState(false)
   const [errMsg, setErrMsg] = React.useState<string | null>(null)
+  const [avatarFile, setAvatarFile] = React.useState<File | null>(null)
+  const [avatarPreview, setAvatarPreview] = React.useState<string | null>(null)
 
   const [formData, setFormData] = React.useState({
     firstName: "",
@@ -52,6 +55,13 @@ export default function SignUpPage() {
     setErrMsg(null)
   }
 
+  const onAvatarChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0]
+    if (!f) return
+    setAvatarFile(f)
+    setAvatarPreview(URL.createObjectURL(f))
+  }
+
   const isFormValid =
     formData.firstName &&
     formData.lastName &&
@@ -67,6 +77,19 @@ export default function SignUpPage() {
 
     setIsLoadingForm(true)
     try {
+      // Stash avatar for upload after verification if needed
+      if (avatarFile) {
+        try {
+          const buf = await avatarFile.arrayBuffer()
+          const b64 = btoa(String.fromCharCode(...new Uint8Array(buf)))
+          const pending = {
+            name: avatarFile.name,
+            type: avatarFile.type,
+            b64,
+          }
+          localStorage.setItem("slurpy_pending_avatar", JSON.stringify(pending))
+        } catch {}
+      }
       // 1) Create the sign-up
       const result = await signUp.create({
         firstName: formData.firstName,
@@ -76,9 +99,28 @@ export default function SignUpPage() {
         password: formData.password,
       })
 
-      // 2) If Clerk finished immediately (rare), activate and go
+  // 2) If the provider finished immediately (rare), activate and go
       if (result.status === "complete") {
         await setActive({ session: result.createdSessionId })
+        // If we already have a session, try to upload avatar now
+        try {
+          const pendingRaw = localStorage.getItem("slurpy_pending_avatar")
+          if (pendingRaw) {
+            const pending = JSON.parse(pendingRaw) as { name: string; type: string; b64: string }
+            const res = await supabase.auth.getUser()
+            const uid = res.data.user?.id
+            if (uid) {
+              const bytes = Uint8Array.from(atob(pending.b64), c => c.charCodeAt(0))
+              const filePath = `${uid}/avatar_${Date.now()}`
+              const { data: up, error: upErr } = await supabase.storage.from("avatars").upload(filePath, bytes, { contentType: pending.type, upsert: true })
+              if (!upErr) {
+                const { data: pub } = supabase.storage.from("avatars").getPublicUrl(up.path)
+                await supabase.auth.updateUser({ data: { avatar_url: pub.publicUrl } })
+              }
+            }
+            localStorage.removeItem("slurpy_pending_avatar")
+          }
+        } catch {}
         router.push("/chat")
         return
       }
@@ -107,19 +149,16 @@ export default function SignUpPage() {
     }
   }
 
-  const handleOAuthSignUp = async () => {
-    if (!isLoaded || !signUp) return
-    setIsLoadingOAuth(true)
-    setErrMsg(null)
+  // Google OAuth
+  const handleGoogle = async () => {
     try {
-      await signUp.authenticateWithRedirect({
-        strategy: "oauth_google",
-        redirectUrl: "/sso-callback",
-        redirectUrlComplete: "/chat",
-      })
-    } catch (err: any) {
-      setErrMsg("Google sign-up failed. Please try again.")
+      setIsLoadingOAuth(true)
+      const origin = typeof window !== "undefined" ? window.location.origin : process.env.NEXT_PUBLIC_SITE_URL || ""
+      await signUp.authenticateWithRedirect({ strategy: "oauth_google", redirectUrlComplete: `${origin}/sso-callback` })
+    } catch (e) {
+      console.error("Google sign-up failed", e)
       setIsLoadingOAuth(false)
+      setErrMsg("Google sign-up failed. Please try again or use email/password.")
     }
   }
 
@@ -140,15 +179,18 @@ export default function SignUpPage() {
             <p className="text-sage-400 font-sans text-sm">Slurpy is designed to support, not judge.</p>
           </div>
 
-          <div className="space-y-3 mb-8">
-            <Button
-              onClick={handleOAuthSignUp}
-              disabled={isLoadingOAuth || isLoadingForm}
-              variant="outline"
-              className="w-full flex items-center justify-center gap-3 rounded-xl border-sand-200 bg-white/50 hover:bg-sage-100 py-6 font-sans font-medium text-sage-600 transition-all duration-200 disabled:opacity-50"
-            >
-              {isLoadingOAuth ? <Loader2 className="h-5 w-5 animate-spin" /> : <Chrome className="h-5 w-5" />}
-              Continue with Google
+          {/* OAuth */}
+          <div className="grid gap-3 mb-6">
+            <Button type="button" variant="outline" disabled={isLoadingForm || isLoadingOAuth} onClick={handleGoogle}
+              className="w-full rounded-xl py-6 font-sans">
+              {isLoadingOAuth ? (
+                <span className="flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" /> Connecting…</span>
+              ) : (
+                <span className="flex items-center gap-2">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" className="h-4 w-4"><path fill="#FFC107" d="M43.611,20.083H42V20H24v8h11.303c-1.649,4.657-6.08,8-11.303,8c-6.627,0-12-5.373-12-12 s5.373-12,12-12c3.059,0,5.842,1.154,7.961,3.039l5.657-5.657C33.106,6.053,28.805,4,24,4C12.955,4,4,12.955,4,24 s8.955,20,20,20s20-8.955,20-20C44,22.659,43.862,21.35,43.611,20.083z"/><path fill="#FF3D00" d="M6.306,14.691l6.571,4.817C14.655,16.108,19.01,13,24,13c3.059,0,5.842,1.154,7.961,3.039l5.657-5.657 C33.106,6.053,28.805,4,24,4C16.318,4,9.656,8.337,6.306,14.691z"/><path fill="#4CAF50" d="M24,44c4.717,0,8.998-1.802,12.25-4.75l-5.657-5.657C28.614,35.091,26.387,36,24,36 c-5.202,0-9.619-3.33-11.274-7.967l-6.535,5.036C9.592,39.556,16.262,44,24,44z"/><path fill="#1976D2" d="M43.611,20.083H42V20H24v8h11.303c-0.792,2.237-2.231,4.188-4.123,5.657l0.003-0.002l6.535,5.036 C35.928,39.556,42.598,44,24,44c7.732,0,17-6.268,17-20C44,22.659,43.862,21.35,43.611,20.083z"/></svg>
+                  Continue with Google
+                </span>
+              )}
             </Button>
           </div>
 
@@ -162,6 +204,15 @@ export default function SignUpPage() {
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-4 mt-6">
+            {/* Optional avatar */}
+            <div className="space-y-2">
+              <Label htmlFor="avatar" className="text-sage-600 font-sans text-sm font-medium">Profile picture (optional)</Label>
+              <input id="avatar" type="file" accept="image/*" onChange={onAvatarChange} />
+              {avatarPreview && (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={avatarPreview} alt="preview" className="mt-2 w-16 h-16 rounded-full object-cover" />
+              )}
+            </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-2">
                 <Label htmlFor="firstName" className="text-sage-600 font-sans text-sm font-medium">First name</Label>

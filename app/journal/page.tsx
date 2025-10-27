@@ -2,7 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Loader2 } from "lucide-react";
-import { useAuth, useUser } from "@/lib/clerk-hooks";
+import { useAuth, useUser } from "@/lib/auth-hooks";
+import { supabase } from "@/lib/supabaseClient";
 
 import SlideDrawer from "@/components/slide-drawer";
 import JournalHeader from "@/components/journal/JournalHeader";
@@ -100,7 +101,9 @@ export default function JournalPage() {
     if (!userId) return;
     try {
       setLoading(true);
-      const response = await fetch(`/api/journal?userId=${userId}`);
+      let bearer = "";
+      try { const { data } = await supabase.auth.getSession(); bearer = data.session?.access_token || ""; } catch {}
+      const response = await fetch(`/api/journal`, { headers: { ...(bearer ? { Authorization: `Bearer ${bearer}` } : {}) } });
       if (response.ok) {
         const raw = await response.json();
         const normalized = normalizeArrayResponse(raw);
@@ -138,9 +141,18 @@ export default function JournalPage() {
         tags: newEntry.tags.split(",").map((tag) => tag.trim()).filter((tag) => tag.length > 0),
         userId,
       };
+      let bearer = "";
+      try { const { data } = await supabase.auth.getSession(); bearer = data.session?.access_token || ""; } catch {}
+      const headersPost: Record<string, string> = { "Content-Type": "application/json" };
+      if (typeof document !== "undefined") {
+        const m = /(?:^|;\s*)slurpy\.csrf=([^;]+)/i.exec(document.cookie || "");
+        const t = m ? decodeURIComponent(m[1]) : "";
+        if (t) headersPost["x-csrf"] = t;
+      }
+      if (bearer) headersPost["Authorization"] = `Bearer ${bearer}`;
       const response = await fetch("/api/journal", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: headersPost,
         body: JSON.stringify(entryData),
       });
       if (response.ok) {
@@ -189,9 +201,18 @@ export default function JournalPage() {
         fruit: editEntry.fruit || undefined,
         tags: editEntry.tags.split(",").map((tag) => tag.trim()).filter((tag) => tag.length > 0),
       };
+      let bearer = "";
+      try { const { data } = await supabase.auth.getSession(); bearer = data.session?.access_token || ""; } catch {}
+      const headersPut: Record<string, string> = { "Content-Type": "application/json" };
+      if (typeof document !== "undefined") {
+        const m2 = /(?:^|;\s*)slurpy\.csrf=([^;]+)/i.exec(document.cookie || "");
+        const t2 = m2 ? decodeURIComponent(m2[1]) : "";
+        if (t2) headersPut["x-csrf"] = t2;
+      }
+      if (bearer) headersPut["Authorization"] = `Bearer ${bearer}`;
       const response = await fetch("/api/journal", {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
+        headers: headersPut,
         body: JSON.stringify(updateData),
       });
       if (response.ok) {
@@ -217,7 +238,16 @@ export default function JournalPage() {
     if (!confirm("Delete this journal entry? This action cannot be undone.")) return;
     try {
       setDeleting(entryId);
-      const response = await fetch(`/api/journal?id=${entryId}`, { method: "DELETE" });
+  let bearer = "";
+  try { const { data } = await supabase.auth.getSession(); bearer = data.session?.access_token || ""; } catch {}
+  const headersDel: Record<string, string> = {};
+  if (typeof document !== "undefined") {
+    const m3 = /(?:^|;\s*)slurpy\.csrf=([^;]+)/i.exec(document.cookie || "");
+    const t3 = m3 ? decodeURIComponent(m3[1]) : "";
+    if (t3) headersDel["x-csrf"] = t3;
+  }
+  if (bearer) headersDel["Authorization"] = `Bearer ${bearer}`;
+  const response = await fetch(`/api/journal?id=${entryId}`, { method: "DELETE", headers: headersDel });
       if (response.ok) {
         setJournalEntries((prev) => prev.filter((entry) => entry.id !== entryId));
       } else {
@@ -303,7 +333,14 @@ export default function JournalPage() {
       <div className={`flex h-screen transition-all duration-300 ${sidebarOpen ? "md:ml-64" : "md:ml-16"} ml-0`}>
         <div className="flex-1 flex flex-col">
           {/* Header */}
-          <JournalHeader userFirstName={user?.firstName ?? ""} onNew={() => setShowNewEntry(true)} />
+          <JournalHeader userFirstName={(() => {
+            const m: any = user?.user_metadata || {};
+            const username = m.username || m.user_name;
+            const full = m.name || m.full_name;
+            const gn = m.given_name, fn = m.family_name;
+            const email = user?.email;
+            return (username || full || [gn, fn].filter(Boolean).join(" ") || (email ? email.split("@")[0] : "")) as string;
+          })()} onNew={() => setShowNewEntry(true)} />
 
           {/* Main */}
           <div className="flex-1 overflow-y-auto p-6">

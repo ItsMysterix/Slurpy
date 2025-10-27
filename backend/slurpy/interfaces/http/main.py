@@ -16,6 +16,7 @@ from slurpy.interfaces.http.routers import (
     roleplay,
     safety,
     whatever,
+    mcp,
 )
 
 def create_app() -> FastAPI:
@@ -60,6 +61,7 @@ def create_app() -> FastAPI:
     app.include_router(roleplay.router,  prefix="/roleplay",  tags=["roleplay"])
     app.include_router(safety.router,    prefix="/safety",    tags=["safety"])
     app.include_router(whatever.router,  prefix="/whatever",  tags=["misc"])
+    app.include_router(mcp.router,       prefix="/mcp",       tags=["mcp"])
 
     return app
 

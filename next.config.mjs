@@ -9,8 +9,7 @@ const nextConfig = {
   // Standalone output for Docker/Fly.io
   output: "standalone",
   
-  // Skip pre-rendering during build for all pages
-  // This fixes Clerk hook errors during static generation
+  // Keep server-rendering predictable in constrained build environments
   skipTrailingSlashRedirect: true,
   
   // Skip build-time page generation
@@ -27,11 +26,8 @@ const nextConfig = {
   // Disable Next.js image optimization (keeps things simple in Docker)
   images: { unoptimized: true },
 
-  // Only expose public env vars
-  env: {
-    CLERK_PUBLISHABLE_KEY: process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY,
-    // ❌ Do NOT expose CLERK_SECRET_KEY (keep server-side only)
-  },
+  // Public env vars should use NEXT_PUBLIC_* and be provided at build time.
+  // No provider-specific variables are inlined here.
 
   // Security Headers
   async headers() {

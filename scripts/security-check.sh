@@ -70,11 +70,7 @@ if grep -r "sk_live_" --include="*.{ts,tsx,py,js,jsx}" app/ backend/ lib/ 2>/dev
     ISSUES_FOUND=$((ISSUES_FOUND + 1))
 fi
 
-if grep -r "pk_live_" --include="*.{ts,tsx,py,js,jsx}" app/ backend/ lib/ 2>/dev/null | grep -v ".env" | grep -q .; then
-    echo -e "${YELLOW}⚠️  WARNING: Found Clerk live keys in code${NC}"
-    echo "   Make sure these are in environment variables only"
-    ISSUES_FOUND=$((ISSUES_FOUND + 1))
-fi
+## Legacy key checks removed
 
 if ! grep -r "sk_test_\|sk_live_\|pk_test_\|pk_live_" --include="*.{ts,tsx,py,js,jsx}" app/ backend/ lib/ 2>/dev/null | grep -v ".env" | grep -q .; then
     echo -e "${GREEN}✅ No hardcoded secrets found${NC}"
@@ -108,12 +104,7 @@ else
     # Check if apps exist
     if fly apps list | grep -q "slurpy-frontend"; then
         echo "   Checking frontend secrets..."
-        if fly secrets list -a slurpy-frontend 2>/dev/null | grep -q "CLERK_SECRET_KEY"; then
-            echo -e "${GREEN}   ✅ Frontend secrets configured${NC}"
-        else
-            echo -e "${YELLOW}   ⚠️  Frontend secrets not set${NC}"
-            echo "      Run: fly secrets set CLERK_SECRET_KEY=sk_live_xxx -a slurpy-frontend"
-        fi
+    echo -e "${GREEN}   ✅ Frontend app detected (no extra auth provider secrets required)${NC}"
     else
         echo -e "${YELLOW}   ℹ️  Fly.io apps not created yet${NC}"
     fi

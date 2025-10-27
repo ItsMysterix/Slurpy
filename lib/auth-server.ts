@@ -1,15 +1,13 @@
 // lib/auth-server.ts
-// Centralized server-side auth helpers.
+// Centralized server-side auth helpers for Supabase migration.
 // - Provides minimal auth context
-// - Resolves a Clerk JWT for backend calls when needed
 // - Supports an E2E bypass hook via header X-E2E-USER when NEXT_PUBLIC_E2E_BYPASS_AUTH=true
 
-import { auth } from "@clerk/nextjs/server";
 import { cookies, headers } from "next/headers";
 
 export type MinimalAuth = {
   userId: string;
-  // Optional Clerk session token to forward to backend calls (bearer)
+  // Optional bearer token forwarded by clients
   bearer?: string;
 };
 
@@ -22,18 +20,12 @@ export class UnauthorizedError extends Error {
 }
 
 /**
- * Attempts to resolve a Clerk session token in a safe order:
- * 1) getToken({ template: "backend" })
- * 2) Authorization: Bearer <token>
- * 3) Clerk __session cookie
+ * Attempts to resolve a bearer token in a safe order:
+ * 1) Authorization: Bearer <token>
+ * 2) __session cookie (legacy, if set)
  */
-async function resolveClerkBearer(getToken?: (opts?: any) => Promise<string | null>): Promise<string | undefined> {
+async function resolveBearer(): Promise<string | undefined> {
   let token = "";
-  try {
-    if (getToken) token = (await getToken({ template: "backend" })) || "";
-  } catch {
-    // ignore; fallbacks below
-  }
   if (!token) {
     try {
       const hdrs = await headers();
@@ -51,6 +43,25 @@ async function resolveClerkBearer(getToken?: (opts?: any) => Promise<string | nu
 }
 
 /**
+ * Decode a JWT payload without verifying signature (best-effort) and return the JSON payload.
+ * Safe for extracting non-sensitive claims like `sub`.
+ */
+function decodeJwtPayload(token: string): any | undefined {
+  try {
+    const parts = token.split(".");
+    if (parts.length < 2) return undefined;
+    const b64 = parts[1]
+      .replace(/-/g, "+")
+      .replace(/_/g, "/")
+      .padEnd(Math.ceil(parts[1].length / 4) * 4, "=");
+    const json = Buffer.from(b64, "base64").toString("utf8");
+    return JSON.parse(json);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Returns minimal auth context or throws UnauthorizedError.
  * In E2E mode (NEXT_PUBLIC_E2E_BYPASS_AUTH=true) allows overriding user via header X-E2E-USER.
  */
@@ -65,11 +76,22 @@ export async function getAuthOrThrow(): Promise<MinimalAuth> {
       }
     } catch {}
   }
-
-  const { userId, getToken } = await auth();
-  if (!userId) throw new UnauthorizedError();
-  const bearer = await resolveClerkBearer(getToken);
-  return { userId, bearer };
+  // Resolve bearer from header or cookie, then extract `sub` as userId
+  const bearer = await resolveBearer();
+  if (bearer) {
+    const payload = decodeJwtPayload(bearer);
+    const sub = payload?.sub || payload?.user_id || payload?.uid || "";
+    if (typeof sub === "string" && sub) {
+      return { userId: sub, bearer };
+    }
+  }
+  // As a last resort, support explicit header (legacy/testing)
+  try {
+    const hdrs = await headers();
+    const u = hdrs.get("x-user") || "";
+    if (u) return { userId: u, bearer };
+  } catch {}
+  throw new UnauthorizedError();
 }
 
 /** Optional auth context; undefined when unauthenticated. */

@@ -5,8 +5,34 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 import { NextRequest, NextResponse } from "next/server";
+// Map UI mode ids to backend-accepted ids
+const UI_TO_BACKEND_MODE: Record<string, string> = {
+  self_compassion: "friend",
+  // add any new UI modes here
+};
+
+function normalizeChatBody(raw: any) {
+  const text =
+    typeof raw?.text === "string" ? raw.text :
+    typeof raw?.message === "string" ? raw.message :
+    typeof raw?.content === "string" ? raw.content : "";
+
+  let mode = typeof raw?.mode === "string" ? raw.mode : undefined;
+  if (mode && UI_TO_BACKEND_MODE[mode]) mode = UI_TO_BACKEND_MODE[mode];
+  // if still not in the allowed set, drop it
+  const allowed = new Set(["friend","therapist","coach","parent","boss"]);
+  if (mode && !allowed.has(mode)) mode = undefined;
+
+  return {
+    text,
+    mode,
+    context: raw?.context,
+    session_id: raw?.session_id,
+    sessionId: raw?.sessionId,
+  };
+}
 import { cookies, headers } from "next/headers";
-import { getAuthOrThrow, UnauthorizedError } from "@/lib/auth-server";
+import { getAuthOrThrow, getOptionalAuth, UnauthorizedError } from "@/lib/auth-server";
 import { logger } from "@/lib/logger";
 import { z, ensureJsonUnder, boundedString, httpError } from "@/lib/validate";
 import { guardRate } from "@/lib/guards";
@@ -25,15 +51,38 @@ function bad(status: number, error: string) {
 
 export const POST = withCORS(async function POST(req: NextRequest) {
   try {
-  const { userId, bearer } = await getAuthOrThrow();
+  // Resolve auth, but honor local E2E bypass to enable unauthenticated testing
+  let userId: string;
+  let bearer: string | undefined;
+  try {
+    const auth = await getOptionalAuth();
+    if (auth?.userId) {
+      userId = auth.userId;
+      bearer = auth.bearer;
+    } else if (process.env.NEXT_PUBLIC_E2E_BYPASS_AUTH === "true") {
+      // Synthesize a local test identity for end-to-end testing without real auth
+      userId = "e2e-local";
+      bearer = "e2e-token";
+    } else {
+      // Not in bypass mode and no auth — enforce 401
+      throw new UnauthorizedError();
+    }
+  } catch (e) {
+    if (process.env.NEXT_PUBLIC_E2E_BYPASS_AUTH === "true") {
+      userId = "e2e-local";
+      bearer = "e2e-token";
+    } else {
+      throw e;
+    }
+  }
   await deriveRoles(userId); // resolves roles if needed later; not used here
     // Per-start limiter: 20/min/user
     {
       const limited = await guardRate(req, { key: "proxy-chat-stream", limit: 20, windowMs: 60_000 });
       if (limited) return limited;
     }
-    // CSRF
-    {
+    // CSRF: enforce in normal mode; skip in local E2E bypass to simplify curl-based testing
+    if (process.env.NEXT_PUBLIC_E2E_BYPASS_AUTH !== "true") {
       const r = await assertSameOrigin(req);
       if (r) return r;
       const r2 = assertDoubleSubmit(req);
@@ -52,49 +101,73 @@ export const POST = withCORS(async function POST(req: NextRequest) {
       return bad(400, "Bad JSON");
     }
 
+
     const ChatIn = z
       .object({
         text: boundedString(4000),
-        mode: z.enum(["friend", "therapist", "coach", "parent", "boss"]).optional(),
+        mode: z.enum([
+          "friend",
+          "therapist",
+          "coach",
+          "parent",
+          "partner",
+          "boss",
+          "inner_critic",
+          "self_compassion"
+        ]).optional(),
         context: z.object({ messageId: boundedString(64).optional(), convoId: boundedString(64).optional() }).optional(),
         session_id: boundedString(128).optional(),
         sessionId: boundedString(128).optional(),
       })
       .strip();
-    const parsed = ChatIn.safeParse(body);
-    if (!parsed.success) return httpError(400, "Invalid request");
+    const candidate = normalizeChatBody(body);
+    const parsed = ChatIn.safeParse(candidate);
+    if (!parsed.success) {
+      // Better DX in dev: return Zod error details
+      if (process.env.NODE_ENV !== "production") {
+        return new NextResponse(JSON.stringify({ error: "Invalid request", details: parsed.error.format() }), {
+          status: 400,
+          headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
+        });
+      }
+      return httpError(400, "Invalid request");
+    }
 
     const text = parsed.data.text;
     const session_id = parsed.data.session_id || parsed.data.sessionId;
     const mode = parsed.data.mode;
 
-    // Resolve a Clerk session token (prefer centralized bearer from auth helper)
-    let clerkJwt = bearer || "";
-    if (!clerkJwt) {
+    // Resolve an auth session token (prefer centralized bearer from auth helper)
+    let authJwt = bearer || "";
+    if (!authJwt) {
       const hdrs = await headers();
       const authzHeader = hdrs.get("authorization") || hdrs.get("Authorization");
-      if (authzHeader?.startsWith("Bearer ")) clerkJwt = authzHeader.slice(7).trim();
+      if (authzHeader?.startsWith("Bearer ")) authJwt = authzHeader.slice(7).trim();
     }
-    if (!clerkJwt) {
+    if (!authJwt) {
       const cookieStore = await cookies();
-      clerkJwt = cookieStore.get("__session")?.value ?? "";
+      authJwt = cookieStore.get("__session")?.value ?? "";
     }
 
-  // Propagate client abort to upstream
+    // Propagate client abort to upstream
   const controller = new AbortController();
   req.signal?.addEventListener("abort", () => controller.abort());
 
-    // Build body without undefineds
-    const upstreamPayload: Record<string, unknown> = { text };
-    if (session_id) upstreamPayload.session_id = session_id;
-    if (mode) upstreamPayload.mode = mode;
+    // Build body for backend - transform client payload to backend schema
+    // Backend expects ONLY: { user_id: string, message: string }
+    // Do NOT send extra fields - Pydantic will reject them
+    const upstreamPayload: Record<string, unknown> = { 
+      user_id: userId,
+      message: text 
+    };
+    // Note: session_id and mode are stored in client but not sent to MCP server
 
     // Allow synthetic stream in E2E mode to test burst caps
     let upstream: Response | undefined;
     const hdrsForUpstream: HeadersInit = {
       "Content-Type": "application/json",
       Accept: "application/x-ndjson",
-      Authorization: `Bearer ${clerkJwt}`,
+      Authorization: `Bearer ${authJwt}`,
     };
     (hdrsForUpstream as any)["X-Tenant-Id"] = userId;
     const hdrs = await headers();
@@ -129,7 +202,8 @@ export const POST = withCORS(async function POST(req: NextRequest) {
       upstream = new Response(rs, { headers: { "Content-Type": "application/x-ndjson" } });
     } else {
       const allowedHost = (() => { try { return new URL(BACKEND_URL).hostname; } catch { return undefined; }})();
-      upstream = await safeFetch(`${BACKEND_URL}/chat_stream`, {
+  // MCP streaming endpoint (integrated into main backend at /mcp/stream)
+  upstream = await safeFetch(`${BACKEND_URL}/mcp/stream`, {
         method: "POST",
         headers: hdrsForUpstream,
         body: JSON.stringify(upstreamPayload),
@@ -401,7 +475,20 @@ export const POST = withCORS(async function POST(req: NextRequest) {
   } catch (err: any) {
     if (err instanceof Response) return err; // propagate size guard httpError
     if (err instanceof UnauthorizedError) return toErrorResponse(new AppError("unauthorized", "Unauthorized", 401));
-    logger.error("proxy-chat-stream error:", err);
+    // Log full error object and stack for debugging (temporary)
+    try {
+      const dump = (() => {
+        try {
+          return JSON.stringify(err, Object.getOwnPropertyNames(err));
+        } catch (_) {
+          try { return String(err); } catch (_) { return "<unserializable error>"; }
+        }
+      })();
+      logger.error("proxy-chat-stream error:", { dump, stack: err?.stack });
+      try { console.error("proxy-chat-stream error dump:", dump, "stack:", err?.stack); } catch (_) {}
+    } catch (_) {
+      try { console.error("proxy-chat-stream error (failed to stringify)", err); } catch (_) {}
+    }
     return toErrorResponse(err);
   }
 }, { credentials: true });

@@ -3,7 +3,7 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@clerk/nextjs/server";
+import { getAuthOrThrow } from "@/lib/auth-server";
 import { createServerServiceClient } from "@/lib/supabase/server";
 import { randomUUID } from "crypto";
 import { guardRate } from "@/lib/guards";
@@ -85,8 +85,7 @@ function fruitIdForEmotion(emotion?: string | null): string {
 
 /* ------------------------------ GET --------------------------- */
 export const GET = withErrorHandling(async function GET(req: NextRequest) {
-    const { userId } = await auth();
-    if (!userId) throw new AppError("unauthorized", "Unauthorized", 401);
+  const { userId } = await getAuthOrThrow();
 
     const supabase = sb();
     const url = new URL(req.url);
@@ -298,7 +297,7 @@ export const GET = withErrorHandling(async function GET(req: NextRequest) {
 /* ------------------------------ POST -------------------------- */
 // Upsert Daily Mood for a given day
 export const POST = withCORS(withErrorHandling(async function POST(req: NextRequest) {
-    const { userId } = await auth();
+  const { userId } = await getAuthOrThrow();
     if (!userId) throw new AppError("unauthorized", "Unauthorized", 401);
     // Limit calendar write ops to 30/min/user
     {
@@ -366,7 +365,7 @@ export const POST = withCORS(withErrorHandling(async function POST(req: NextRequ
 /* ----------------------------- DELETE ------------------------- */
 // Delete Daily Mood for a given day (UTC day window)
 export const DELETE = withCORS(withErrorHandling(async function DELETE(req: NextRequest) {
-    const { userId } = await auth();
+  const { userId } = await getAuthOrThrow();
     if (!userId) throw new AppError("unauthorized", "Unauthorized", 401);
     // Limit calendar write ops to 30/min/user
     {

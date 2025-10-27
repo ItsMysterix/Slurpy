@@ -23,7 +23,7 @@ test.describe("Security headers", () => {
       expect(nonce).toBeTruthy();
       expect(csp).toContain("script-src 'self'");
     } else {
-      // In dev, Next/Clerk rewrites may strip response headers; ensure middleware ran
+      // In dev, Next rewrites may strip response headers; ensure middleware ran
       expect(headers["x-middleware-rewrite"]).toBeDefined();
     }
   });

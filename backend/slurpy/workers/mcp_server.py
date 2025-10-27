@@ -61,11 +61,33 @@ except Exception:
     logger.warning("FastMCP not available; HTTP routes will still work.")
 
 # ── Core pipeline (root package `backend` exists in your tree)
-from slurpy.domain.rag.service import async_slurpy_answer
-from emotion.predict import predict_emotion
+# NOTE: heavy ML/model modules imported lazily inside handlers to reduce startup memory
+_LAZY_IMPORTS = {}
 
-# ── NLP helpers (under slurpy/domain/nlp/service.py)
-from slurpy.domain.nlp.service import analyze_text, analyze_and_redact, warmup_nlp
+# helper to import heavy pipeline modules on-demand
+def _import_pipeline():
+    """Attempt to import heavy modules used by the local pipeline.
+    Returns a dict with keys: async_slurpy_answer, predict_emotion, analyze_text, analyze_and_redact, warmup_nlp
+    Raises ImportError if core modules are not available.
+    """
+    if _LAZY_IMPORTS:
+        return _LAZY_IMPORTS
+
+    try:
+        from slurpy.domain.rag.service import async_slurpy_answer as _async_slurpy_answer
+        from emotion.predict import predict_emotion as _predict_emotion
+        from slurpy.domain.nlp.service import analyze_text as _analyze_text, analyze_and_redact as _analyze_and_redact, warmup_nlp as _warmup_nlp
+    except Exception as e:
+        raise ImportError(f"local pipeline import failed: {e}") from e
+
+    _LAZY_IMPORTS.update({
+        "async_slurpy_answer": _async_slurpy_answer,
+        "predict_emotion": _predict_emotion,
+        "analyze_text": _analyze_text,
+        "analyze_and_redact": _analyze_and_redact,
+        "warmup_nlp": _warmup_nlp,
+    })
+    return _LAZY_IMPORTS
 
 # -------------------------------------------------------------------
 # Types & state
@@ -106,7 +128,11 @@ if _HAS_FASTMCP:
     async def chat(user_id: str, message: str) -> dict:
         hist = _get_history(user_id)
         try:
-            result = await async_slurpy_answer(message, hist, user_id=user_id)
+            mods = _import_pipeline()
+            result = await mods["async_slurpy_answer"](message, hist, user_id=user_id)
+        except ImportError as ie:
+            logger.exception("FastMCP: local pipeline unavailable: %s", ie)
+            return {"reply": f"Internal error: pipeline unavailable", "emotions": []}
         except Exception as e:
             logger.exception("❌ async_slurpy_answer crashed")
             return {"reply": f"Internal error: {e}", "emotions": []}
@@ -120,7 +146,11 @@ if _HAS_FASTMCP:
         if not emotion_label:
             async def _bg_emotion():
                 try:
-                    _ = predict_emotion(message)
+                    try:
+                        mods = _import_pipeline()
+                        _ = mods["predict_emotion"](message)
+                    except Exception:
+                        pass
                 except Exception:
                     pass
             asyncio.create_task(_bg_emotion())
@@ -155,21 +185,65 @@ app.add_middleware(
 
 # --- Warm NLP on startup (avoid first-request lag)
 @app.on_event("startup")
-def _warm_models() -> None:
+async def _warm_models() -> None:
+    """
+    Start a background warmup task unless explicitly disabled by env.
+    - Set MCP_SKIP_WARMUP=1 (or true/yes) in the environment to skip heavy warmup at startup.
+    - We warm in a background task so the process can report healthy quickly and avoid OOM kills
+      during the initial blocking warmup period. The background warmup will still allocate memory
+      but it won't block the startup/health check path.
+    """
+    skip = os.getenv("MCP_SKIP_WARMUP", "false").lower() in {"1", "true", "yes"}
+    if skip:
+        logger.info("MCP_SKIP_WARMUP set — skipping heavy NLP warmup at startup")
+        return
+
+    async def _do_warm() -> None:
+        # Try to import the heavy pipeline; if unavailable, skip warmup.
+        mods = None
+        try:
+            mods = _import_pipeline()
+        except ImportError as ie:
+            logger.warning("[NLP] warmup skipped — pipeline import failed: %s", ie)
+        except Exception as e:
+            logger.warning("[NLP] warmup import error: %s", e)
+
+        if mods:
+            try:
+                mods["warmup_nlp"]()
+                logger.info("[NLP] warmup complete")
+            except Exception as e:
+                logger.warning(f"[NLP] warmup warning: {e}")
+
+        # Best-effort EmotionBrain warmup (feature-gated)
+        try:
+            from slurpy.domain.nlp.service import get_emotion_brain
+            eb = get_emotion_brain()
+            if eb is not None:
+                eb.warmup()
+                logger.info("[EmotionV2] warmup complete")
+        except Exception as e:
+            logger.warning(f"[EmotionV2] warmup warning: {e}")
+
+    # Schedule background warmup and return immediately so health checks can pass.
     try:
-        warmup_nlp()
-        logger.info("[NLP] warmup complete")
-    except Exception as e:
-        logger.warning(f"[NLP] warmup warning: {e}")
-    # Best-effort EmotionBrain warmup (always try; feature-gated use elsewhere)
-    try:
-        from slurpy.domain.nlp.service import get_emotion_brain
-        eb = get_emotion_brain()
-        if eb is not None:
-            eb.warmup()
-            logger.info("[EmotionV2] warmup complete")
-    except Exception as e:
-        logger.warning(f"[EmotionV2] warmup warning: {e}")
+        asyncio.create_task(_do_warm())
+    except Exception:
+        # If the loop isn't running yet for some reason, run warmup synchronously as fallback.
+        try:
+            mods = None
+            try:
+                mods = _import_pipeline()
+            except ImportError as ie:
+                logger.warning("[NLP] warmup fallback skipped — pipeline import failed: %s", ie)
+            if mods:
+                try:
+                    mods["warmup_nlp"]()
+                    logger.info("[NLP] warmup complete (fallback)")
+                except Exception as e:
+                    logger.warning(f"[NLP] warmup fallback warning: {e}")
+        except Exception as e:
+            logger.warning(f"[NLP] warmup fallback warning: {e}")
 
 # -------------------------------------------------------------------
 # Health
@@ -183,12 +257,48 @@ async def healthz():
 # -------------------------------------------------------------------
 @app.post("/v1/mcp/chat", response_model=ChatResponse)
 async def http_chat(req: ChatRequest):
+    """Chat endpoint — prefer local pipeline, otherwise proxy to BACKEND_URL/mcp/chat.
+
+    This lazily imports the local pipeline to avoid startup memory spikes. If imports fail
+    or the pipeline raises, we forward the request to the main backend so the worker stays
+    responsive.
+    """
     hist = _get_history(req.user_id)
+
+    # Try local pipeline first (lazy import)
     try:
-        result = await async_slurpy_answer(req.message, hist, user_id=req.user_id)
+        mods = _import_pipeline()
+        result = await mods["async_slurpy_answer"](req.message, hist, user_id=req.user_id)
+    except ImportError as ie:
+        logger.warning("Local pipeline unavailable — proxying chat to BACKEND_URL: %s", ie)
+        # Proxy to backend
+        try:
+            import httpx
+        except Exception:
+            raise HTTPException(status_code=503, detail="Local pipeline unavailable and httpx not installed for proxying")
+        backend = os.getenv("BACKEND_URL", "http://localhost:8000").rstrip("/")
+        url = f"{backend}/mcp/chat"
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                r = await client.post(url, json={"user_id": req.user_id, "message": req.message}, headers={"Content-Type": "application/json"})
+                r.raise_for_status()
+                return ChatResponse(**r.json())
+        except httpx.HTTPError as e:
+            logger.exception("Proxy to backend failed: %s", e)
+            raise HTTPException(status_code=502, detail=f"proxy error: {e}")
     except Exception as e:
         logger.exception("❌ async_slurpy_answer crashed")
-        raise HTTPException(status_code=500, detail=f"pipeline error: {e}")
+        # fall through to try proxy
+        try:
+            import httpx
+            backend = os.getenv("BACKEND_URL", "http://localhost:8000").rstrip("/")
+            url = f"{backend}/mcp/chat"
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                r = await client.post(url, json={"user_id": req.user_id, "message": req.message}, headers={"Content-Type": "application/json"})
+                r.raise_for_status()
+                return ChatResponse(**r.json())
+        except Exception:
+            raise HTTPException(status_code=500, detail=f"pipeline error: {e}")
 
     if not result:
         return ChatResponse(reply="Sorry, I couldn't process your message.", emotions=[])
@@ -198,12 +308,24 @@ async def http_chat(req: ChatRequest):
     if not emotion_label:
         async def _bg_emotion():
             try:
-                _ = predict_emotion(req.message)
+                # use lazy-loaded predict_emotion if available
+                try:
+                    mods = _import_pipeline()
+                    _ = mods["predict_emotion"](req.message)
+                except Exception:
+                    pass
             except Exception:
                 pass
         asyncio.create_task(_bg_emotion())
 
     return ChatResponse(reply=reply, emotions=[emotion_label] if emotion_label else [])
+
+
+# Alias for legacy/no-versioned path
+@app.post("/mcp/chat", response_model=ChatResponse)
+async def http_chat_alias(req: ChatRequest):
+    """Alias to support callers that POST to /mcp/chat (no /v1 prefix)."""
+    return await http_chat(req)
 
 # -------------------------------------------------------------------
 # NDJSON stream
@@ -213,20 +335,55 @@ def _nd(obj: dict) -> bytes:
 
 @app.post("/v1/mcp/stream")
 async def http_stream(req: ChatRequest):
+    """NDJSON streaming endpoint.
+
+    Prefer local pipeline (lazy-imported). If unavailable or it errors, proxy the request
+    to BACKEND_URL/mcp/stream and stream its response back to the client. This keeps the
+    worker responsive even when models can't be loaded locally.
+    """
     hist = _get_history(req.user_id)
+
+    # Attempt to load local pipeline
+    mods = None
     try:
-        result = await async_slurpy_answer(req.message, hist, user_id=req.user_id)
-    except Exception as e:
-        logger.exception("❌ async_slurpy_answer crashed")
-        raise HTTPException(status_code=500, detail=f"pipeline error: {e}")
+        mods = _import_pipeline()
+    except Exception as ie:
+        logger.warning("Local pipeline unavailable — will proxy to BACKEND_URL: %s", ie)
 
+    result = None
+    if mods:
+        try:
+            result = await mods["async_slurpy_answer"](req.message, hist, user_id=req.user_id)
+        except Exception as e:
+            logger.exception("Local pipeline crashed: %s", e)
+            result = None
+
+    # If local pipeline unavailable or failed, proxy to BACKEND_URL/mcp/stream
     if not result:
-        async def _fail() -> AsyncGenerator[bytes, None]:
-            yield _nd({"type": "start"})
-            yield _nd({"type": "delta", "text": "Sorry, I couldn't process your message."})
-            yield _nd({"type": "done"})
-        return StreamingResponse(_fail(), media_type="application/x-ndjson")
+        try:
+            import httpx
+        except Exception:
+            raise HTTPException(status_code=503, detail="Local pipeline unavailable and proxying not configured")
 
+        backend = os.getenv("BACKEND_URL", "http://localhost:8000").rstrip("/")
+        url = f"{backend}/mcp/stream"
+
+        async def proxy_stream() -> AsyncGenerator[bytes, None]:
+            try:
+                async with httpx.AsyncClient(timeout=None) as client:
+                    async with client.stream("POST", url, json={"user_id": req.user_id, "message": req.message}, headers={"Content-Type": "application/json"}) as r:
+                        r.raise_for_status()
+                        async for chunk in r.aiter_bytes():
+                            yield chunk
+            except Exception as e:
+                logger.exception("Proxy stream to backend failed: %s", e)
+                yield _nd({"type": "start"})
+                yield _nd({"type": "delta", "text": f"proxy error: {e}"})
+                yield _nd({"type": "done"})
+
+        return StreamingResponse(proxy_stream(), media_type="application/x-ndjson")
+
+    # Stream local result
     reply, emotion_label, fruit = result
 
     async def gen() -> AsyncGenerator[bytes, None]:
@@ -243,6 +400,13 @@ async def http_stream(req: ChatRequest):
 
     return StreamingResponse(gen(), media_type="application/x-ndjson")
 
+
+# Backwards-compatible aliases: accept requests that target /mcp/stream (no /v1 prefix)
+@app.post("/mcp/stream")
+async def http_stream_alias(req: ChatRequest):
+    """Alias to support callers that POST to /mcp/stream (older or alternative routing)."""
+    return await http_stream(req)
+
 # -------------------------------------------------------------------
 # NLP endpoints (router + include)
 # -------------------------------------------------------------------
@@ -254,7 +418,12 @@ async def api_nlp_analyze(body: NLPIn):
         raise HTTPException(status_code=400, detail="text is required")
     if len(body.text) > _MAX_LEN:
         raise HTTPException(status_code=413, detail=f"text too long; max is {_MAX_LEN} chars")
-    return analyze_text(body.text)
+    try:
+        mods = _import_pipeline()
+        return mods["analyze_text"](body.text)
+    except ImportError as ie:
+        logger.exception("NLP analyze unavailable: %s", ie)
+        raise HTTPException(status_code=503, detail="NLP analyze not available")
 
 @router.post("/api/nlp/redact")
 async def api_nlp_redact(body: NLPIn):
@@ -262,7 +431,12 @@ async def api_nlp_redact(body: NLPIn):
         raise HTTPException(status_code=400, detail="text is required")
     if len(body.text) > _MAX_LEN:
         raise HTTPException(status_code=413, detail=f"text too long; max is {_MAX_LEN} chars")
-    return analyze_and_redact(body.text)
+    try:
+        mods = _import_pipeline()
+        return mods["analyze_and_redact"](body.text)
+    except ImportError as ie:
+        logger.exception("NLP redact unavailable: %s", ie)
+        raise HTTPException(status_code=503, detail="NLP redact not available")
 
 app.include_router(router)
 
@@ -307,9 +481,15 @@ if __name__ == "__main__":
             test_user = "local_user"
             test_msg = "I feel anxious about my exams, why do I always overthink?"
             hist = _get_history(test_user)
-            out = await async_slurpy_answer(test_msg, hist, user_id=test_user)
-            from pprint import pprint
-            pprint(out)
+            try:
+                mods = _import_pipeline()
+                out = await mods["async_slurpy_answer"](test_msg, hist, user_id=test_user)
+                from pprint import pprint
+                pprint(out)
+            except ImportError as ie:
+                logger.error("Local pipeline not available for --test: %s", ie)
+            except Exception as e:
+                logger.exception("Test run failed: %s", e)
         asyncio.run(run_test())
         sys.exit(0)
 

@@ -3,7 +3,7 @@ from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field
 
 class UserRef(BaseModel):
-    user_id: str = Field(..., description="Stable user id (e.g., Clerk sub)")
+    user_id: str = Field(..., description="Stable user id (e.g., auth sub)")
 
 class SessionRef(BaseModel):
     session_id: str = Field(..., description="Chat session id")

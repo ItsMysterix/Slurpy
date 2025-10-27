@@ -5,7 +5,7 @@
 
 ## Deployment Overview
 
-All 3 services successfully deployed to Fly.io with the updated Docker configurations including full Clerk authentication support.
+All 3 services successfully deployed to Fly.io with the updated Docker configurations and Supabase authentication.
 
 ## Services Status
 
@@ -32,8 +32,7 @@ All 3 services successfully deployed to Fly.io with the updated Docker configura
 
 ### Backend (slurpy.fly.dev)
 - ✅ Updated Docker configuration with all environment variables
-- ✅ Clerk JWT verification (JWKS URL + secret key)
-- ✅ Supabase integration working
+- ✅ Supabase integration working (JWT verification handled via Supabase)
 - ⚠️ Qdrant URL needs to point to production Qdrant instance
 
 ### MCP (slurpy-mcp.fly.dev)
@@ -43,8 +42,6 @@ All 3 services successfully deployed to Fly.io with the updated Docker configura
 - ⚠️ Qdrant URL needs production instance
 
 ### Frontend (slurpy-web.fly.dev)
-- ✅ Built with Clerk keys at build-time (middleware compilation)
-- ✅ Clerk keys available at runtime (SSR)
 - ✅ Supabase frontend keys configured
 - ✅ Points to backend at https://slurpy.fly.dev
 - ✅ Auto-start/stop for cost savings
@@ -54,13 +51,11 @@ All 3 services successfully deployed to Fly.io with the updated Docker configura
 ### Secrets Updated
 - ✅ `NEXT_PUBLIC_SUPABASE_URL` added to frontend
 - ✅ `NEXT_PUBLIC_SUPABASE_ANON_KEY` added to frontend
-- ✅ All existing secrets retained (Clerk, Supabase, OpenAI)
+- ✅ All existing secrets retained (Supabase, OpenAI)
 
 ### Build Arguments
 Frontend deployed with:
 ```bash
---build-arg NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_live_...
---build-arg CLERK_SECRET_KEY=sk_live_...
 --build-arg NEXT_PUBLIC_RAG_API=https://slurpy.fly.dev
 ```
 
@@ -78,7 +73,7 @@ Frontend deployed with:
 - Public routes accessible without auth
 - Protected routes redirect to /sign-in
 - JWT validation happens on backend
-- Session management via Clerk
+- Session management via Supabase Auth
 
 ## Known Issues & Next Steps
 
@@ -125,8 +120,6 @@ flyctl deploy -a slurpy-mcp -c fly.mcp.toml --ha=false
 
 # Frontend
 flyctl deploy -a slurpy-web -c fly.frontend.toml --ha=false \
-  --build-arg NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY="pk_live_..." \
-  --build-arg CLERK_SECRET_KEY="sk_live_..." \
   --build-arg NEXT_PUBLIC_RAG_API="https://slurpy.fly.dev"
 ```
 
@@ -158,7 +151,7 @@ flyctl deploy -a slurpy-web -c fly.frontend.toml --ha=false \
 
 ## Security Checklist
 
-- ✅ Clerk authentication enabled
+- ✅ Supabase authentication enabled
 - ✅ JWT validation configured
 - ✅ HTTPS enforced (Fly.io default)
 - ✅ Security headers configured
@@ -187,7 +180,6 @@ flyctl deploy -a slurpy-web -c fly.frontend.toml --ha=false \
 - [ ] Backend → Qdrant (⚠️ Needs setup)
 - [ ] Backend → MCP (Test needed)
 - [ ] Frontend → Backend (Test needed)
-- [ ] Clerk webhook → Backend (Test needed)
 
 ## Cost Optimization
 
@@ -250,7 +242,7 @@ flyctl releases rollback -a slurpy-web --version <version>
 
 **Deployment successful!** 🚀
 
-All services deployed with full Clerk authentication support. Frontend, backend, and MCP are running on Fly.io. You can now test the complete authentication flow at your production domain:
+All services deployed with Supabase authentication. Frontend, backend, and MCP are running on Fly.io. You can now test the complete authentication flow at your production domain:
 
 👉 **https://slurpy-web.fly.dev**
 
