@@ -38,10 +38,10 @@ elif os.path.exists(".env.local"):
     load_dotenv(".env.local")
     logger.info("Loaded environment from .env.local")
 else:
-    logger.warning("No .env.backend or .env.local found! Using system env only.")
+    logger.warning("No .env.backend or .env.local found; using system env only.")
 
 if not os.getenv("OPENAI_API_KEY"):
-    logger.error("⚠️ OPENAI_API_KEY missing — pipeline calls may fail until set.")
+    logger.error("OPENAI_API_KEY missing — pipeline calls may fail until set.")
 
 # Optional: uvloop
 try:
@@ -448,7 +448,7 @@ def run(host: str = "0.0.0.0", port: int = 8000, reload: bool = False) -> None:
     - Otherwise, serve the FastAPI app via uvicorn.
     """
     if _HAS_FASTMCP:
-        logger.info("🚀 Starting Slurpy MCP (FastMCP runtime)...")
+        logger.info("Starting Slurpy MCP (FastMCP runtime)...")
         mcp.run()
         return
 
@@ -459,7 +459,7 @@ def run(host: str = "0.0.0.0", port: int = 8000, reload: bool = False) -> None:
             "uvicorn is required to run the HTTP server. Install it with `pip install uvicorn`."
         ) from e
 
-    logger.info(f"🚀 Starting Slurpy MCP HTTP server on {host}:{port} ...")
+    logger.info(f"Starting Slurpy MCP HTTP server on {host}:{port} ...")
     # IMPORTANT: use module path that matches your tree
     uvicorn.run("slurpy.workers.mcp_server:app", host=host, port=port, reload=reload)
 
@@ -494,7 +494,7 @@ if __name__ == "__main__":
         sys.exit(0)
 
     if _HAS_FASTMCP:
-        logger.info("🚀 Starting Slurpy MCP (FastMCP runtime)...")
+        logger.info("Starting Slurpy MCP (FastMCP runtime)...")
         mcp.run()
     else:
         logger.error("FastMCP not installed. Run with: uvicorn slurpy.workers.mcp_server:app --reload")
