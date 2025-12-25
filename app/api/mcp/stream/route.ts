@@ -39,26 +39,29 @@ export async function POST(req: NextRequest) {
       async start(ctrl) {
         // Use SSE streaming from OpenAI's Chat Completions endpoint
         // gpt-4o-mini is 4x faster than gpt-3.5-turbo with better reasoning
-      const res = await fetch("https://api.openai.com/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${apiKey}`,
-          "Content-Type": "application/json",
-          "Accept": "text/event-stream",
-        },
-        body: JSON.stringify({
-          model: process.env.OPENAI_MODEL || "gpt-4o-mini",
-          stream: true,
-          max_completion_tokens: 300,
-          temperature: 0.7,
-          top_p: 0.9,
-          messages: [
-            { role: "system", content: "You are a supportive, kind assistant. Respond in 2-3 sentences max. Be direct and concise." },
-            { role: "user", content: text }
-          ],
+      const res = await Promise.race([
+        fetch("https://api.openai.com/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${apiKey}`,
+            "Content-Type": "application/json",
+            "Accept": "text/event-stream",
+          },
+          body: JSON.stringify({
+            model: process.env.OPENAI_MODEL || "gpt-4o-mini",
+            stream: true,
+            max_completion_tokens: 150,
+            temperature: 0.6,
+            top_p: 0.85,
+            messages: [
+              { role: "system", content: "Respond in 1-2 sentences only. Be direct." },
+              { role: "user", content: text }
+            ],
+          }),
+          signal: controller.signal,
         }),
-        signal: controller.signal,
-      });
+        new Promise((_, reject) => setTimeout(() => reject(new Error("OpenAI timeout")), 15000))
+      ]) as Response;
 
       if (!res.ok || !res.body) {
         ctrl.enqueue(encoder.encode(JSON.stringify({ type: "error", reason: "upstream" }) + "\n"));
