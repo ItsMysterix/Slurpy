@@ -31,3 +31,4 @@ emotion/**/rng_state.pth
 emotion/**/training_args.bin
 *.safetensors
 *.ckpt
+.vercel
