@@ -1,6 +1,7 @@
 // app/api/mcp/stream/route.ts
 // Internal MCP-like streaming route for Vercel
-export const runtime = "nodejs";
+// Edge runtime for lower latency and reduced cold starts
+export const runtime = "edge";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 

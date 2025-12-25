@@ -4,6 +4,7 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 import { NextRequest, NextResponse } from "next/server";
+import { createHash, randomUUID } from "crypto";
 import { createClient } from "@supabase/supabase-js";
 import { notifyInsightsUpdate } from "@/lib/sse-bus";
 
@@ -213,12 +214,20 @@ export async function POST(req: NextRequest) {
       const day = toUTCStartOfDay(end).toISOString();
       const intensity10 = Math.round(Math.max(1, Math.min(10, avgIntensity01 * 10)));
       const fruit = fruitForEmotion(dominant);
+      // Deterministic id to satisfy NOT NULL constraint when inserting new mood rows
+      const dailyId = (() => {
+        try {
+          return createHash("sha256").update(`${userId}|${day}`).digest("hex").slice(0, 24);
+        } catch {
+          try { return randomUUID(); } catch { return `${userId}-${day}`; }
+        }
+      })();
 
       // Prefer snake_case table if it exists
       const upSnake = await supabase
         .from("daily_mood")
         .upsert(
-          [{ user_id: userId, date: day, emotion: dominant, intensity: intensity10, fruit }],
+          [{ id: dailyId, user_id: userId, date: day, emotion: dominant, intensity: intensity10, fruit }],
           { onConflict: "user_id,date", ignoreDuplicates: false }
         );
 
@@ -227,7 +236,7 @@ export async function POST(req: NextRequest) {
         const upLegacy = await supabase
           .from("DailyMood")
           .upsert(
-            [{ userId, date: day, emotion: dominant, intensity: intensity10, fruit }],
+            [{ id: dailyId, userId, date: day, emotion: dominant, intensity: intensity10, fruit }],
             { onConflict: "userId,date", ignoreDuplicates: false } as any
           );
         // Ignore missing-constraint errors here; it's best-effort.
