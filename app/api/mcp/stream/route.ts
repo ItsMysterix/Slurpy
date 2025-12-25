@@ -1,7 +1,6 @@
 // app/api/mcp/stream/route.ts
 // Internal MCP-like streaming route for Vercel
-// Edge runtime for lower latency and reduced cold starts
-export const runtime = "edge";
+export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
@@ -15,30 +14,31 @@ function bad(status: number, error: string) {
 }
 
 export async function POST(req: NextRequest) {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) return bad(500, "Missing OPENAI_API_KEY");
-
-  let body: any = {};
   try {
-    const txt = await req.text();
-    body = txt ? JSON.parse(txt) : {};
-  } catch {
-    return bad(400, "Bad JSON");
-  }
-  const user_id = typeof body?.user_id === "string" ? body.user_id : "unknown";
-  const text = typeof body?.message === "string" ? body.message : "";
-  if (!text) return bad(400, "message is required");
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) return bad(500, "Missing OPENAI_API_KEY");
 
-  const controller = new AbortController();
-  req.signal?.addEventListener("abort", () => controller.abort());
+    let body: any = {};
+    try {
+      const txt = await req.text();
+      body = txt ? JSON.parse(txt) : {};
+    } catch {
+      return bad(400, "Bad JSON");
+    }
+    const user_id = typeof body?.user_id === "string" ? body.user_id : "unknown";
+    const text = typeof body?.message === "string" ? body.message : "";
+    if (!text) return bad(400, "message is required");
 
-  const encoder = new TextEncoder();
-  let seq = 0;
+    const controller = new AbortController();
+    req.signal?.addEventListener("abort", () => controller.abort());
 
-  const stream = new ReadableStream<Uint8Array>({
-    async start(ctrl) {
-      // Use SSE streaming from OpenAI's Chat Completions endpoint
-      // Model choice can be adjusted; defaulting to gpt-4o-mini for latency
+    const encoder = new TextEncoder();
+    let seq = 0;
+
+    const stream = new ReadableStream<Uint8Array>({
+      async start(ctrl) {
+        // Use SSE streaming from OpenAI's Chat Completions endpoint
+        // Model choice can be adjusted; defaulting to gpt-4o-mini for latency
       const res = await fetch("https://api.openai.com/v1/chat/completions", {
         method: "POST",
         headers: {
@@ -115,13 +115,17 @@ export async function POST(req: NextRequest) {
     }
   });
 
-  return new NextResponse(stream, {
-    headers: {
-      "Content-Type": "application/x-ndjson; charset=utf-8",
-      "Cache-Control": "no-cache, no-transform",
-      "X-Accel-Buffering": "no",
-      "Connection": "keep-alive",
-      "X-Content-Type-Options": "nosniff",
-    },
-  });
+    return new NextResponse(stream, {
+      headers: {
+        "Content-Type": "application/x-ndjson; charset=utf-8",
+        "Cache-Control": "no-cache, no-transform",
+        "X-Accel-Buffering": "no",
+        "Connection": "keep-alive",
+        "X-Content-Type-Options": "nosniff",
+      },
+    });
+  } catch (err: any) {
+    console.error("MCP stream error:", err?.message || err);
+    return bad(500, "Internal server error");
+  }
 }
