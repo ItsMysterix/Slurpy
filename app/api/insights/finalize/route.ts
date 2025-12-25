@@ -215,12 +215,9 @@ export async function POST(req: NextRequest) {
       const intensity10 = Math.round(Math.max(1, Math.min(10, avgIntensity01 * 10)));
       const fruit = fruitForEmotion(dominant);
       // Deterministic id to satisfy NOT NULL constraint when inserting new mood rows
+      // Generate a UUID for new inserts; conflict target prevents duplicates
       const dailyId = (() => {
-        try {
-          return createHash("sha256").update(`${userId}|${day}`).digest("hex").slice(0, 24);
-        } catch {
-          try { return randomUUID(); } catch { return `${userId}-${day}`; }
-        }
+        try { return randomUUID(); } catch { return `${userId}-${day}`; }
       })();
 
       // Prefer snake_case table if it exists
