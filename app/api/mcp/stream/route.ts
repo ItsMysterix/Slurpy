@@ -45,22 +45,20 @@ export async function POST(req: NextRequest) {
           headers: {
             "Authorization": `Bearer ${apiKey}`,
             "Content-Type": "application/json",
-            "Accept": "text/event-stream",
           },
           body: JSON.stringify({
             model: process.env.OPENAI_MODEL || "gpt-4o-mini",
             stream: true,
-            max_completion_tokens: 150,
-            temperature: 0.6,
-            top_p: 0.85,
+            max_completion_tokens: 120,
+            temperature: 0.5,
             messages: [
-              { role: "system", content: "Respond in 1-2 sentences only. Be direct." },
+              { role: "system", content: "1-sentence response only." },
               { role: "user", content: text }
             ],
           }),
           signal: controller.signal,
         }),
-        new Promise((_, reject) => setTimeout(() => reject(new Error("OpenAI timeout")), 15000))
+        new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), 12000))
       ]) as Response;
 
       if (!res.ok || !res.body) {

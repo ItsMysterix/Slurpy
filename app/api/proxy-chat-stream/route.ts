@@ -219,7 +219,7 @@ export const POST = withCORS(async function POST(req: NextRequest) {
         body: JSON.stringify(upstreamPayload),
         signal: controller.signal,
         cache: "no-store",
-        timeoutMs: 30_000,
+        timeoutMs: 20_000,
         allowedHosts: upstreamHosts?.length ? upstreamHosts : undefined,
       });
     }
