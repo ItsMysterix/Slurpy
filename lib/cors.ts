@@ -15,6 +15,8 @@ function parseOrigins(): string[] {
     "http://localhost:3000",
     "http://127.0.0.1:3000",
     "https://localhost:3000",
+    "https://slurpy.life",
+    "https://www.slurpy.life",
   ];
   const set = new Set<string>([...fromEnv, ...defaults]);
   return Array.from(set);
