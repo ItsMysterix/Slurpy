@@ -49,16 +49,19 @@ export async function POST(req: NextRequest) {
           body: JSON.stringify({
             model: process.env.OPENAI_MODEL || "gpt-4o-mini",
             stream: true,
-            max_completion_tokens: 120,
-            temperature: 0.5,
+            max_completion_tokens: 400,
+            temperature: 0.8,
             messages: [
-              { role: "system", content: "1-sentence response only." },
+              { 
+                role: "system", 
+                content: "You are Abby, a deeply empathetic mental health companion. Listen carefully, validate emotions, ask thoughtful follow-up questions. Build genuine connection. Give advice only when asked. Be warm, human, not clinical. Respond with 2-3 paragraphs." 
+              },
               { role: "user", content: text }
             ],
           }),
           signal: controller.signal,
         }),
-        new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), 12000))
+        new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), 25000))
       ]) as Response;
 
       if (!res.ok || !res.body) {
