@@ -49,9 +49,11 @@ export async function POST(req: NextRequest) {
         body: JSON.stringify({
           model: process.env.OPENAI_MODEL || "gpt-4o-mini",
           stream: true,
-          max_completion_tokens: 500,
+          max_completion_tokens: 300,
+          temperature: 0.7,
+          top_p: 0.9,
           messages: [
-            { role: "system", content: "You are a supportive, kind assistant. Keep responses concise." },
+            { role: "system", content: "You are a supportive, kind assistant. Respond in 2-3 sentences max. Be direct and concise." },
             { role: "user", content: text }
           ],
         }),
