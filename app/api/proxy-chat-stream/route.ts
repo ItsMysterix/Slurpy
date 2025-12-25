@@ -267,17 +267,16 @@ export const POST = withCORS(async function POST(req: NextRequest) {
         let buffer = "";
         let scheduled = false;
         let ended = false;
-        let sentKickoff = false;
 
         const safeEnqueue = (chunk: Uint8Array) => {
           if (ended) return;
           try { ctrl.enqueue(chunk); } catch { /* ignore after close */ }
         };
 
-        const scheduleFlush = () => {
+        const scheduleFlush = async () => {
           if (scheduled) return;
           scheduled = true;
-          queueMicrotask(() => {
+          queueMicrotask(async () => {
             scheduled = false;
             let countThisTick = 0;
             while (countThisTick < MAX_PER_TICK && total < MAX_TOTAL) {
@@ -288,19 +287,15 @@ export const POST = withCORS(async function POST(req: NextRequest) {
               if (!line.trim()) continue;
               try {
                 const obj = JSON.parse(line);
-                // Mid-stream rate limit: if tripped, emit error and close
-                // Use user as id
-                // Note: This increments per event
-                // eslint-disable-next-line @typescript-eslint/no-floating-promises
-                eventLimiter.check({ id: userId }).then((res) => {
-                  if (!res.ok) {
-                    safeEnqueue(encoder.encode(JSON.stringify({ type: "error", reason: "rate_limited" }) + "\n"));
-                    try { reader.cancel(); } catch {}
-                    try { ctrl.close(); } catch {}
-                    ended = true;
-                    return;
-                  }
-                });
+                // Check rate limit before emitting
+                const rateLimitResult = await eventLimiter.check({ id: userId });
+                if (!rateLimitResult.ok) {
+                  safeEnqueue(encoder.encode(JSON.stringify({ type: "error", reason: "rate_limited" }) + "\n"));
+                  try { reader.cancel(); } catch {}
+                  try { ctrl.close(); } catch {}
+                  ended = true;
+                  return;
+                }
                 const out = { type: "delta", delta: String(obj.delta ?? obj.text ?? obj.token ?? ""), id: obj.seq };
                 safeEnqueue(encoder.encode(JSON.stringify(out) + "\n"));
                 total++;
@@ -427,9 +422,35 @@ export const POST = withCORS(async function POST(req: NextRequest) {
             // Emit kickoff without blocking tokens
             try {
               safeEnqueue(encoder.encode(JSON.stringify(compact) + "\n"));
-              sentKickoff = true;
             } catch {}
           } catch {}
+        })();
+
+        // Read upstream response body and transform to client
+        (async () => {
+          try {
+            const textDecoder = new TextDecoder();
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              buffer += textDecoder.decode(value, { stream: true });
+              scheduleFlush();
+            }
+            if (buffer.trim()) {
+              // Final partial line
+              try {
+                const obj = JSON.parse(buffer);
+                const out = { type: "delta", delta: String(obj.delta ?? obj.text ?? ""), id: obj.seq };
+                safeEnqueue(encoder.encode(JSON.stringify(out) + "\n"));
+              } catch {}
+            }
+            safeEnqueue(encoder.encode(JSON.stringify({ type: "done" }) + "\n"));
+          } catch (err) {
+            safeEnqueue(encoder.encode(JSON.stringify({ type: "error", reason: String(err) }) + "\n"));
+          } finally {
+            ended = true;
+            try { ctrl.close(); } catch {}
+          }
         })();
       },
       cancel() {
