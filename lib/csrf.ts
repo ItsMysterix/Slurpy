@@ -41,20 +41,19 @@ export async function assertSameOrigin(req: NextRequest, allowedOrigins?: string
 
   const origin = originOf(req.headers.get("origin"));
   const referer = originOf(req.headers.get("referer"));
-  
-  // Derive the actual request origin from host header and protocol
-  // (nextUrl.origin is unreliable in production API routes)
-  const host = req.headers.get("host") || req.headers.get("x-forwarded-host");
-  const proto = req.headers.get("x-forwarded-proto") || "https";
-  const selfOrigin = host ? `${proto}://${host}` : null;
 
-  // Always allow strict same-origin requests (origin/referrer matches the request's own origin)
-  if (origin && selfOrigin && origin === selfOrigin) return undefined;
-  if (referer && selfOrigin && referer === selfOrigin) return undefined;
-
-  // Otherwise, fall back to configured allow-list
+  // Check against explicit allow-list first (includes production domains)
   if (origin && allow.includes(origin)) return undefined;
   if (referer && allow.includes(referer)) return undefined;
+
+  // Fallback: try to match against host + protocol from request
+  // (header detection is unreliable on Vercel, so use allow-list as primary defense)
+  const host = req.headers.get("host") || req.headers.get("x-forwarded-host");
+  const proto = req.headers.get("x-forwarded-proto") || "https";
+  if (host) {
+    const derivedOrigin = `${proto}://${host}`;
+    if (origin === derivedOrigin || referer === derivedOrigin) return undefined;
+  }
 
   return httpError(403, "csrf");
 }
