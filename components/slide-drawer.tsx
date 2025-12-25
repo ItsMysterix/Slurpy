@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
+import FocusTrap from "focus-trap-react";
 import { motion } from "framer-motion";
 import {
   Menu, X, MoreVertical, Calendar, BookOpen, MessageCircle, BarChart3, LogOut, Sparkles
@@ -65,10 +66,57 @@ export default function SlideDrawer({ onSidebarToggle }: SlideDrawerProps) {
 
   const goToPlans = () => router.push("/plans");
 
+  // Refs for accessibility and focus management
+  const drawerRef = useRef<HTMLDivElement | null>(null);
+  const lastActiveElementRef = useRef<HTMLElement | null>(null);
+
+  // Body-scroll lock on mobile when the drawer is open. Restore overflow and focus on close.
+  useEffect(() => {
+    if (!isOpen) return;
+    if (typeof window === "undefined") return;
+    const isMobile = window.matchMedia("(max-width: 767px)").matches;
+    if (!isMobile) return;
+    // store last focused element
+    lastActiveElementRef.current = document.activeElement as HTMLElement | null;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev || "";
+      try {
+        lastActiveElementRef.current?.focus?.();
+      } catch (e) {
+        /* ignore */
+      }
+    };
+  }, [isOpen]);
+
+  // Escape handling + initial focus fallback when using FocusTrap
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        toggleSidebar();
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    // try to focus the close button (focus-trap will ensure focus remains inside)
+    const timeout = setTimeout(() => {
+      const panel = drawerRef.current;
+      const closeBtn = panel?.querySelector("[data-close-button]") as HTMLElement | null;
+      closeBtn?.focus?.();
+    }, 0);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      clearTimeout(timeout);
+    };
+  }, [isOpen]);
+
   return (
     <>
       <div
         className={[
+          // desktop: left sidebar, mobile: only show narrow bar with hamburger
           "fixed inset-y-0 left-0 z-40 transition-all duration-300",
           "w-12",
           isOpen ? "md:w-64" : "md:w-16",
@@ -78,7 +126,7 @@ export default function SlideDrawer({ onSidebarToggle }: SlideDrawerProps) {
           "flex flex-col shadow-lg overflow-hidden"
         ].join(" ")}
       >
-        {/* Floaties */}
+        {/* Floaties (desktop only) */}
         <div className="hidden md:block">
           {isOpen && (
             <div className="absolute inset-0 pointer-events-none">
@@ -87,7 +135,7 @@ export default function SlideDrawer({ onSidebarToggle }: SlideDrawerProps) {
           )}
         </div>
 
-        {/* Top: Hamburger */}
+        {/* Top: Hamburger (visible on all sizes) */}
         <div className={`flex ${isOpen ? "justify-start" : "justify-center"} p-2 relative z-10 md:justify-start`}>
           <Button
             onClick={toggleSidebar}
@@ -103,7 +151,7 @@ export default function SlideDrawer({ onSidebarToggle }: SlideDrawerProps) {
           </Button>
         </div>
 
-        {/* ===== MOBILE ===== */}
+        {/* mobile spacer (we'll render the full-screen drawer separately) */}
         <div className="md:hidden flex-1" />
 
         {/* ===== DESKTOP CONTENT ===== */}
@@ -288,6 +336,100 @@ export default function SlideDrawer({ onSidebarToggle }: SlideDrawerProps) {
           )}
         </div>
       </div>
+
+      {/* MOBILE: full-screen right-side drawer */}
+      {isOpen && (
+        <div className="md:hidden fixed inset-0 z-50">
+          {/* backdrop */}
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="absolute inset-0 bg-black/40"
+            onClick={toggleSidebar}
+          />
+
+          {/* panel (FocusTrap wraps the motion panel for robust a11y) */}
+          <FocusTrap active={isOpen} focusTrapOptions={{ clickOutsideDeactivates: true, escapeDeactivates: false }}>
+            <motion.div
+              ref={drawerRef}
+              initial={{ x: '100%' }}
+              animate={{ x: 0 }}
+              exit={{ x: '100%' }}
+              transition={{ type: 'tween', duration: 0.25 }}
+              className="absolute inset-y-0 right-0 w-full bg-gradient-to-b from-white/95 via-sage-25/90 to-clay-50/95 dark:from-gray-950/95 dark:via-gray-900/90 dark:to-gray-950/95 overflow-auto"
+              role="dialog"
+              aria-modal="true"
+              aria-label="Main menu"
+            >
+              <div className="p-4 pt-6">
+                <div className="flex items-center justify-between">
+                  <div />
+                  <Button
+                    onClick={toggleSidebar}
+                    variant="ghost"
+                    size="sm"
+                    className="text-clay-600 dark:text-sand-300 p-2 w-12 h-12 rounded-xl"
+                    aria-label="Close menu"
+                    data-close-button
+                  >
+                    <X size={20} />
+                  </Button>
+                </div>
+
+                <div className="mt-6 space-y-4">
+                  {navigationItems.map((item) => {
+                    const Icon = item.icon;
+                    const active = isActivePage(item.href);
+                    return (
+                      <Link key={item.id} href={item.href} onClick={() => setIsOpen(false)}>
+                        <div
+                          className={[
+                            "rounded-xl p-4 border transition-all duration-200",
+                            active
+                              ? "bg-gradient-to-r from-sage-500/90 via-clay-500/90 to-sand-500/90 text-white"
+                              : "bg-white/90 dark:bg-gray-900/90 border-sage-200/60 dark:border-gray-700/80"
+                          ].join(" ")}
+                        >
+                          <div className="flex items-center gap-3">
+                            <div className={`w-10 h-10 rounded-lg bg-gradient-to-br ${item.gradient} flex items-center justify-center`}>
+                              <Icon className="w-5 h-5 text-white" />
+                            </div>
+                            <div className="flex flex-col text-left">
+                              <span className={`font-sans text-base font-medium ${active ? 'text-white' : 'text-clay-700 dark:text-sand-200'}`}>{item.label}</span>
+                              <span className={`text-sm ${active ? 'text-white/90' : 'text-clay-500 dark:text-sand-400'}`}>{item.description}</span>
+                            </div>
+                          </div>
+                        </div>
+                      </Link>
+                    );
+                  })}
+                </div>
+
+                {/* bottom user + signout */}
+                <div className="mt-8 border-t pt-6">
+                  <div className="flex items-center gap-3">
+                    <Avatar className="w-10 h-10 shadow-md">
+                      {avatarUrl ? (
+                        <img src={avatarUrl} alt="Profile" className="w-full h-full object-cover rounded-full" />
+                      ) : (
+                        <AvatarFallback className="bg-gradient-to-br from-clay-400 via-sage-400 to-sand-400 text-white text-sm">
+                          {String(displayName || "U").charAt(0).toUpperCase()}
+                        </AvatarFallback>
+                      )}
+                    </Avatar>
+                    <div className="flex-1">
+                      <div className="text-clay-700 dark:text-sand-200 font-medium">{displayName}</div>
+                      <div className="text-sm text-clay-500 dark:text-sand-400">{user?.email || ''}</div>
+                    </div>
+                    <Button onClick={() => signOut()} className="bg-red-500 text-white rounded-xl px-3 py-2">Sign out</Button>
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          </FocusTrap>
+        </div>
+      )}
     </>
   );
 }

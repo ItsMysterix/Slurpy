@@ -4,7 +4,19 @@ async function mockSignedIn(page: Page, firstName = "Testy") {
   await page.addInitScript((name: string) => {
     (window as any).__E2E_AUTH_MOCK__ = {
       useAuth: () => ({ isSignedIn: true, userId: "user_123" }),
-      useUser: () => ({ user: { id: "user_123", firstName: name } }),
+      // Provide a realistic user shape similar to Supabase so server/client components
+      // that read user.user_metadata or name/given_name will find the expected fields.
+      useUser: () => ({
+        user: {
+          id: "user_123",
+          firstName: name,
+          // supabase-style metadata fields used by the app
+          user_metadata: { name },
+          email: `${name.toLowerCase()}@example.com`,
+          full_name: name,
+          given_name: name,
+        },
+      }),
     };
   }, firstName);
 }
