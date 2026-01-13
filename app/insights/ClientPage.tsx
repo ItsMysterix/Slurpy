@@ -8,6 +8,7 @@ import WeeklyTrends from "@/components/insights/WeeklyTrends";
 import EmotionBreakdown from "@/components/insights/EmotionBreakdown";
 import KeyInsights from "@/components/insights/KeyInsights";
 import Topics from "@/components/insights/Topics";
+import WeeklyReflection from "@/components/insights/WeeklyReflection";
 
 import { useAuth, useUser } from "@/lib/auth-hooks";
 import { Loader2 } from "lucide-react";
@@ -221,6 +222,7 @@ export default function ClientPage() {
 
           <div className="flex-1 overflow-y-auto p-6">
             <div className="max-w-6xl mx-auto space-y-6">
+              <WeeklyReflection userId={userId} />
               <SummaryCard header={header} timeframe={selectedTimeframe} />
               <WeeklyTrends data={trends.last7Days || []} />
               <div className="grid md:grid-cols-2 gap-6">

@@ -236,3 +236,68 @@ function valenceBuckets(vs: number[]) {
     { bucket: "positive" as const, percentage: Math.round((pos / n) * 100) },
   ];
 }
+/* ============================== Sprint 2: InsightRun Types ============================== */
+
+export interface InsightRun {
+  id: string;
+  userId: string;
+  timeRangeStart: string; // ISO timestamp
+  timeRangeEnd: string;   // ISO timestamp
+  dominantEmotions: string[];
+  recurringThemes: string[];
+  moodTrend: "rising" | "declining" | "stable" | null;
+  resilienceDelta: "improving" | "stable" | "strained" | null;
+  narrativeSummary: string; // 5-7 sentence reflection
+  sourceMetadata: {
+    moodEntries: number;
+    sessionCount: number;
+    hasMemoryContext: boolean;
+    journalEntriesCount?: number;
+  };
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AggregatedInsightData {
+  // Raw aggregation from data sources
+  moodEntries: {
+    emotion: string;
+    intensity: number;
+    date: string;
+  }[];
+  sessionSummaries: {
+    id: string;
+    dominantEmotion: string;
+    topics: string[];
+    startTime: string;
+  }[];
+  memoryContextSnippets?: string[]; // For pro users only (read-only)
+  journalTopics?: string[]; // From journal entries
+}
+
+export interface NarrativeInputs {
+  // Structured inputs to narrative generation
+  emotionFrequency: Record<string, number>; // emotion -> count
+  topicsFrequency: Record<string, number>;  // topic -> count
+  moodTrendDirection: "rising" | "declining" | "stable" | null;
+  sessionCount: number;
+  moodEntryCount: number;
+  memoryContext?: string; // Summarized memory for pro users
+  timeRangeStart: string;
+  timeRangeEnd: string;
+}
+
+export interface GenerateInsightRequest {
+  // No parameters needed - uses 7-day window from now
+}
+
+export interface GenerateInsightResponse {
+  success: boolean;
+  insight?: InsightRun;
+  error?: string;
+}
+
+export interface ListInsightsResponse {
+  insights: InsightRun[];
+  total: number;
+}

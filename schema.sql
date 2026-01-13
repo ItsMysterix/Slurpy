@@ -109,6 +109,25 @@ CREATE TABLE IF NOT EXISTS "public"."UserMemory" (
 ALTER TABLE "public"."UserMemory" OWNER TO "postgres";
 
 
+CREATE TABLE IF NOT EXISTS "public"."InsightRun" (
+    "id" "text" NOT NULL,
+    "userId" "text" NOT NULL,
+    "timeRangeStart" timestamp(3) without time zone NOT NULL,
+    "timeRangeEnd" timestamp(3) without time zone NOT NULL,
+    "dominantEmotions" "text"[] DEFAULT ARRAY[]::text[],
+    "recurringThemes" "text"[] DEFAULT ARRAY[]::text[],
+    "moodTrend" "text",
+    "resilienceDelta" "text",
+    "narrativeSummary" "text" NOT NULL,
+    "sourceMetadata" "jsonb",
+    "createdAt" timestamp(3) without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    "updatedAt" timestamp(3) without time zone NOT NULL
+);
+
+
+ALTER TABLE "public"."InsightRun" OWNER TO "postgres";
+
+
 CREATE TABLE IF NOT EXISTS "public"."_prisma_migrations" (
     "id" character varying(36) NOT NULL,
     "checksum" character varying(64) NOT NULL,
@@ -146,6 +165,11 @@ ALTER TABLE ONLY "public"."JournalEntry"
 
 ALTER TABLE ONLY "public"."UserMemory"
     ADD CONSTRAINT "UserMemory_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."InsightRun"
+    ADD CONSTRAINT "InsightRun_pkey" PRIMARY KEY ("id");
 
 
 
@@ -211,6 +235,22 @@ CREATE INDEX "UserMemory_createdAt_idx" ON "public"."UserMemory" USING "btree" (
 
 
 CREATE INDEX "UserMemory_userId_createdAt_idx" ON "public"."UserMemory" USING "btree" ("userId", "createdAt" DESC);
+
+
+
+CREATE INDEX "InsightRun_userId_idx" ON "public"."InsightRun" USING "btree" ("userId");
+
+
+
+CREATE INDEX "InsightRun_createdAt_idx" ON "public"."InsightRun" USING "btree" ("createdAt" DESC);
+
+
+
+CREATE INDEX "InsightRun_userId_createdAt_idx" ON "public"."InsightRun" USING "btree" ("userId", "createdAt" DESC);
+
+
+
+CREATE INDEX "InsightRun_timeRange_idx" ON "public"."InsightRun" USING "btree" ("timeRangeStart", "timeRangeEnd");
 
 
 
