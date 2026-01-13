@@ -1,0 +1,41 @@
+# This is an alternative lightweight Dockerfile optimized for Railway
+# Use this if regular Dockerfile times out: railway.json -> "dockerfilePath": "Dockerfile.railway"
+
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Minimal deps - skip build-essential
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Python optimization
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV TOKENIZERS_PARALLELISM=false
+ENV PIP_NO_CACHE_DIR=1
+
+# Aggressive caching of wheels
+RUN pip install --upgrade pip setuptools wheel --quiet && \
+    pip config set global.extra-index-url https://pypi.org/simple/
+
+# Copy and install requirements with timeout adjustment
+COPY requirements/backend.txt .
+RUN pip install --default-timeout=1000 -r backend.txt --quiet 2>&1 | grep -E "(Successfully|ERROR)" || true
+
+# Pre-download embedding model
+RUN timeout 120 python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')" 2>&1 | tail -5 || echo "⚠️ Model download timed out, will load at startup"
+
+# Copy application
+COPY backend /app/backend
+COPY emotion /app/emotion
+
+# Health check with longer startup
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=5 \
+  CMD curl -f http://localhost:8000/healthz || exit 1
+
+EXPOSE 8000
+
+CMD ["python", "-m", "uvicorn", "backend.slurpy.workers.mcp_server:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
