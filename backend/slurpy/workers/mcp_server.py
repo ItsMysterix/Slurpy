@@ -250,7 +250,8 @@ async def _warm_models() -> None:
 # -------------------------------------------------------------------
 @app.get("/healthz")
 async def healthz():
-    return {"ok": True, "service": "slurpy-mcp"}
+    """Simple health check"""
+    return {"status": "ok"}
 
 @app.get("/stats")
 async def get_stats():
