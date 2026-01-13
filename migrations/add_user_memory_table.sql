@@ -20,10 +20,11 @@ ALTER TABLE "public"."UserMemory" OWNER TO "postgres";
 ALTER TABLE ONLY "public"."UserMemory"
     ADD CONSTRAINT "UserMemory_pkey" PRIMARY KEY ("id");
 
--- Foreign key: Link to ChatSession (optional, on delete do nothing to preserve memory)
+-- Foreign key: Link to chat_sessions (optional, on delete do nothing to preserve memory)
+-- Note: Using snake_case chat_sessions table with session_id primary key
 ALTER TABLE ONLY "public"."UserMemory"
     ADD CONSTRAINT "UserMemory_sourceId_fkey_chat" 
-    FOREIGN KEY ("sourceId") REFERENCES "public"."ChatSession"("id") 
+    FOREIGN KEY ("sourceId") REFERENCES "public"."chat_sessions"("session_id") 
     ON UPDATE CASCADE ON DELETE SET NULL;
 
 -- Indexes for performance
