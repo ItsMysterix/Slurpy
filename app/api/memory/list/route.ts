@@ -1,7 +1,6 @@
 // app/api/memory/list/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { usePlan } from "@/lib/use-plan";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -34,8 +33,8 @@ export async function GET(request: NextRequest) {
 
     if (!isPro) {
       return NextResponse.json(
-        { memories: [], total: 0, message: "Memory feature available for pro users only" },
-        { status: 200 }
+        { error: "Memory feature is only available for Pro and Elite users" },
+        { status: 403 }
       );
     }
 
