@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import FocusTrap from "focus-trap-react";
 import { motion } from "framer-motion";
 import {
   Menu, X, MoreVertical, Calendar, BookOpen, MessageCircle, BarChart3, LogOut, Sparkles
@@ -349,27 +348,18 @@ export default function SlideDrawer({ onSidebarToggle }: SlideDrawerProps) {
             onClick={toggleSidebar}
           />
 
-          {/* panel (FocusTrap wraps the motion panel for robust a11y) */}
-          <FocusTrap 
-            active={isOpen} 
-            focusTrapOptions={{ 
-              clickOutsideDeactivates: true, 
-              escapeDeactivates: false,
-              fallbackFocus: () => drawerRef.current || document.body,
-              initialFocus: false
-            }}
+          {/* panel without FocusTrap to avoid errors */}
+          <motion.div
+            ref={drawerRef}
+            initial={{ x: '100%' }}
+            animate={{ x: 0 }}
+            exit={{ x: '100%' }}
+            transition={{ type: 'tween', duration: 0.25 }}
+            className="absolute inset-y-0 right-0 w-full bg-gradient-to-b from-white/95 via-sage-25/90 to-clay-50/95 dark:from-gray-950/95 dark:via-gray-900/90 dark:to-gray-950/95 overflow-auto"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Main menu"
           >
-            <motion.div
-              ref={drawerRef}
-              initial={{ x: '100%' }}
-              animate={{ x: 0 }}
-              exit={{ x: '100%' }}
-              transition={{ type: 'tween', duration: 0.25 }}
-              className="absolute inset-y-0 right-0 w-full bg-gradient-to-b from-white/95 via-sage-25/90 to-clay-50/95 dark:from-gray-950/95 dark:via-gray-900/90 dark:to-gray-950/95 overflow-auto"
-              role="dialog"
-              aria-modal="true"
-              aria-label="Main menu"
-            >
               <div className="p-4 pt-6">
                 <div className="flex items-center justify-between">
                   <div />
@@ -435,7 +425,6 @@ export default function SlideDrawer({ onSidebarToggle }: SlideDrawerProps) {
                 </div>
               </div>
             </motion.div>
-          </FocusTrap>
         </div>
       )}
     </>
