@@ -21,27 +21,11 @@ RUN pip install --upgrade pip setuptools wheel --quiet
 # Copy requirements
 COPY requirements/backend.txt .
 
-# Install dependencies with aggressive caching
-# Split into two layers: base deps and heavy ML deps
-RUN pip install \
-    fastapi==0.115.0 \
-    uvicorn==0.30.0 \
-    python-dotenv==1.0.1 \
-    pydantic==2.11.0 \
-    pydantic-settings==2.10.1 \
-    --quiet
-
-# Install heavy ML dependencies (cached for reuse)
-RUN pip install \
-    torch>=2.0.0,<3.0.0 \
-    --quiet
-
-# Install remaining dependencies from requirements
+# Install all dependencies from requirements file
 RUN pip install -r backend.txt --quiet
 
-# Pre-download embedding model at build time (important for performance)
-# Use a minimal approach that doesn't require extra deps
-RUN python -c "from sentence_transformers import SentenceTransformer; print('Loading model...'); model = SentenceTransformer('all-MiniLM-L6-v2'); print('✅ Model ready')" || echo "Model will download at startup"
+# Pre-download embedding model at build time
+RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')" 2>/dev/null || true
 
 # Copy backend code (after dependencies to leverage Docker layer caching)
 COPY backend /app/backend
