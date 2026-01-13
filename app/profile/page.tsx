@@ -14,6 +14,7 @@ import {
 import { useTheme } from "next-themes"
 import { useUser, useAuthClient, useReverification } from "@/lib/auth-hooks"
 import { supabase } from "@/lib/supabaseClient"
+import { MemoryManager } from "@/components/memory/MemoryManager"
 
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -499,6 +500,11 @@ export default function ProfilePage() {
               )}
             </CardContent>
           </Card>
+        </motion.div>
+
+        {/* Memory Manager */}
+        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6, delay: 0.2 }}>
+          <MemoryManager />
         </motion.div>
 
         {/* Settings / Danger Zone */}

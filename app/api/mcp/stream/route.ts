@@ -5,6 +5,8 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 import { NextRequest, NextResponse } from "next/server";
+import { getUserMemoriesForContext } from "@/lib/memory";
+import { createClient } from "@supabase/supabase-js";
 
 // Minimal NDJSON streaming format: { type: "delta", delta: string, id?: number } ... { type: "done" }
 // This implementation uses OpenAI's Chat Completions SSE stream.
@@ -37,32 +39,62 @@ export async function POST(req: NextRequest) {
 
     const stream = new ReadableStream<Uint8Array>({
       async start(ctrl) {
-        // Use SSE streaming from OpenAI's Chat Completions endpoint
-        // gpt-4o-mini is 4x faster than gpt-3.5-turbo with better reasoning
-      const res = await Promise.race([
-        fetch("https://api.openai.com/v1/chat/completions", {
-          method: "POST",
-          headers: {
-            "Authorization": `Bearer ${apiKey}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            model: process.env.OPENAI_MODEL || "gpt-4o-mini",
-            stream: true,
-            max_completion_tokens: 400,
-            temperature: 0.8,
-            messages: [
-              { 
-                role: "system", 
-                content: "You are Abby, a deeply empathetic mental health companion. Listen carefully, validate emotions, ask thoughtful follow-up questions. Build genuine connection. Give advice only when asked. Be warm, human, not clinical. Respond with 2-3 paragraphs." 
-              },
-              { role: "user", content: text }
-            ],
+        try {
+          // Fetch user memories for context (silent injection)
+          let memoryContext = "";
+          if (user_id && user_id !== "unknown") {
+            try {
+              const supabase = createClient(
+                process.env.NEXT_PUBLIC_SUPABASE_URL!,
+                process.env.SUPABASE_SERVICE_ROLE_KEY!
+              );
+              
+              // Check user plan
+              const { data: { user } } = await supabase.auth.admin.getUserById(user_id);
+              const isPro = user?.user_metadata?.plan === "pro" || user?.user_metadata?.plan === "elite";
+              
+              if (isPro) {
+                memoryContext = await getUserMemoriesForContext(user_id, true);
+              }
+            } catch (err) {
+              console.error("Failed to fetch memories:", err);
+              // Continue without memory if fetch fails
+            }
+          }
+
+          // Build system prompt with optional memory context
+          let systemPrompt = "You are Abby, a deeply empathetic mental health companion. Listen carefully, validate emotions, ask thoughtful follow-up questions. Build genuine connection. Give advice only when asked. Be warm, human, not clinical. Respond with 2-3 paragraphs.";
+          
+          if (memoryContext) {
+            systemPrompt += `\n\nYou have the following context about this person's previous experiences:\n${memoryContext}\n\nUse this context naturally in your responses to show genuine understanding and continuity, but don't explicitly mention that you're referencing memory.`;
+          }
+
+          // Use SSE streaming from OpenAI's Chat Completions endpoint
+          // gpt-4o-mini is 4x faster than gpt-3.5-turbo with better reasoning
+        const res = await Promise.race([
+          fetch("https://api.openai.com/v1/chat/completions", {
+            method: "POST",
+            headers: {
+              "Authorization": `Bearer ${apiKey}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              model: process.env.OPENAI_MODEL || "gpt-4o-mini",
+              stream: true,
+              max_completion_tokens: 400,
+              temperature: 0.8,
+              messages: [
+                { 
+                  role: "system", 
+                  content: systemPrompt
+                },
+                { role: "user", content: text }
+              ],
+            }),
+            signal: controller.signal,
           }),
-          signal: controller.signal,
-        }),
-        new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), 25000))
-      ]) as Response;
+          new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), 25000))
+        ]) as Response;
 
       if (!res.ok || !res.body) {
         ctrl.enqueue(encoder.encode(JSON.stringify({ type: "error", reason: "upstream" }) + "\n"));
@@ -116,6 +148,12 @@ export async function POST(req: NextRequest) {
         safeEnqueue(JSON.stringify({ type: "done" }) + "\n");
         try { ctrl.close(); } catch {}
       }
+        } catch (error) {
+          console.error("Error in stream start:", error);
+          ctrl.enqueue(encoder.encode(JSON.stringify({ type: "error", reason: "internal" }) + "\n"));
+          ctrl.enqueue(encoder.encode(JSON.stringify({ type: "done" }) + "\n"));
+          try { ctrl.close(); } catch {}
+        }
     },
     cancel() {
       controller.abort();

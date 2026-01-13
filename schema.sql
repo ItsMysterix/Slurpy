@@ -94,6 +94,21 @@ CREATE TABLE IF NOT EXISTS "public"."JournalEntry" (
 ALTER TABLE "public"."JournalEntry" OWNER TO "postgres";
 
 
+CREATE TABLE IF NOT EXISTS "public"."UserMemory" (
+    "id" "text" NOT NULL,
+    "userId" "text" NOT NULL,
+    "summary" "text" NOT NULL,
+    "sourceType" "text" NOT NULL,
+    "sourceId" "text" NOT NULL,
+    "sourceDate" timestamp(3) without time zone,
+    "createdAt" timestamp(3) without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    "updatedAt" timestamp(3) without time zone NOT NULL
+);
+
+
+ALTER TABLE "public"."UserMemory" OWNER TO "postgres";
+
+
 CREATE TABLE IF NOT EXISTS "public"."_prisma_migrations" (
     "id" character varying(36) NOT NULL,
     "checksum" character varying(64) NOT NULL,
@@ -126,6 +141,11 @@ ALTER TABLE ONLY "public"."DailyMood"
 
 ALTER TABLE ONLY "public"."JournalEntry"
     ADD CONSTRAINT "JournalEntry_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."UserMemory"
+    ADD CONSTRAINT "UserMemory_pkey" PRIMARY KEY ("id");
 
 
 
@@ -179,6 +199,22 @@ CREATE INDEX "JournalEntry_userId_date_idx" ON "public"."JournalEntry" USING "bt
 
 
 CREATE INDEX "JournalEntry_userId_idx" ON "public"."JournalEntry" USING "btree" ("userId");
+
+
+
+CREATE INDEX "UserMemory_userId_idx" ON "public"."UserMemory" USING "btree" ("userId");
+
+
+
+CREATE INDEX "UserMemory_createdAt_idx" ON "public"."UserMemory" USING "btree" ("createdAt");
+
+
+
+CREATE INDEX "UserMemory_userId_createdAt_idx" ON "public"."UserMemory" USING "btree" ("userId", "createdAt" DESC);
+
+
+
+CREATE INDEX "UserMemory_sourceType_idx" ON "public"."UserMemory" USING "btree" ("sourceType");
 
 
 
