@@ -4,7 +4,6 @@
     "builder": "DOCKERFILE"
   },
   "deploy": {
-    "healthcheckPath": "/healthz",
     "restartPolicyType": "on_failure"
   }
 }
