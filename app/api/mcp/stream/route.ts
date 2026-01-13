@@ -6,7 +6,6 @@ export const revalidate = 0;
 
 import { NextRequest, NextResponse } from "next/server";
 import { getUserMemoriesForContext } from "@/lib/memory";
-import { createClient } from "@supabase/supabase-js";
 
 // Minimal NDJSON streaming format: { type: "delta", delta: string, id?: number } ... { type: "done" }
 // This implementation uses OpenAI's Chat Completions SSE stream.
@@ -44,17 +43,22 @@ export async function POST(req: NextRequest) {
           let memoryContext = "";
           if (user_id && user_id !== "unknown") {
             try {
-              const supabase = createClient(
-                process.env.NEXT_PUBLIC_SUPABASE_URL!,
-                process.env.SUPABASE_SERVICE_ROLE_KEY!
-              );
+              // Only attempt memory fetch if we have the required environment variables
+              const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+              const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
               
-              // Check user plan
-              const { data: { user } } = await supabase.auth.admin.getUserById(user_id);
-              const isPro = user?.user_metadata?.plan === "pro" || user?.user_metadata?.plan === "elite";
-              
-              if (isPro) {
-                memoryContext = await getUserMemoriesForContext(user_id, true);
+              if (supabaseUrl && supabaseKey) {
+                // Dynamically import to avoid build-time evaluation
+                const { createClient } = await import("@supabase/supabase-js");
+                const supabase = createClient(supabaseUrl, supabaseKey);
+                
+                // Check user plan
+                const { data: { user } } = await supabase.auth.admin.getUserById(user_id);
+                const isPro = user?.user_metadata?.plan === "pro" || user?.user_metadata?.plan === "elite";
+                
+                if (isPro) {
+                  memoryContext = await getUserMemoriesForContext(user_id, true);
+                }
               }
             } catch (err) {
               console.error("Failed to fetch memories:", err);
