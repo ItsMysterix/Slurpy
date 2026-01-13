@@ -26,6 +26,13 @@ class Settings(BaseSettings):
     QDRANT_API_KEY: str | None = None
     QDRANT_COLLECTION: str = Field(default=os.getenv("QDRANT_COLLECTION", "slurpy_chunks"))
 
+    # Cache settings
+    CACHE_SIZE: int = Field(default=int(os.getenv("CACHE_SIZE", "1000")))
+    CACHE_TTL: int = Field(default=int(os.getenv("CACHE_TTL", "3600")))  # 1 hour default
+    
+    # Performance settings
+    MAX_WORKERS: int = Field(default=int(os.getenv("MAX_WORKERS", "1")))
+
     # Supabase
     SUPABASE_URL: AnyHttpUrl | None = None
     SUPABASE_SERVICE_ROLE: str | None = None

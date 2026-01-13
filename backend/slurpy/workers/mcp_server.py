@@ -252,6 +252,53 @@ async def _warm_models() -> None:
 async def healthz():
     return {"ok": True, "service": "slurpy-mcp"}
 
+@app.get("/stats")
+async def get_stats():
+    """Get service statistics including cache performance"""
+    try:
+        from slurpy.adapters.cache import get_cache
+        from slurpy.adapters.qdrant_client import get_qdrant
+        
+        cache = get_cache()
+        cache_stats = cache.stats()
+        
+        # Get Qdrant stats
+        try:
+            client = get_qdrant()
+            collection_name = os.getenv("QDRANT_COLLECTION", "slurpy_chunks")
+            collection_info = client.get_collection(collection_name)
+            qdrant_stats = {
+                "collection": collection_name,
+                "vectors_count": collection_info.vectors_count,
+                "points_count": collection_info.points_count,
+                "status": str(collection_info.status),
+            }
+        except Exception as e:
+            qdrant_stats = {"error": str(e)}
+        
+        return {
+            "service": "slurpy-mcp",
+            "cache": cache_stats,
+            "qdrant": qdrant_stats,
+            "embedding_model": os.getenv("EMBED_MODEL", "all-MiniLM-L6-v2"),
+        }
+    except Exception as e:
+        return {
+            "service": "slurpy-mcp",
+            "error": str(e)
+        }
+
+@app.delete("/cache")
+async def clear_cache():
+    """Clear the query cache"""
+    try:
+        from slurpy.adapters.cache import get_cache
+        cache = get_cache()
+        cache.clear()
+        return {"status": "cache cleared", "service": "slurpy-mcp"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 # -------------------------------------------------------------------
 # Chat (HTTP)
 # -------------------------------------------------------------------

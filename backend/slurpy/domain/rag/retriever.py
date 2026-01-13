@@ -2,19 +2,19 @@ from __future__ import annotations
 
 import os
 import math
+import time
 from typing import Any, Dict, List, Optional, Sequence
 
-# --- adapters (embedder + qdrant) ---
+# --- adapters (embedder + qdrant + cache) ---
 try:
     from slurpy.adapters.embedder import embed as _embed  # -> Optional[List[float]]
 except Exception:
     _embed = None  # type: ignore
 
-# --- adapters (embedder + qdrant) ---
 try:
-    from slurpy.adapters.embedder import embed as _embed  # -> Optional[List[float]]
+    from slurpy.adapters.cache import get_cache
 except Exception:
-    _embed = None  # type: ignore
+    get_cache = None  # type: ignore
 
 # Keep type-checkers happy even if we define a raising fallback.
 from typing import TYPE_CHECKING, Any, cast
@@ -88,12 +88,26 @@ def search(
     k: Optional[int] = None,
     dataset_id: Optional[str] = None,
     collection: Optional[str] = None,
+    use_cache: bool = True,
 ) -> Dict[str, Any]:
     """
     Query Qdrant and return:
-        {"hits": [{score, text, title, url, dataset_id, doc_id, chunk_idx}, ...]}
+        {"hits": [{score, text, title, url, dataset_id, doc_id, chunk_idx}, ...], "cached": bool, "latency_ms": float}
     If k is None, use a budget-based upper bound and trim via score elbow.
+    Includes caching for faster repeated queries.
     """
+    start_time = time.time()
+    
+    # Try cache first
+    cache_key = f"{q}:{k}:{dataset_id}:{collection}"
+    if use_cache and get_cache:
+        cache = get_cache()
+        cached_result = cache.get(cache_key)
+        if cached_result is not None:
+            cached_result["cached"] = True
+            cached_result["latency_ms"] = (time.time() - start_time) * 1000
+            return cached_result
+    
     vec = _encode_query(q)
 
     flt = None
@@ -139,4 +153,11 @@ def search(
             }
         )
 
-    return {"hits": hits}
+    result = {"hits": hits, "cached": False, "latency_ms": (time.time() - start_time) * 1000}
+    
+    # Cache the result
+    if use_cache and get_cache:
+        cache = get_cache()
+        cache.set(cache_key, result)
+    
+    return result

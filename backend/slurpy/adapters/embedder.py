@@ -18,9 +18,15 @@ _NORMALIZE_DEFAULT = (os.getenv("EMBED_NORMALIZE", "true").lower() == "true")
 def _get_model():
     # Lazy import to keep cold start fast
     from sentence_transformers import SentenceTransformer
+    import torch
 
     # SentenceTransformer handles device automatically; you can also pass device at encode time
     model = SentenceTransformer(_MODEL_NAME)
+    
+    # Optimize for inference
+    model.eval()  # Set to evaluation mode
+    torch.set_grad_enabled(False)  # Disable gradients for faster inference
+    
     # Optional pre-move, mostly cosmetic; encode(..., device=...) also works
     if _DEVICE:
         try:
@@ -28,6 +34,7 @@ def _get_model():
         except Exception:
             # silently ignore; we'll still pass device at encode time
             pass
+    
     return model
 
 
@@ -48,6 +55,7 @@ def embed(
     Encode a single string to a dense vector (list[float]).
     - Set EMBED_MODEL / EMBED_DEVICE / EMBED_NORMALIZE via env.
     - Pass normalize=... to override env per call.
+    Optimized for fast inference with no gradients.
     """
     if not text:
         return None
@@ -57,6 +65,7 @@ def embed(
         kwargs: Dict[str, Any] = {
             "normalize_embeddings": norm,
             "convert_to_numpy": True,  # cheaper than converting torch→list manually
+            "show_progress_bar": False,  # Disable progress bar for speed
         }
         if _DEVICE:
             kwargs["device"] = _DEVICE
@@ -71,29 +80,28 @@ def embed_batch(
     texts: Sequence[str],
     *,
     normalize: Optional[bool] = None,
+    batch_size: int = 32,
 ) -> List[List[float]]:
     """
     Encode many strings at once; returns list[list[float]].
     Empty/None inputs are skipped as empty vectors.
+    Optimized with batching for faster processing.
     """
     if not texts:
         return []
     try:
         model = _get_model()
         norm = _NORMALIZE_DEFAULT if normalize is None else bool(normalize)
+        kwargs: Dict[str, Any] = {
+            "normalize_embeddings": norm,
+            "convert_to_numpy": True,
+            "show_progress_bar": False,
+            "batch_size": batch_size,
+        }
         if _DEVICE:
-            vecs = model.encode(
-                list(texts),
-                normalize_embeddings=norm,
-                convert_to_numpy=True,
-                device=_DEVICE,
-            )
-        else:
-            vecs = model.encode(
-                list(texts),
-                normalize_embeddings=norm,
-                convert_to_numpy=True,
-            )
+            kwargs["device"] = _DEVICE
+        
+        vecs = model.encode(list(texts), **kwargs)
         return [_to_list(v) for v in vecs]
     except Exception as e:
         print(f"⚠️ Batch embedding failed: {e}")
