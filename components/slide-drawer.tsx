@@ -350,7 +350,15 @@ export default function SlideDrawer({ onSidebarToggle }: SlideDrawerProps) {
           />
 
           {/* panel (FocusTrap wraps the motion panel for robust a11y) */}
-          <FocusTrap active={isOpen} focusTrapOptions={{ clickOutsideDeactivates: true, escapeDeactivates: false }}>
+          <FocusTrap 
+            active={isOpen} 
+            focusTrapOptions={{ 
+              clickOutsideDeactivates: true, 
+              escapeDeactivates: false,
+              fallbackFocus: () => drawerRef.current || document.body,
+              initialFocus: false
+            }}
+          >
             <motion.div
               ref={drawerRef}
               initial={{ x: '100%' }}
