@@ -21,8 +21,11 @@ RUN pip install --upgrade pip setuptools wheel --quiet
 # Copy requirements
 COPY requirements/backend.txt .
 
-# Install all dependencies from requirements file
-RUN pip install -r backend.txt --quiet
+# Install torch CPU-only version first (much smaller than CUDA version)
+RUN pip install torch --index-url https://download.pytorch.org/whl/cpu --quiet
+
+# Install all other dependencies, excluding torch to avoid reinstalling
+RUN pip install -r backend.txt --quiet --no-deps || pip install -r backend.txt --quiet
 
 # Pre-download embedding model at build time
 RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')" 2>/dev/null || true
