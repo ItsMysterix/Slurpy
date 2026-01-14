@@ -98,7 +98,8 @@ async function fetchMemoryContext(
   }
 
   // Fetch relevant memory entries by topic/labels
-  const { data, error } = await supabaseServer
+  const supabase = createServerServiceClient();
+  const { data, error } = await supabase
     .from("user_memory")
     .select("content, labels")
     .eq("user_id", userId)
