@@ -40,6 +40,7 @@ export default function WeeklyReflection({ userId }: WeeklyReflectionProps) {
       if (res.status === 401) {
         // User not authenticated - silent fail, show empty state
         setLatestInsight(null);
+        setLoading(false);
         return;
       }
       if (!res.ok) throw new Error("Failed to load insights");
