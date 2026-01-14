@@ -457,12 +457,12 @@ export async function GET(req: NextRequest) {
     let insights: Insight[] = [];
     
     try {
-      const { data: latestInsight } = await sb()
+      const { data: latestInsight } = await supabase
         .from("insight_run")
         .select("key_insights, created_at")
-        .eq("user_id", userId)
-        .gte("time_range_start", range.start.toISOString())
-        .lte("time_range_end", range.end.toISOString())
+        .eq("user_id", effectiveUserId)
+        .gte("time_range_start", startISO)
+        .lte("time_range_end", endISO)
         .order("created_at", { ascending: false })
         .limit(1)
         .single();
