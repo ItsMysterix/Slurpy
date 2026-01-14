@@ -150,3 +150,173 @@ export function extractRecurringThemes(
     .slice(0, 3)
     .map(([topic]) => topic);
 }
+
+/**
+ * Generate therapist-style key insights from emotional patterns
+ * Returns actionable insights about emotional patterns, coping strategies, and growth areas
+ */
+export async function generateKeyInsights(input: {
+  emotionFrequency: Record<string, number>;
+  topicFrequency: Record<string, number>;
+  moodTrend: "rising" | "declining" | "stable" | null;
+  sessionCount: number;
+  moodEntryCount: number;
+  memoryContext?: string;
+}): Promise<Array<{
+  title: string;
+  description: string;
+  icon: string;
+  trend: "positive" | "negative" | "neutral";
+}>> {
+  const {
+    emotionFrequency,
+    topicFrequency,
+    moodTrend,
+    sessionCount,
+    moodEntryCount,
+    memoryContext,
+  } = input;
+
+  // Get top emotions and topics
+  const topEmotions = Object.entries(emotionFrequency)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([e, count]) => ({ emotion: e, count }));
+
+  const topTopics = Object.entries(topicFrequency)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([t, count]) => ({ topic: t, count }));
+
+  // Build context for AI
+  const contextLines = [];
+  
+  if (topEmotions.length > 0) {
+    contextLines.push(
+      `Top emotions: ${topEmotions.map(e => `${e.emotion} (${e.count}x)`).join(", ")}`
+    );
+  }
+
+  if (topTopics.length > 0) {
+    contextLines.push(
+      `Key themes: ${topTopics.map(t => `${t.topic} (${t.count}x)`).join(", ")}`
+    );
+  }
+
+  if (moodTrend) {
+    contextLines.push(`Mood trend: ${moodTrend}`);
+  }
+
+  contextLines.push(`Engagement: ${sessionCount} conversations, ${moodEntryCount} mood logs`);
+
+  if (memoryContext) {
+    contextLines.push(`Context: ${memoryContext.substring(0, 200)}`);
+  }
+
+  const systemPrompt = `You are an empathetic therapist analyzing a person's emotional patterns.
+Generate 3-5 key insights that:
+- Identify emotional patterns and what they reveal
+- Suggest healthy coping strategies or growth opportunities  
+- Are warm, non-judgmental, and actionable
+- Use simple, conversational language
+- Avoid clinical jargon or diagnoses
+
+Return ONLY a JSON array with this exact structure:
+[
+  {
+    "title": "Brief insight title (4-8 words)",
+    "description": "Supportive explanation (15-25 words)",
+    "icon": "Heart" | "Brain" | "TrendingUp" | "Calendar",
+    "trend": "positive" | "negative" | "neutral"
+  }
+]`;
+
+  const userPrompt = `Based on this week's emotional patterns, generate 3-5 key therapeutic insights:
+
+${contextLines.join("\\n")}
+
+Return only the JSON array, no other text.`;
+
+  try {
+    const response = await client.messages.create({
+      model: "claude-3-5-sonnet-20241022",
+      max_tokens: 600,
+      system: systemPrompt,
+      messages: [{ role: "user", content: userPrompt }],
+    });
+
+    const textContent = response.content.find((c: { type: string }) => c.type === "text");
+    if (textContent && textContent.type === "text") {
+      const text = (textContent as { type: "text"; text: string }).text;
+      
+      // Extract JSON from response (might have markdown code blocks)
+      const jsonMatch = text.match(/\[[\s\S]*\]/);
+      if (jsonMatch) {
+        const insights = JSON.parse(jsonMatch[0]);
+        return insights;
+      }
+    }
+
+    // Fallback insights if AI fails
+    return generateFallbackInsights(emotionFrequency, topTopics, moodTrend);
+  } catch (error) {
+    console.error("[generateKeyInsights] Error:", error);
+    return generateFallbackInsights(emotionFrequency, topTopics, moodTrend);
+  }
+}
+
+/**
+ * Generate fallback insights when AI is unavailable
+ */
+function generateFallbackInsights(
+  emotionFreq: Record<string, number>,
+  topTopics: Array<{ topic: string; count: number }>,
+  moodTrend: "rising" | "declining" | "stable" | null
+): Array<{
+  title: string;
+  description: string;
+  icon: string;
+  trend: "positive" | "negative" | "neutral";
+}> {
+  const insights = [];
+
+  // Emotion pattern insight
+  const topEmotion = Object.entries(emotionFreq).sort((a, b) => b[1] - a[1])[0];
+  if (topEmotion) {
+    const [emotion, count] = topEmotion;
+    const isPositive = ["joy", "happy", "calm", "grateful", "excited"].includes(emotion.toLowerCase());
+    insights.push({
+      title: `${emotion.charAt(0).toUpperCase() + emotion.slice(1)} is your dominant feeling`,
+      description: `You've experienced ${emotion} frequently this week. ${isPositive ? "That's wonderful! Consider what's contributing to these positive feelings." : "Notice what triggers this emotion and how you respond to it."}`,
+      icon: "Heart",
+      trend: isPositive ? "positive" as const : "neutral" as const,
+    });
+  }
+
+  // Mood trend insight
+  if (moodTrend) {
+    insights.push({
+      title: moodTrend === "rising" ? "Your mood is improving" : moodTrend === "declining" ? "Mood needs attention" : "Emotional stability",
+      description: moodTrend === "rising" 
+        ? "Your emotional state shows positive momentum. Keep doing what's working for you!"
+        : moodTrend === "declining"
+        ? "Your mood has been challenging. Be gentle with yourself and reach out for support if needed."
+        : "You're maintaining emotional balance. This consistency is a strength.",
+      icon: "TrendingUp",
+      trend: moodTrend === "rising" ? "positive" as const : moodTrend === "declining" ? "negative" as const : "neutral" as const,
+    });
+  }
+
+  // Topic-based insight
+  if (topTopics.length > 0) {
+    const topic = topTopics[0].topic;
+    insights.push({
+      title: `${topic.charAt(0).toUpperCase() + topic.slice(1)} is on your mind`,
+      description: `This theme came up ${topTopics[0].count} times. Reflecting on it more deeply might reveal important insights.`,
+      icon: "Brain",
+      trend: "neutral" as const,
+    });
+  }
+
+  return insights.slice(0, 5);
+}

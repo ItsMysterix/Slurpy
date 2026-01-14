@@ -453,14 +453,36 @@ export async function GET(req: NextRequest) {
       .slice(0, 6);
 
     /* ---------------------------- Insights ---------------------------- */
-    const insights: Insight[] = (() => {
-      const out: Insight[] = [];
+    // First, try to fetch AI-generated key insights from insight_run table
+    let insights: Insight[] = [];
+    
+    try {
+      const { data: latestInsight } = await sb()
+        .from("insight_run")
+        .select("key_insights, created_at")
+        .eq("user_id", userId)
+        .gte("time_range_start", range.start.toISOString())
+        .lte("time_range_end", range.end.toISOString())
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .single();
+
+      if (latestInsight?.key_insights && Array.isArray(latestInsight.key_insights)) {
+        insights = latestInsight.key_insights;
+      }
+    } catch (err) {
+      // If no AI-generated insights found, fall back to rule-based insights
+      console.log("[insights] No AI-generated insights found, using fallback logic");
+    }
+
+    // Fallback to rule-based insights if no AI insights available
+    if (insights.length === 0) {
       if (msgsR.length) {
         const sessionsCount = sessionsWithDur.length || 1;
         const avgPerSession = msgsR.length / sessionsCount;
 
         if (avgPerSession > 10)
-          out.push({ title: "Deep Conversations", description: `Avg ${Math.round(avgPerSession)} msgs/session.`, icon: "TrendingUp", trend: "positive" });
+          insights.push({ title: "Deep Conversations", description: `Avg ${Math.round(avgPerSession)} msgs/session.`, icon: "TrendingUp", trend: "positive" });
 
         const emos = msgsR.map((m) => m.emotion).filter((e): e is string => typeof e === "string" && e.length > 0);
         const positiveSet = new Set(["joy","excited","hopeful","content","happy","peaceful","grateful","calm","energetic"]);
@@ -468,21 +490,20 @@ export async function GET(req: NextRequest) {
           const posCount = emos.filter((e) => positiveSet.has(e.toLowerCase())).length;
           const pct = Math.round((posCount / emos.length) * 100);
           if (pct >= 60)
-            out.push({ title: "Positive Trend", description: `${pct}% of messages show positive emotion.`, icon: "TrendingUp", trend: "positive" });
+            insights.push({ title: "Positive Trend", description: `${pct}% of messages show positive emotion.`, icon: "TrendingUp", trend: "positive" });
           else if (pct <= 30)
-            out.push({ title: "Support Opportunity", description: "Try mindfulness or stress-management prompts.", icon: "Heart", trend: "neutral" });
+            insights.push({ title: "Support Opportunity", description: "Try mindfulness or stress-management prompts.", icon: "Heart", trend: "neutral" });
         }
 
         const topics = [...new Set(msgsR.flatMap((m) => parseTopics(m.topics)))];
         if (topics.length >= 6)
-          out.push({ title: "Diverse Topics", description: `Covered ${topics.length} topics recently.`, icon: "Brain", trend: "positive" });
+          insights.push({ title: "Diverse Topics", description: `Covered ${topics.length} topics recently.`, icon: "Brain", trend: "positive" });
       }
 
-      if (!out.length) {
-        out.push({ title: "Getting Started", description: "Chat more to unlock personalized insights.", icon: "Calendar", trend: "neutral" });
+      if (!insights.length) {
+        insights.push({ title: "Getting Started", description: "Chat more to unlock personalized insights.", icon: "Calendar", trend: "neutral" });
       }
-      return out;
-    })();
+    }
 
     /* --------------------------- Aggregate header --------------------------- */
     const totalMinutes = sessionsWithDur.reduce((a, s) => a + (s.duration || 0), 0);

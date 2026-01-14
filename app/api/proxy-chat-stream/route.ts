@@ -210,15 +210,28 @@ export const POST = withCORS(async function POST(req: NextRequest) {
         } catch { return undefined as any; }
       })();
       // MCP streaming endpoint (integrated into main backend at /mcp/stream)
-      upstream = await safeFetch(upstreamUrl, {
-        method: "POST",
-        headers: hdrsForUpstream,
-        body: JSON.stringify(upstreamPayload),
-        signal: controller.signal,
-        cache: "no-store",
-        timeoutMs: 20_000,
-        allowedHosts: upstreamHosts?.length ? upstreamHosts : undefined,
-      });
+      try {
+        upstream = await safeFetch(upstreamUrl, {
+          method: "POST",
+          headers: hdrsForUpstream,
+          body: JSON.stringify(upstreamPayload),
+          signal: controller.signal,
+          cache: "no-store",
+          timeoutMs: 20_000,
+          allowedHosts: upstreamHosts?.length ? upstreamHosts : undefined,
+        });
+      } catch (fetchError: any) {
+        console.error(`[proxy-chat-stream] Fetch error to ${upstreamUrl}:`, fetchError);
+        return new NextResponse(
+          JSON.stringify({ 
+            error: "Unable to connect to chat service. Please ensure the backend server is running at: " + (BACKEND_URL || "internal MCP route")
+          }), 
+          {
+            status: 503,
+            headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
+          }
+        );
+      }
     }
 
     if (!upstream.ok || !upstream.body) {
@@ -226,7 +239,15 @@ export const POST = withCORS(async function POST(req: NextRequest) {
       try {
         errText = await upstream.text();
       } catch {}
-      return new NextResponse(JSON.stringify({ error: errText || "Upstream error" }), {
+      
+      // Provide user-friendly error message
+      const userMessage = upstream.status === 404 || upstream.status === 502
+        ? "Unable to connect to chat service. Please check if BACKEND_URL is configured correctly."
+        : errText || "Chat service temporarily unavailable. Please try again.";
+      
+      console.error(`[proxy-chat-stream] Upstream error: ${upstream.status} - ${errText}`);
+      
+      return new NextResponse(JSON.stringify({ error: userMessage }), {
         status: upstream.status || 502,
         headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
       });

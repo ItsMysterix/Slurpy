@@ -248,6 +248,12 @@ export interface InsightRun {
   moodTrend: "rising" | "declining" | "stable" | null;
   resilienceDelta: "improving" | "stable" | "strained" | null;
   narrativeSummary: string; // 5-7 sentence reflection
+  keyInsights?: Array<{
+    title: string;
+    description: string;
+    icon: string;
+    trend: "positive" | "negative" | "neutral";
+  }>;
   sourceMetadata: {
     moodEntries: number;
     sessionCount: number;

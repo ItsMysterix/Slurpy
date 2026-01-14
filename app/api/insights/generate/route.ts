@@ -14,6 +14,7 @@ import {
   generateNarrativeSummary,
   extractDominantEmotions,
   extractRecurringThemes,
+  generateKeyInsights,
 } from "@/lib/insight-narrative";
 import { InsightRun, GenerateInsightResponse } from "@/types";
 
@@ -119,6 +120,16 @@ export async function POST(
       aggregatedData.topicFrequency
     );
 
+    // Generate therapist-style key insights
+    const keyInsights = await generateKeyInsights({
+      emotionFrequency: aggregatedData.emotionFrequency,
+      topicFrequency: aggregatedData.topicFrequency,
+      moodTrend: aggregatedData.moodTrend,
+      sessionCount: aggregatedData.sessionCount,
+      moodEntryCount: aggregatedData.moodEntryCount,
+      memoryContext: aggregatedData.memoryContext,
+    });
+
     // Create InsightRun record
     const insightData = {
       user_id: user.id,
@@ -129,6 +140,7 @@ export async function POST(
       mood_trend: aggregatedData.moodTrend,
       resilience_delta: aggregatedData.resilienceDelta,
       narrative_summary: narrativeSummary,
+      key_insights: keyInsights, // Add key insights to database
       source_metadata: {
         moodEntries: aggregatedData.moodEntryCount,
         sessionCount: aggregatedData.sessionCount,
