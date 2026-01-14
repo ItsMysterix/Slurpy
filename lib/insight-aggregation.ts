@@ -100,11 +100,11 @@ async function fetchMemoryContext(
   // Fetch relevant memory entries by topic/labels
   const supabase = createServerServiceClient();
   const { data, error } = await supabase
-    .from("user_memory")
-    .select("content, labels")
-    .eq("user_id", userId)
+    .from("UserMemory")
+    .select("summary")
+    .eq("userId", userId)
     .limit(limit)
-    .order("created_at", { ascending: false });
+    .order("createdAt", { ascending: false });
 
   if (error || !data || data.length === 0) {
     return null;
@@ -112,7 +112,7 @@ async function fetchMemoryContext(
 
   // Summarize memory entries (just concatenate for now)
   return data
-    .map((m: { content: string }) => m.content)
+    .map((m: { summary: string }) => m.summary)
     .join(" | ")
     .substring(0, 500); // Limit to 500 chars
 }
