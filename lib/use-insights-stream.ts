@@ -11,6 +11,7 @@ type Options = {
 
 /**
  * Stable, throttled SSE listener for insights updates.
+ * - Client owns refresh UX only; server controls aggregation timing/windows.
  * - Reacts ONLY to "update" events (ignores "open"/"ping")
  * - Throttles calls to your onUpdate
  * - Keeps onUpdate stable via ref (not a dep)

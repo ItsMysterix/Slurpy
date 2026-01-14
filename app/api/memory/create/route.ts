@@ -1,11 +1,9 @@
 // app/api/memory/create/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
+import { MemoryServiceError, memoryService } from "@/lib/memory-service";
 import { CreateMemoryRequest } from "@/lib/memory-types";
-import { v4 as uuidv4 } from "uuid";
-
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+import { createServerServiceClient } from "@/lib/supabase/server";
+import { canUseMemory, getPlan } from "@/lib/plan-policy";
 
 export async function POST(request: NextRequest) {
   try {
@@ -15,7 +13,7 @@ export async function POST(request: NextRequest) {
     }
 
     const token = authHeader.slice(7);
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+    const supabase = createServerServiceClient();
 
     // Verify token and get user
     const {
@@ -29,16 +27,8 @@ export async function POST(request: NextRequest) {
 
     const userId = user.id;
 
-    // Check if user is pro (memory only available for pro/elite)
-    const isPro =
-      user.user_metadata?.plan === "pro" || user.user_metadata?.plan === "elite";
-
-    if (!isPro) {
-      return NextResponse.json(
-        { error: "Memory feature available for pro users only" },
-        { status: 403 }
-      );
-    }
+    const plan = getPlan(user);
+    const isPro = canUseMemory(plan);
 
     const body: CreateMemoryRequest = await request.json();
 
@@ -55,36 +45,45 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Source ID is required" }, { status: 400 });
     }
 
-    // Insert memory
-    const { data, error } = await supabase
-      .from("UserMemory")
-      .insert({
-        id: uuidv4(),
-        userId,
-        summary: body.summary.trim().slice(0, 2000), // Max 2000 chars
-        sourceType: body.sourceType,
-        sourceId: body.sourceId,
-        sourceDate: body.sourceDate,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      })
-      .select()
-      .single();
+    const sourceId = body.sourceId.trim();
+    const summary = body.summary.trim();
 
-    if (error) {
-      console.error("Memory creation error:", error);
-      return NextResponse.json({ error: "Failed to create memory" }, { status: 500 });
-    }
+    const result =
+      body.sourceType === "chat"
+        ? await memoryService.createMemoryFromChat({
+            userId,
+            chatSessionId: sourceId,
+            customSummary: summary,
+            sourceDate: body.sourceDate,
+            plan,
+            isPro,
+          })
+        : await memoryService.createMemoryFromJournal({
+            userId,
+            journalEntryId: sourceId,
+            customSummary: summary,
+            sourceDate: body.sourceDate,
+            plan,
+            isPro,
+          });
 
     return NextResponse.json(
       {
         success: true,
         message: "Memory created",
-        memory: data,
+        memory: result.memory,
       },
       { status: 201 }
     );
   } catch (error) {
+    if (error instanceof MemoryServiceError) {
+      const message =
+        error.status === 403
+          ? "Memory feature available for pro users only"
+          : error.message;
+      return NextResponse.json({ error: message }, { status: error.status });
+    }
+
     console.error("Memory create error:", error);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }

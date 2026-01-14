@@ -4,6 +4,7 @@
 import React, { useEffect, useState } from "react";
 import { useUser } from "@/lib/auth-hooks";
 import { supabase } from "@/lib/supabaseClient";
+import { usePlan } from "@/lib/use-plan";
 import { Trash2, Loader2, AlertCircle } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -11,12 +12,11 @@ import type { UserMemory } from "@/lib/memory-types";
 
 export function MemoryManager() {
   const { user } = useUser();
+  const { isPro } = usePlan();
   const [memories, setMemories] = useState<UserMemory[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isDeleting, setIsDeleting] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-
-  const isPro = user?.user_metadata?.plan === "pro" || user?.user_metadata?.plan === "elite";
 
   useEffect(() => {
     if (!user || !isPro) {

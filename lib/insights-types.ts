@@ -259,26 +259,39 @@ export interface InsightRun {
 }
 
 export interface AggregatedInsightData {
-  // Raw aggregation from data sources
-  moodEntries: {
+  moodEntries: Array<{
+    id: string;
+    userId: string;
     emotion: string;
-    intensity: number;
-    date: string;
-  }[];
-  sessionSummaries: {
+    intensity: number; // 0-1
+    journal?: string;
+    createdAt: string;
+    updatedAt: string;
+    // Accepts additional fields from the persistence layer (snake_case tolerated)
+    [key: string]: any;
+  }>;
+  sessionSummaries: Array<{
     id: string;
     dominantEmotion: string;
     topics: string[];
     startTime: string;
-  }[];
-  memoryContextSnippets?: string[]; // For pro users only (read-only)
-  journalTopics?: string[]; // From journal entries
+  }>;
+  emotionFrequency: Record<string, number>;
+  topicFrequency: Record<string, number>;
+  sessionCount: number;
+  moodEntryCount: number;
+  totalIntensity: number;
+  memoryContext?: string; // For pro users only (read-only)
+  moodTrend: "rising" | "declining" | "stable" | null;
+  resilienceDelta: "improving" | "stable" | "strained" | null;
+  timeRangeStart: string;
+  timeRangeEnd: string;
 }
 
 export interface NarrativeInputs {
   // Structured inputs to narrative generation
   emotionFrequency: Record<string, number>; // emotion -> count
-  topicsFrequency: Record<string, number>;  // topic -> count
+  topicFrequency: Record<string, number>;   // topic -> count
   moodTrendDirection: "rising" | "declining" | "stable" | null;
   sessionCount: number;
   moodEntryCount: number;

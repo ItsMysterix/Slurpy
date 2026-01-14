@@ -1,11 +1,11 @@
 /*
  * Narrative Generation for Weekly Reflections
- * Uses OpenAI to generate human, thoughtful, non-clinical summaries
+ * Uses Claude (Anthropic) to generate human, thoughtful, non-clinical summaries
  */
 
-import OpenAI from "openai";
+import Anthropic from "@anthropic-ai/sdk";
 
-const client = new OpenAI({
+const client = new Anthropic({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
@@ -118,14 +118,14 @@ Write a genuine, empathetic reflection that feels personal and supportive.`;
     });
 
     // Extract text from response
-    const textContent = response.content.find((c) => c.type === "text");
+    const textContent = response.content.find((c: { type: string }) => c.type === "text");
     if (textContent && textContent.type === "text") {
-      return textContent.text;
+      return (textContent as { type: "text"; text: string }).text;
     }
 
     return "Unable to generate reflection at this time.";
   } catch (error) {
-    console.error("[generateNarrativeSummary] OpenAI error:", error);
+    console.error("[generateNarrativeSummary] Anthropic error:", error);
     throw error;
   }
 }

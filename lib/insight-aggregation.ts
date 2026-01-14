@@ -1,14 +1,16 @@
 /* 
  * Insight Aggregation Utilities
- * Aggregates mood, chat, and memory data for narrative generation
+ * Aggregates mood, chat, and memory data for narrative generation.
+ * Server owns aggregation cadence and data windows; keep UI refresh logic client-side to avoid timing drift.
  */
 
-import { supabaseServer } from "./supabaseClient";
-import {
+import { createServerServiceClient } from "@/lib/supabase/server";
+import type {
   AggregatedInsightData,
   DailyMood,
   ChatSession,
-} from "@/types";
+} from "@/types/index";
+import { canUseInsightsMemory } from "@/lib/plan-policy";
 
 /**
  * Get 7-day rolling window dates (UTC)
@@ -34,7 +36,8 @@ async function fetchMoodEntries(
   userId: string,
   window: { start: Date; end: Date }
 ): Promise<DailyMood[]> {
-  const { data, error } = await supabaseServer
+  const supabase = createServerServiceClient();
+  const { data, error } = await supabase
     .from("daily_mood")
     .select("*")
     .eq("user_id", userId)
@@ -58,7 +61,8 @@ async function fetchChatSessions(
   userId: string,
   window: { start: Date; end: Date }
 ): Promise<ChatSession[]> {
-  const { data, error } = await supabaseServer
+  const supabase = createServerServiceClient();
+  const { data, error } = await supabase
     .from("chat_session")
     .select("*")
     .eq("user_id", userId)
@@ -85,7 +89,7 @@ async function fetchMemoryContext(
   limit: number = 3
 ): Promise<string | null> {
   // Free users have no memory access
-  if (!planId || planId === "free") {
+  if (!canUseInsightsMemory(planId)) {
     return null;
   }
 
@@ -107,7 +111,7 @@ async function fetchMemoryContext(
 
   // Summarize memory entries (just concatenate for now)
   return data
-    .map((m) => m.content)
+    .map((m: { content: string }) => m.content)
     .join(" | ")
     .substring(0, 500); // Limit to 500 chars
 }
@@ -221,7 +225,8 @@ async function calculateResilienceDelta(
   userId: string,
   currentIntensity: number
 ): Promise<"improving" | "stable" | "strained" | null> {
-  const { data: prevRun } = await supabaseServer
+  const supabase = createServerServiceClient();
+  const { data: prevRun } = await supabase
     .from("insight_run")
     .select("source_metadata")
     .eq("user_id", userId)

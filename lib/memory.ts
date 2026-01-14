@@ -1,10 +1,7 @@
 // lib/memory.ts
-import { createClient } from "@supabase/supabase-js";
+import { memoryService } from "@/lib/memory-service";
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-
-const supabase = createClient(supabaseUrl, supabaseServiceKey);
+// Thin helper that delegates memory retrieval to the server-side MemoryService authority.
 
 /**
  * Get user's memories for prompt injection (server-side only)
@@ -20,24 +17,18 @@ export async function getUserMemoriesForContext(
   }
 
   try {
-    const { data, error } = await supabase
-      .from("UserMemory")
-      .select("summary, sourceType, createdAt")
-      .eq("userId", userId)
-      .order("createdAt", { ascending: false })
-      .limit(5);
+    const { memories } = await memoryService.listMemoriesForContext({
+      userId,
+      isPro: true,
+      limit: 5,
+    });
 
-    if (error) {
-      console.error("Failed to fetch memories:", error);
-      return "";
-    }
-
-    if (!data || data.length === 0) {
+    if (!memories || memories.length === 0) {
       return "";
     }
 
     // Format memories for prompt context (silent mode - no "I remember" preface)
-    const memoryContext = data
+    const memoryContext = memories
       .map((mem) => {
         const sourceLabel = mem.sourceType === "chat" ? "from past conversation" : "from journal";
         const date = new Date(mem.createdAt).toLocaleDateString("en-US", {

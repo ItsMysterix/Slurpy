@@ -1,9 +1,8 @@
 // app/api/memory/delete/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
-
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+import { MemoryServiceError, memoryService } from "@/lib/memory-service";
+import { createServerServiceClient } from "@/lib/supabase/server";
+import { canUseMemory, getPlan } from "@/lib/plan-policy";
 
 export async function POST(request: NextRequest) {
   try {
@@ -13,7 +12,7 @@ export async function POST(request: NextRequest) {
     }
 
     const token = authHeader.slice(7);
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+    const supabase = createServerServiceClient();
 
     // Verify token and get user
     const {
@@ -29,36 +28,14 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const memoryId = body.memoryId;
 
+    const plan = getPlan(user);
+    const isPro = canUseMemory(plan);
+
     if (!memoryId) {
       return NextResponse.json({ error: "Memory ID is required" }, { status: 400 });
     }
 
-    // Verify the memory belongs to the user before deleting
-    const { data: memory } = await supabase
-      .from("UserMemory")
-      .select("id")
-      .eq("id", memoryId)
-      .eq("userId", userId)
-      .single();
-
-    if (!memory) {
-      return NextResponse.json(
-        { error: "Memory not found or unauthorized" },
-        { status: 404 }
-      );
-    }
-
-    // Delete memory
-    const { error } = await supabase
-      .from("UserMemory")
-      .delete()
-      .eq("id", memoryId)
-      .eq("userId", userId);
-
-    if (error) {
-      console.error("Memory deletion error:", error);
-      return NextResponse.json({ error: "Failed to delete memory" }, { status: 500 });
-    }
+    await memoryService.deleteMemory({ userId, memoryId, plan, isPro });
 
     return NextResponse.json(
       {
@@ -68,6 +45,10 @@ export async function POST(request: NextRequest) {
       { status: 200 }
     );
   } catch (error) {
+    if (error instanceof MemoryServiceError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
+
     console.error("Memory delete error:", error);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }

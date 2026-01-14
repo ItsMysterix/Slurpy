@@ -6,6 +6,7 @@ export const revalidate = 0;
 
 import { NextRequest, NextResponse } from "next/server";
 import { getUserMemoriesForContext } from "@/lib/memory";
+import { canUseInsightsMemory, getPlan } from "@/lib/plan-policy";
 
 // Minimal NDJSON streaming format: { type: "delta", delta: string, id?: number } ... { type: "done" }
 // This implementation uses OpenAI's Chat Completions SSE stream.
@@ -54,9 +55,9 @@ export async function POST(req: NextRequest) {
                 
                 // Check user plan
                 const { data: { user } } = await supabase.auth.admin.getUserById(user_id);
-                const isPro = user?.user_metadata?.plan === "pro" || user?.user_metadata?.plan === "elite";
-                
-                if (isPro) {
+                const plan = getPlan(user);
+
+                if (canUseInsightsMemory(plan)) {
                   memoryContext = await getUserMemoriesForContext(user_id, true);
                 }
               }

@@ -19,12 +19,16 @@ export function createServerAnonClient(headers?: Record<string, string>): Client
   });
 }
 
-/** Server-only admin client (SERVICE_ROLE). Never use in client bundles. */
+/**
+ * Authoritative server-only admin client (SERVICE_ROLE).
+ * Use this for all server-side service-role access; other server factories are legacy.
+ */
 export function createServerServiceClient(): Client {
   if (typeof window !== "undefined") throw new Error("createServerServiceClient() must run on the server");
   const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE;
-  if (!url || !key) throw new Error("Missing SUPABASE_URL/NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE");
+  // Prefer SUPABASE_SERVICE_ROLE, but fall back to SUPABASE_SERVICE_ROLE_KEY to avoid breaking existing envs.
+  const key = process.env.SUPABASE_SERVICE_ROLE || process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) throw new Error("Missing SUPABASE_URL/NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE(_KEY)");
   return createClient(url, key, { auth: { autoRefreshToken: false, persistSession: false } });
 }
 

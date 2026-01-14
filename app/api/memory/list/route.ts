@@ -1,9 +1,8 @@
 // app/api/memory/list/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
-
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+import { MemoryServiceError, memoryService } from "@/lib/memory-service";
+import { createServerServiceClient } from "@/lib/supabase/server";
+import { canUseMemory, getPlan } from "@/lib/plan-policy";
 
 export async function GET(request: NextRequest) {
   try {
@@ -13,7 +12,7 @@ export async function GET(request: NextRequest) {
     }
 
     const token = authHeader.slice(7);
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+    const supabase = createServerServiceClient();
 
     // Verify token and get user
     const {
@@ -27,38 +26,22 @@ export async function GET(request: NextRequest) {
 
     const userId = user.id;
 
-    // Check if user is pro (memory only available for pro/elite)
-    const isPro =
-      user.user_metadata?.plan === "pro" || user.user_metadata?.plan === "elite";
+    const plan = getPlan(user);
+    const isPro = canUseMemory(plan);
 
-    if (!isPro) {
-      return NextResponse.json(
-        { error: "Memory feature is only available for Pro and Elite users" },
-        { status: 403 }
-      );
-    }
+    const { memories, total } = await memoryService.listMemoriesForContext({
+      userId,
+      plan,
+      isPro,
+      limit: 100,
+    });
 
-    // Fetch user's memories, sorted by most recent first
-    const { data, error, count } = await supabase
-      .from("UserMemory")
-      .select("*", { count: "exact" })
-      .eq("userId", userId)
-      .order("createdAt", { ascending: false })
-      .limit(100);
-
-    if (error) {
-      console.error("Memory fetch error:", error);
-      return NextResponse.json({ error: "Failed to fetch memories" }, { status: 500 });
-    }
-
-    return NextResponse.json(
-      {
-        memories: data || [],
-        total: count || 0,
-      },
-      { status: 200 }
-    );
+    return NextResponse.json({ memories, total }, { status: 200 });
   } catch (error) {
+    if (error instanceof MemoryServiceError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
+
     console.error("Memory list error:", error);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
