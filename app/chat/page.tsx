@@ -122,6 +122,12 @@ async function streamFromSlurpy(
   }
 
   const finalText = assembled.trim() || "I'm here to help!";
+  
+  // Detect backend errors disguised as responses
+  if (finalText.includes("proxy error:") || finalText.includes("pipeline error:") || finalText.includes("Unable to connect")) {
+    throw new Error(finalText);
+  }
+  
   return {
     session_id: sessionId || Date.now().toString(),
     message: finalText,
