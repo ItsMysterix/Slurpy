@@ -3,7 +3,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth } from "@/lib/api-auth";
+import { requireAuth, UnauthorizedError } from "@/lib/api-auth";
 import { logger } from "@/lib/logger";
 import { deriveRoles, requireSelfOrRole, ForbiddenError } from "@/lib/authz";
 import { createClient } from "@supabase/supabase-js";

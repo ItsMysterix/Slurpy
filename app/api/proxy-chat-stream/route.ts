@@ -32,7 +32,7 @@ function normalizeChatBody(raw: any) {
   };
 }
 import { cookies, headers } from "next/headers";
-import { optionalAuth } from "@/lib/api-auth";
+import { optionalAuth, UnauthorizedError } from "@/lib/api-auth";
 import { logger } from "@/lib/logger";
 import { z, ensureJsonUnder, boundedString, httpError } from "@/lib/validate";
 import { guardRate } from "@/lib/guards";

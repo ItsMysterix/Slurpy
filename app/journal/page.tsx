@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { useAuth, useUser } from "@/lib/auth-hooks";
 import { supabase } from "@/lib/supabaseClient";
+import { RequireAuth } from "@/components/auth/RequireAuth";
 
 import SlideDrawer from "@/components/slide-drawer";
 import JournalHeader from "@/components/journal/JournalHeader";
@@ -313,22 +314,25 @@ export default function JournalPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-sand-50 via-sage-25 to-clay-50 dark:from-gray-950 dark:via-gray-900 dark:to-gray-950 transition-all duration-500">
-        <SlideDrawer onSidebarToggle={setSidebarOpen} />
-        <div className={`flex h-screen transition-all duration-300 ${sidebarOpen ? "md:ml-64" : "md:ml-16"} ml-0`}>
-          <div className="flex-1 flex items-center justify-center">
-            <div className="text-center">
-              <Loader2 className="w-8 h-8 animate-spin mx-auto mb-4 text-clay-500 dark:text-sand-400" />
-              <p className="text-clay-500 dark:text-sand-400">Loading your journal entries...</p>
+      <RequireAuth>
+        <div className="min-h-screen bg-gradient-to-br from-sand-50 via-sage-25 to-clay-50 dark:from-gray-950 dark:via-gray-900 dark:to-gray-950 transition-all duration-500">
+          <SlideDrawer onSidebarToggle={setSidebarOpen} />
+          <div className={`flex h-screen transition-all duration-300 ${sidebarOpen ? "md:ml-64" : "md:ml-16"} ml-0`}>
+            <div className="flex-1 flex items-center justify-center">
+              <div className="text-center">
+                <Loader2 className="w-8 h-8 animate-spin mx-auto mb-4 text-clay-500 dark:text-sand-400" />
+                <p className="text-clay-500 dark:text-sand-400">Loading your journal entries...</p>
+              </div>
             </div>
           </div>
         </div>
-      </div>
+      </RequireAuth>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-sand-50 via-sage-25 to-clay-50 dark:from-gray-950 dark:via-gray-900 dark:to-gray-950 transition-all duration-500">
+    <RequireAuth>
+      <div className="min-h-screen bg-gradient-to-br from-sand-50 via-sage-25 to-clay-50 dark:from-gray-950 dark:via-gray-900 dark:to-gray-950 transition-all duration-500">
       <SlideDrawer onSidebarToggle={setSidebarOpen} />
       <div className={`flex h-screen transition-all duration-300 ${sidebarOpen ? "md:ml-64" : "md:ml-16"} ml-0`}>
         <div className="flex-1 flex flex-col">
@@ -425,5 +429,6 @@ export default function JournalPage() {
         }}
       />
     </div>
+    </RequireAuth>
   );
 }

@@ -1,5 +1,6 @@
 // app/api/memory/create/route.ts
 import { NextRequest, NextResponse } from "next/server";
+import { requireAuth } from "@/lib/api-auth";
 import { MemoryServiceError, memoryService } from "@/lib/memory-service";
 import { CreateMemoryRequest } from "@/lib/memory-types";
 import { createServerServiceClient } from "@/lib/supabase/server";
@@ -7,25 +8,11 @@ import { canUseMemory, getPlan } from "@/lib/plan-policy";
 
 export async function POST(request: NextRequest) {
   try {
-    const authHeader = request.headers.get("authorization");
-    if (!authHeader?.startsWith("Bearer ")) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    const auth = await requireAuth(request);
+    const userId = auth.userId;
 
-    const token = authHeader.slice(7);
     const supabase = createServerServiceClient();
-
-    // Verify token and get user
-    const {
-      data: { user },
-      error: authError,
-    } = await supabase.auth.getUser(token);
-
-    if (authError || !user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    const userId = user.id;
+    const { data: { user } } = await supabase.auth.getUser(auth.bearer);
 
     const plan = getPlan(user);
     const isPro = canUseMemory(plan);

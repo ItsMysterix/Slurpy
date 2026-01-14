@@ -2,6 +2,7 @@
 
 import React from "react";
 import dynamic from "next/dynamic";
+import { RequireAuth } from "@/components/auth/RequireAuth";
 import SlideDrawer from "@/components/slide-drawer";
 import InsightsHeader from "@/components/insights/InsightsHeader";
 import SummaryCard from "@/components/insights/SummaryCard";
@@ -173,32 +174,36 @@ export default function ClientPage() {
 
   if (initialLoading) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-sand-50 via-sage-25 to-clay-50 dark:from-gray-950 dark:via-gray-900 dark:to-gray-950">
-        <SlideDrawer onSidebarToggle={setSidebarOpen} />
-        <div className={`flex h-screen ${sidebarOpen ? "ml-64" : "ml-16"}`}>
-          <div className="flex-1 grid place-items-center">
-            <Loader2 className="w-8 h-8 animate-spin text-clay-500 dark:text-sand-400" />
+      <RequireAuth>
+        <div className="min-h-screen bg-gradient-to-br from-sand-50 via-sage-25 to-clay-50 dark:from-gray-950 dark:via-gray-900 dark:to-gray-950">
+          <SlideDrawer onSidebarToggle={setSidebarOpen} />
+          <div className={`flex h-screen ${sidebarOpen ? "ml-64" : "ml-16"}`}>
+            <div className="flex-1 grid place-items-center">
+              <Loader2 className="w-8 h-8 animate-spin text-clay-500 dark:text-sand-400" />
+            </div>
           </div>
         </div>
-      </div>
+      </RequireAuth>
     );
   }
 
   if (error || !insights) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-sand-50 via-sage-25 to-clay-50 dark:from-gray-950 dark:via-gray-900 dark:to-gray-950">
-        <SlideDrawer onSidebarToggle={setSidebarOpen} />
-        <div className={`flex h-screen ${sidebarOpen ? "ml-64" : "ml-16"}`}>
-          <div className="flex-1 grid place-items-center">
-            <div className="text-center text-clay-600 dark:text-sand-300">
-              <p className="mb-3">Unable to load insights.</p>
-              <button className="underline" onClick={() => fetchInsights(selectedTimeframe)}>
-                Retry
-              </button>
+      <RequireAuth>
+        <div className="min-h-screen bg-gradient-to-br from-sand-50 via-sage-25 to-clay-50 dark:from-gray-950 dark:via-gray-900 dark:to-gray-950">
+          <SlideDrawer onSidebarToggle={setSidebarOpen} />
+          <div className={`flex h-screen ${sidebarOpen ? "ml-64" : "ml-16"}`}>
+            <div className="flex-1 grid place-items-center">
+              <div className="text-center text-clay-600 dark:text-sand-300">
+                <p className="mb-3">Unable to load insights.</p>
+                <button className="underline" onClick={() => fetchInsights(selectedTimeframe)}>
+                  Retry
+                </button>
+              </div>
             </div>
-          </div>
         </div>
       </div>
+      </RequireAuth>
     );
   }
 
@@ -206,7 +211,8 @@ export default function ClientPage() {
   const periodLabel = periodLabelFor(selectedTimeframe, header, trends);
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-sand-50 via-sage-25 to-clay-50 dark:from-gray-950 dark:via-gray-900 dark:to-gray-950">
+    <RequireAuth>
+      <div className="min-h-screen bg-gradient-to-br from-sand-50 via-sage-25 to-clay-50 dark:from-gray-950 dark:via-gray-900 dark:to-gray-950">
       <SlideDrawer onSidebarToggle={setSidebarOpen} />
       <div className={`flex h-screen transition-all ${sidebarOpen ? "ml-64" : "ml-16"}`}>
         <div className="flex-1 flex flex-col">
@@ -227,7 +233,7 @@ export default function ClientPage() {
 
           <div className="flex-1 overflow-y-auto p-6">
             <div className="max-w-6xl mx-auto space-y-6">
-              <WeeklyReflection userId={userId} />
+              <WeeklyReflection userId={userId ?? ""} />
               <SummaryCard header={header} timeframe={selectedTimeframe} />
               <WeeklyTrends data={trends.last7Days || []} />
               <div className="grid md:grid-cols-2 gap-6">
@@ -240,5 +246,6 @@ export default function ClientPage() {
         </div>
       </div>
     </div>
+    </RequireAuth>
   );
 }

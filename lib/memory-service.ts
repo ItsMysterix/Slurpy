@@ -23,7 +23,7 @@ export class MemoryService {
   }
 
   private async requirePro(options: PlanCheck) {
-    if (options.isPro || canUseMemory(options.plan)) {
+    if (options.isPro || (options.plan && canUseMemory(options.plan))) {
       return;
     }
 
@@ -126,17 +126,17 @@ export class MemoryService {
     await this.requirePro({ userId: options.userId, plan: options.plan, isPro: options.isPro });
 
     const { data: session, error: sessionError } = await this.supabase
-      .from("ChatSession")
-      .select("id, analysis, startTime")
-      .eq("id", options.chatSessionId)
-      .eq("userId", options.userId)
+      .from("chat_sessions")
+      .select("session_id, themes, last_emotion")
+      .eq("session_id", options.chatSessionId)
+      .eq("user_id", options.userId)
       .single();
 
     if (sessionError || !session) {
       throw new MemoryServiceError("Session not found", 404);
     }
 
-    const summary = this.buildChatSummary(session.analysis, options.customSummary);
+    const summary = options.customSummary || `Chat session from ${new Date().toLocaleDateString()}`;
     if (!summary || summary.length < 10) {
       throw new MemoryServiceError("Summary too short to create memory", 400);
     }
@@ -175,10 +175,10 @@ export class MemoryService {
     await this.requirePro({ userId: options.userId, plan: options.plan, isPro: options.isPro });
 
     const { data: entry, error: entryError } = await this.supabase
-      .from("JournalEntry")
+      .from("journal_entries")
       .select("id, content, title, date")
       .eq("id", options.journalEntryId)
-      .eq("userId", options.userId)
+      .eq("user_id", options.userId)
       .single();
 
     if (entryError || !entry) {

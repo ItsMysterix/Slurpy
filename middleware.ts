@@ -101,7 +101,27 @@ export default async function middleware(req: NextRequest) {
   // Allow public routes
   if (isPublic(req.nextUrl.pathname)) return withSecurityHeaders(req, NextResponse.next());
 
-  // During Supabase migration we allow all routes to flow. Client components decide UI based on auth.
+  // Protected routes - check for auth
+  const PROTECTED_ROUTES = ["/chat", "/profile", "/calendar", "/journal", "/insights", "/plans"];
+  const isProtected = PROTECTED_ROUTES.some(route => req.nextUrl.pathname.startsWith(route));
+  
+  if (isProtected) {
+    // Check for session token
+    const token = req.cookies.get("__session")?.value || 
+                  req.headers.get("authorization")?.replace("Bearer ", "");
+    
+    // E2E bypass
+    const e2eBypass = process.env.NEXT_PUBLIC_E2E_BYPASS_AUTH === "true";
+    const e2eUser = e2eBypass && req.headers.get("x-e2e-user");
+    
+    if (!token && !e2eUser) {
+      // Redirect to sign-in with return URL
+      const signInUrl = new URL("/sign-in", req.url);
+      signInUrl.searchParams.set("redirect", req.nextUrl.pathname);
+      return NextResponse.redirect(signInUrl);
+    }
+  }
+
   return withSecurityHeaders(req, NextResponse.next());
 }
 

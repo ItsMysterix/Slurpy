@@ -6,6 +6,7 @@ import { Check, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { usePlan } from "@/lib/use-plan";
 import { getCheckoutUrl } from "@/lib/pay";
+import { RequireAuth } from "@/components/auth/RequireAuth";
 
 const features = {
   free: [
@@ -38,9 +39,11 @@ const features = {
 
 export default function ClientPage() {
   return (
-    <Suspense fallback={<div className="px-4 py-8 text-sm text-muted-foreground">Loading…</div>}>
-      <PlansView />
-    </Suspense>
+    <RequireAuth>
+      <Suspense fallback={<div className="px-4 py-8 text-sm text-muted-foreground">Loading…</div>}>
+        <PlansView />
+      </Suspense>
+    </RequireAuth>
   );
 }
 

@@ -5,6 +5,7 @@ export const dynamic = "force-dynamic";
 
 import { useEffect, useState } from "react"
 import { useAuth } from "@/lib/auth-hooks"
+import { RequireAuth } from "@/components/auth/RequireAuth"
 import { toast } from "@/hooks/use-toast"
 import { supabase } from "@/lib/supabaseClient"
 
@@ -120,21 +121,9 @@ export default function CalendarPage() {
     setRightPanelOpen(true)
   }
 
-  if (!isSignedIn) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-sand-50 via-sage-25 to-clay-50 dark:from-gray-950 dark:via-gray-900 dark:to-gray-950 flex items-center justify-center">
-        <Card className="p-6 text-center bg-gradient-to-br from-white/70 via-sage-50/50 to-sand-50/70 dark:from-gray-900/70 dark:via-gray-800/50 dark:to-gray-900/70 backdrop-blur-lg border border-sage-100/30 dark:border-gray-700/30">
-          <CardContent>
-            <h2 className="text-xl font-semibold mb-2 text-clay-700 dark:text-sand-200">Please sign in</h2>
-            <p className="text-clay-600 dark:text-sand-400">Sign in to track your moods and view your calendar.</p>
-          </CardContent>
-        </Card>
-      </div>
-    )
-  }
-
   return (
-    <div className="min-h-screen bg-gradient-to-br from-sand-50 via-sage-25 to-clay-50 dark:from-gray-950 dark:via-gray-900 dark:to-gray-950 transition-all duration-500">
+    <RequireAuth>
+      <div className="min-h-screen bg-gradient-to-br from-sand-50 via-sage-25 to-clay-50 dark:from-gray-950 dark:via-gray-900 dark:to-gray-950 transition-all duration-500">
       <SlideDrawer onSidebarToggle={setSidebarOpen} />
 
       {/* page frame with sidebar offset */}
@@ -214,5 +203,6 @@ export default function CalendarPage() {
         onDataUpdate={fetchCalendarData}
       />
     </div>
+    </RequireAuth>
   )
 }

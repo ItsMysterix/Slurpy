@@ -10,7 +10,7 @@ import type {
   DailyMood,
   ChatSession,
 } from "@/types/index";
-import { canUseInsightsMemory } from "@/lib/plan-policy";
+import { canUseInsights } from "@/lib/plan-policy";
 
 /**
  * Get 7-day rolling window dates (UTC)
@@ -63,7 +63,7 @@ async function fetchChatSessions(
 ): Promise<ChatSession[]> {
   const supabase = createServerServiceClient();
   const { data, error } = await supabase
-    .from("chat_session")
+    .from("chat_sessions")
     .select("*")
     .eq("user_id", userId)
     .gte("created_at", window.start.toISOString())
@@ -87,14 +87,14 @@ async function fetchMemoryContext(
   planId: string | null,
   topics: string[],
   limit: number = 3
-): Promise<string | null> {
+): Promise<string | undefined> {
   // Free users have no memory access
-  if (!canUseInsightsMemory(planId)) {
-    return null;
+  if (!planId) {
+    return undefined;
   }
 
   if (topics.length === 0) {
-    return null;
+    return undefined;
   }
 
   // Fetch relevant memory entries by topic/labels
@@ -107,7 +107,7 @@ async function fetchMemoryContext(
     .order("createdAt", { ascending: false });
 
   if (error || !data || data.length === 0) {
-    return null;
+    return undefined;
   }
 
   // Summarize memory entries (just concatenate for now)
@@ -119,11 +119,11 @@ async function fetchMemoryContext(
 
 /**
  * Extract emotion from chat session
- * Use dominant_emotion if available, else default to "neutral"
+ * Use dominantEmotion if available, else default to "neutral"
  */
 function extractSessionEmotion(session: ChatSession): string {
-  if (session.dominant_emotion) {
-    return session.dominant_emotion;
+  if (session.dominantEmotion) {
+    return session.dominantEmotion;
   }
   return "neutral";
 }
@@ -296,7 +296,7 @@ export async function aggregateInsightData(
       id: s.id,
       dominantEmotion: extractSessionEmotion(s),
       topics: extractSessionTopics(s),
-      startTime: s.created_at,
+      startTime: s.createdAt,
     })),
     emotionFrequency: allEmotions,
     topicFrequency: topicFreq,
