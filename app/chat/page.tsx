@@ -106,7 +106,7 @@ async function streamFromSlurpy(
                 
                 // Log RAG pipeline metadata for verification
                 if (evt.source === "rag_pipeline") {
-                  console.log("✅ RAG Pipeline Active - Response generated with:', {
+                  console.log("✅ RAG Pipeline Active - Response generated with:", {
                     source: evt.source,
                     model: evt.model,
                     emotion: evt.emotion,
