@@ -9,17 +9,4 @@
      · cpus: 1
 
  ✓ Starting...
- ✓ Ready in 1482ms
- ✓ Compiled /middleware in 120ms (161 modules)
- ○ Compiling /chat ...
-[baseline-browser-mapping] The data in this module is over two months old.  To ensure accurate Baseline data, please update: `npm i baseline-browser-mapping@latest -D`
- ✓ Compiled /chat in 2.3s (1865 modules)
- HEAD /chat 200 in 3042ms
- ✓ Compiled in 2s (840 modules)
- ✓ Compiled in 429ms (840 modules)
- ✓ Compiled in 230ms (840 modules)
- ✓ Compiled in 250ms (840 modules)
- ✓ Compiled in 210ms (840 modules)
- ✓ Compiled in 259ms (840 modules)
- ✓ Compiled in 280ms (840 modules)
- ✓ Compiled in 284ms (840 modules)
+ ✓ Ready in 1303ms

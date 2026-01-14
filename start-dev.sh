@@ -1,34 +1,31 @@
 #!/bin/bash
 # Local development startup script
-# Starts both Next.js frontend and Python backend
+# Starts Next.js frontend (Python backend runs on Railway)
 
 set -e
 
 echo "🚀 Starting Slurpy local development..."
 
 # Load environment variables
-export $(cat .env.vercel.local | grep -v "^#" | xargs)
+if [ -f .env.vercel.local ]; then
+  export $(cat .env.vercel.local | grep -v "^#" | xargs)
+fi
 
-# Start Python backend
-echo "🐍 Starting Python backend on port 8000..."
-cd backend && PYTHONPATH=$PWD python3 -m uvicorn slurpy.interfaces.http.main:app \
-  --host 0.0.0.0 --port 8000 --reload > ../backend.log 2>&1 &
-BACKEND_PID=$!
-cd ..
-
-# Wait for backend to start
-sleep 3
+# Check if BACKEND_URL is set
+if [ -z "$BACKEND_URL" ]; then
+  echo "⚠️  Warning: BACKEND_URL not set in .env.vercel.local"
+  echo "   Chat features will not work without backend connection"
+fi
 
 # Start Next.js frontend
 echo "⚛️  Starting Next.js frontend on port 3000..."
+echo "   Backend (Railway): $BACKEND_URL"
 pnpm run dev > dev.log 2>&1 &
 FRONTEND_PID=$!
 
-echo "✅ Development servers started!"
+echo "✅ Development server started!"
 echo "   Frontend: http://localhost:3000"
-echo "   Backend:  http://localhost:8000"
-echo "   Backend PID: $BACKEND_PID"
 echo "   Frontend PID: $FRONTEND_PID"
 echo ""
-echo "To stop: kill $BACKEND_PID $FRONTEND_PID"
-echo "Logs: tail -f backend.log dev.log"
+echo "To stop: kill $FRONTEND_PID"
+echo "Logs: tail -f dev.log"
