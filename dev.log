@@ -9,26 +9,17 @@
      · cpus: 1
 
  ✓ Starting...
- ✓ Ready in 1184ms
- ✓ Compiled /middleware in 142ms (161 modules)
- ○ Compiling /sign-in ...
+ ✓ Ready in 1482ms
+ ✓ Compiled /middleware in 120ms (161 modules)
+ ○ Compiling /chat ...
 [baseline-browser-mapping] The data in this module is over two months old.  To ensure accurate Baseline data, please update: `npm i baseline-browser-mapping@latest -D`
- ✓ Compiled /sign-in in 1773ms (911 modules)
- ⨯ Error: supabaseUrl is required.
-    at eval (lib/supabaseClient.ts:9:37)
-    at (ssr)/./lib/supabaseClient.ts (.next/server/app/sign-in/page.js:249:1)
-    at eval (webpack-internal:///(ssr)/./lib/auth-hooks.ts:12:77)
-    at (ssr)/./lib/auth-hooks.ts (.next/server/app/sign-in/page.js:238:1)
-    at eval (webpack-internal:///(ssr)/./app/sign-in/page.tsx:23:73)
-    at (ssr)/./app/sign-in/page.tsx (.next/server/app/sign-in/page.js:150:1)
-   7 | const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
-   8 |
->  9 | export const supabase = createClient(url, anon);
-     |                                     ^
-  10 | {
-  digest: '1171571760'
-}
- GET /sign-in 500 in 3343ms
- ✓ Compiled in 2.8s (911 modules)
- ✓ Compiled in 362ms (363 modules)
- ✓ Compiled in 298ms (363 modules)
+ ✓ Compiled /chat in 2.3s (1865 modules)
+ HEAD /chat 200 in 3042ms
+ ✓ Compiled in 2s (840 modules)
+ ✓ Compiled in 429ms (840 modules)
+ ✓ Compiled in 230ms (840 modules)
+ ✓ Compiled in 250ms (840 modules)
+ ✓ Compiled in 210ms (840 modules)
+ ✓ Compiled in 259ms (840 modules)
+ ✓ Compiled in 280ms (840 modules)
+ ✓ Compiled in 284ms (840 modules)
