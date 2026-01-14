@@ -37,6 +37,11 @@ export default function WeeklyReflection({ userId }: WeeklyReflectionProps) {
     setError(null);
     try {
       const res = await fetch("/api/insights/list?limit=1");
+      if (res.status === 401) {
+        // User not authenticated - silent fail, show empty state
+        setLatestInsight(null);
+        return;
+      }
       if (!res.ok) throw new Error("Failed to load insights");
 
       const data = await res.json();
@@ -71,6 +76,11 @@ export default function WeeklyReflection({ userId }: WeeklyReflectionProps) {
     setError(null);
     try {
       const res = await fetch("/api/insights/generate", { method: "POST" });
+      if (res.status === 401) {
+        setError("Please sign in to generate weekly reflections");
+        setGenerating(false);
+        return;
+      }
       const data = await res.json();
 
       if (!res.ok || !data.success) {
