@@ -60,7 +60,17 @@ async function streamFromSlurpy(
     },
     body: JSON.stringify({ text, session_id: sessionId, mode: roleplayPersona ?? undefined }),
   });
-  if (!res.ok || !res.body) throw new Error(`Backend ${res.status}`);
+  if (!res.ok || !res.body) {
+    let errorDetails = `Backend ${res.status}`;
+    try {
+      const errData = await res.json();
+      errorDetails = errData.error || errData.message || errorDetails;
+      if (errData.details) {
+        console.error('[Chat] Backend error details:', errData.details);
+      }
+    } catch {}
+    throw new Error(errorDetails);
+  }
 
   const reader = res.body.getReader();
   const decoder = new TextDecoder();

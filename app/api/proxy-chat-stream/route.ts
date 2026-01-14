@@ -221,10 +221,19 @@ export const POST = withCORS(async function POST(req: NextRequest) {
           allowedHosts: upstreamHosts?.length ? upstreamHosts : undefined,
         });
       } catch (fetchError: any) {
-        console.error(`[proxy-chat-stream] Fetch error to ${upstreamUrl}:`, fetchError);
+        const errorDetails = {
+          message: fetchError.message || String(fetchError),
+          code: fetchError.code,
+          url: upstreamUrl,
+          backendUrl: BACKEND_URL,
+          timestamp: new Date().toISOString()
+        };
+        console.error(`[proxy-chat-stream] Fetch error:`, errorDetails);
         return new NextResponse(
           JSON.stringify({ 
-            error: "Unable to connect to chat service. Please ensure the backend server is running at: " + (BACKEND_URL || "internal MCP route")
+            error: "Backend connection failed",
+            details: process.env.NODE_ENV !== "production" ? errorDetails : undefined,
+            hint: "Check if BACKEND_URL is configured correctly in Vercel"
           }), 
           {
             status: 503,
@@ -240,14 +249,28 @@ export const POST = withCORS(async function POST(req: NextRequest) {
         errText = await upstream.text();
       } catch {}
       
+      const errorInfo = {
+        status: upstream.status,
+        statusText: upstream.statusText,
+        responseBody: errText,
+        backendUrl: BACKEND_URL,
+        endpoint: upstreamUrl,
+        timestamp: new Date().toISOString()
+      };
+      
+      console.error(`[proxy-chat-stream] Upstream error:`, errorInfo);
+      
       // Provide user-friendly error message
-      const userMessage = upstream.status === 404 || upstream.status === 502
-        ? "Unable to connect to chat service. Please check if BACKEND_URL is configured correctly."
-        : errText || "Chat service temporarily unavailable. Please try again.";
+      const userMessage = upstream.status === 404
+        ? "Backend endpoint not found. The Railway backend may be misconfigured."
+        : upstream.status === 502
+        ? "Backend gateway error. The Railway backend cannot reach its dependencies."
+        : errText || "Chat service returned an error. Please try again.";
       
-      console.error(`[proxy-chat-stream] Upstream error: ${upstream.status} - ${errText}`);
-      
-      return new NextResponse(JSON.stringify({ error: userMessage }), {
+      return new NextResponse(JSON.stringify({ 
+        error: userMessage,
+        details: process.env.NODE_ENV !== "production" ? errorInfo : undefined
+      }), {
         status: upstream.status || 502,
         headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
       });
