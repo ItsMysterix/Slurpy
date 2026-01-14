@@ -1,5 +1,3 @@
-"use server";
-
 import { createServerServiceClient } from "@/lib/supabase/server";
 import type { UserMemory } from "@/lib/memory-types";
 import { v4 as uuidv4 } from "uuid";
@@ -19,7 +17,10 @@ export class MemoryServiceError extends Error {
 }
 
 export class MemoryService {
-  private supabase = createServerServiceClient();
+  private get supabase() {
+    // Lazy to avoid requiring env at import/build time; evaluated only when invoked server-side.
+    return createServerServiceClient();
+  }
 
   private async requirePro(options: PlanCheck) {
     if (options.isPro || canUseMemory(options.plan)) {

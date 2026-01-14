@@ -1,5 +1,8 @@
 "use client"
 
+// Requires runtime Supabase env; disable prerendering to avoid build-time env faults.
+export const dynamic = "force-dynamic";
+
 import { useEffect, useState } from "react"
 import { useAuth } from "@/lib/auth-hooks"
 import { toast } from "@/hooks/use-toast"
