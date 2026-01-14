@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+import dynamic from "next/dynamic";
 import SlideDrawer from "@/components/slide-drawer";
 import InsightsHeader from "@/components/insights/InsightsHeader";
 import SummaryCard from "@/components/insights/SummaryCard";
@@ -8,7 +9,11 @@ import WeeklyTrends from "@/components/insights/WeeklyTrends";
 import EmotionBreakdown from "@/components/insights/EmotionBreakdown";
 import KeyInsights from "@/components/insights/KeyInsights";
 import Topics from "@/components/insights/Topics";
-import WeeklyReflection from "@/components/insights/WeeklyReflection";
+
+const WeeklyReflection = dynamic(
+  () => import("@/components/insights/WeeklyReflection"),
+  { ssr: false }
+);
 
 import { useAuth, useUser } from "@/lib/auth-hooks";
 import { Loader2 } from "lucide-react";
