@@ -86,6 +86,16 @@ export async function POST(
     // Aggregate data
     const aggregatedData = await aggregateInsightData(user.id, planId, window);
 
+    // Fetch session summaries for progress tracking
+    const { data: sessionSummaries } = await supabase
+      .from("chat_sessions")
+      .select("started_at, session_summary, progress_indicators")
+      .eq("user_id", user.id)
+      .not("session_summary", "is", null)
+      .gte("started_at", window.start.toISOString())
+      .lte("started_at", window.end.toISOString())
+      .order("started_at", { ascending: true });
+
     // Check if we have any data
     if (
       aggregatedData.moodEntryCount === 0 &&
@@ -100,17 +110,35 @@ export async function POST(
       );
     }
 
-    // Generate narrative
-    const narrativeSummary = await generateNarrativeSummary({
+    // Generate therapist-style key insights with progress tracking
+    const keyInsights = await generateKeyInsights({
       emotionFrequency: aggregatedData.emotionFrequency,
       topicFrequency: aggregatedData.topicFrequency,
-      moodTrendDirection: aggregatedData.moodTrend,
+      moodTrend: aggregatedData.moodTrend,
       sessionCount: aggregatedData.sessionCount,
       moodEntryCount: aggregatedData.moodEntryCount,
       memoryContext: aggregatedData.memoryContext,
-      timeRangeStart: window.start.toISOString(),
-      timeRangeEnd: window.end.toISOString(),
+      sessionSummaries: (sessionSummaries || []).map(s => ({
+        date: new Date(s.started_at).toISOString().split("T")[0],
+        summary: s.session_summary || "",
+        progressIndicators: s.progress_indicators,
+      })),
     });
+
+    // Generate narrative summary (optional, only if no key insights)
+    let narrativeSummary = "";
+    if (keyInsights.length === 0) {
+      narrativeSummary = await generateNarrativeSummary({
+        emotionFrequency: aggregatedData.emotionFrequency,
+        topicFrequency: aggregatedData.topicFrequency,
+        moodTrendDirection: aggregatedData.moodTrend,
+        sessionCount: aggregatedData.sessionCount,
+        moodEntryCount: aggregatedData.moodEntryCount,
+        memoryContext: aggregatedData.memoryContext,
+        timeRangeStart: window.start.toISOString(),
+        timeRangeEnd: window.end.toISOString(),
+      });
+    }
 
     // Extract metadata
     const dominantEmotions = extractDominantEmotions(
@@ -120,18 +148,8 @@ export async function POST(
       aggregatedData.topicFrequency
     );
 
-    // Generate therapist-style key insights
-    const keyInsights = await generateKeyInsights({
-      emotionFrequency: aggregatedData.emotionFrequency,
-      topicFrequency: aggregatedData.topicFrequency,
-      moodTrend: aggregatedData.moodTrend,
-      sessionCount: aggregatedData.sessionCount,
-      moodEntryCount: aggregatedData.moodEntryCount,
-      memoryContext: aggregatedData.memoryContext,
-    });
-
     // Create InsightRun record
-    const insightData = {
+    const insightData: any = {
       user_id: user.id,
       time_range_start: window.start.toISOString(),
       time_range_end: window.end.toISOString(),
@@ -139,15 +157,23 @@ export async function POST(
       recurring_themes: recurringThemes,
       mood_trend: aggregatedData.moodTrend,
       resilience_delta: aggregatedData.resilienceDelta,
-      narrative_summary: narrativeSummary,
-      key_insights: keyInsights, // Add key insights to database
+      key_insights: keyInsights, // Primary insights (AI-generated)
       source_metadata: {
         moodEntries: aggregatedData.moodEntryCount,
         sessionCount: aggregatedData.sessionCount,
         hasMemoryContext: !!aggregatedData.memoryContext,
-        journalEntriesCount: 0, // TODO: add if journal is included
+        journalEntriesCount: 0,
+        hasSessionSummaries: (sessionSummaries?.length || 0) > 0,
       },
     };
+
+    // Only add narrative summary if we generated one (for backwards compatibility)
+    if (narrativeSummary) {
+      insightData.narrative_summary = narrativeSummary;
+    } else {
+      // Use first key insight as summary fallback
+      insightData.narrative_summary = keyInsights[0]?.description || "Weekly reflection generated";
+    }
 
     const { data: newInsight, error: insertError } = await supabase
       .from("insight_run")

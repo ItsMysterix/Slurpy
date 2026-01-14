@@ -252,7 +252,19 @@ export async function POST(req: NextRequest) {
       notifyInsightsUpdate({ userId, reason: "finalize", timeframe: "week" });
     }
 
-    /* ------------ 5) Return computed summary ---------------------------- */
+    /* ------------ 5) Trigger session summary generation (async, non-blocking) - */
+    if (userId && messageCount >= 3) {
+      // Only generate summary for sessions with meaningful conversation
+      fetch(`${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/chat/session/summarize`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId }),
+      }).catch(err => {
+        console.warn("[finalize] Failed to trigger session summary:", err.message);
+      });
+    }
+
+    /* ------------ 6) Return computed summary ---------------------------- */
     return NextResponse.json({
       ok: true,
       session: {

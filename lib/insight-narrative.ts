@@ -152,8 +152,9 @@ export function extractRecurringThemes(
 }
 
 /**
- * Generate therapist-style key insights from emotional patterns
+ * Generate therapist-style key insights from emotional patterns and session summaries
  * Returns actionable insights about emotional patterns, coping strategies, and growth areas
+ * Tracks progress over time (e.g., "anxious patient improving")
  */
 export async function generateKeyInsights(input: {
   emotionFrequency: Record<string, number>;
@@ -162,6 +163,17 @@ export async function generateKeyInsights(input: {
   sessionCount: number;
   moodEntryCount: number;
   memoryContext?: string;
+  sessionSummaries?: Array<{
+    date: string;
+    summary: string;
+    progressIndicators?: {
+      emotional_state: string;
+      coping_skills: string;
+      resilience: string;
+      primary_concerns: string[];
+      positive_changes: string[];
+    };
+  }>;
 }): Promise<Array<{
   title: string;
   description: string;
@@ -175,6 +187,7 @@ export async function generateKeyInsights(input: {
     sessionCount,
     moodEntryCount,
     memoryContext,
+    sessionSummaries = [],
   } = input;
 
   // Get top emotions and topics
@@ -188,7 +201,7 @@ export async function generateKeyInsights(input: {
     .slice(0, 5)
     .map(([t, count]) => ({ topic: t, count }));
 
-  // Build context for AI
+  // Build context for AI including session summaries for progress tracking
   const contextLines = [];
   
   if (topEmotions.length > 0) {
@@ -209,17 +222,38 @@ export async function generateKeyInsights(input: {
 
   contextLines.push(`Engagement: ${sessionCount} conversations, ${moodEntryCount} mood logs`);
 
-  if (memoryContext) {
-    contextLines.push(`Context: ${memoryContext.substring(0, 200)}`);
+  // Add session summaries for progress tracking
+  if (sessionSummaries.length > 0) {
+    contextLines.push(`\nRecent sessions:`);
+    sessionSummaries.slice(-5).forEach(s => {
+      contextLines.push(`- ${s.date}: ${s.summary}`);
+      if (s.progressIndicators) {
+        const progress = s.progressIndicators;
+        contextLines.push(`  Progress: ${progress.emotional_state} emotional state, ${progress.coping_skills} coping skills, ${progress.resilience} resilience`);
+        if (progress.positive_changes?.length > 0) {
+          contextLines.push(`  Improvements: ${progress.positive_changes.join(", ")}`);
+        }
+      }
+    });
   }
 
-  const systemPrompt = `You are an empathetic therapist analyzing a person's emotional patterns.
+  if (memoryContext) {
+    contextLines.push(`\nContext: ${memoryContext.substring(0, 200)}`);
+  }
+
+  const systemPrompt = `You are an empathetic therapist analyzing a person's emotional patterns and progress over time.
 Generate 3-5 key insights that:
+- Track progress and improvements (e.g., "Your anxiety is improving", "You're developing better coping skills")
 - Identify emotional patterns and what they reveal
-- Suggest healthy coping strategies or growth opportunities  
+- Recognize positive changes and growth
+- Suggest healthy coping strategies or next steps
+- Acknowledge challenges while emphasizing resilience
 - Are warm, non-judgmental, and actionable
 - Use simple, conversational language
 - Avoid clinical jargon or diagnoses
+
+IMPORTANT: If you see progress indicators showing improvement, explicitly mention the progress in your insights.
+Example: If emotional_state is "improving" and coping_skills is "developing", say "You're making real progress with managing anxiety" or similar.
 
 Return ONLY a JSON array with this exact structure:
 [
