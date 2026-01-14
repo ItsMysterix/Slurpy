@@ -3,7 +3,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
-import { getAuthOrThrow, UnauthorizedError } from "@/lib/auth-server";
+import { requireAuth } from "@/lib/api-auth";
 import { logger } from "@/lib/logger";
 import { deriveRoles, requireSelfOrRole, ForbiddenError } from "@/lib/authz";
 import { createClient } from "@supabase/supabase-js";
@@ -85,7 +85,8 @@ async function deleteQdrantByUser(userId: string) {
 
 export const POST = withCORS(async function POST(_req: NextRequest) {
   try {
-    const { userId } = await getAuthOrThrow();
+    const auth = await requireAuth(_req);
+    const userId = auth.userId;
     const roles = await deriveRoles(userId);
     try { requireSelfOrRole({ requesterId: userId, ownerId: userId, roles }, "admin"); } catch (e) {
       return NextResponse.json({ error: "forbidden" }, { status: 403 });

@@ -3,7 +3,7 @@ export const dynamic = "force-dynamic";
 
 import Stripe from "stripe";
 import { NextRequest, NextResponse } from "next/server";
-import { getAuthOrThrow } from "@/lib/auth-server";
+import { requireAuth } from "@/lib/api-auth";
 import { z } from "@/lib/validate";
 import { guardRate } from "@/lib/guards";
 import { withCORS } from "@/lib/cors";
@@ -16,8 +16,14 @@ function getOrigin(req: NextRequest) {
 }
 
 export const POST = withCORS(async function POST(req: NextRequest) {
-  // Auth
-  const { userId } = await getAuthOrThrow();
+  // Auth - Now with verified JWT via Supabase
+  let userId: string;
+  try {
+    const auth = await requireAuth(req);
+    userId = auth.userId;
+  } catch (error) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
 
   // Rate limit: 10/min/user
   {

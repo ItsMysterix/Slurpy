@@ -32,7 +32,7 @@ function normalizeChatBody(raw: any) {
   };
 }
 import { cookies, headers } from "next/headers";
-import { getAuthOrThrow, getOptionalAuth, UnauthorizedError } from "@/lib/auth-server";
+import { optionalAuth } from "@/lib/api-auth";
 import { logger } from "@/lib/logger";
 import { z, ensureJsonUnder, boundedString, httpError } from "@/lib/validate";
 import { guardRate } from "@/lib/guards";
@@ -52,30 +52,27 @@ function bad(status: number, error: string) {
 
 export const POST = withCORS(async function POST(req: NextRequest) {
   try {
-  // Resolve auth, but honor local E2E bypass to enable unauthenticated testing
+  // Resolve auth - now with verified JWT via Supabase
+  const authContext = await optionalAuth(req);
   let userId: string;
   let bearer: string | undefined;
-  try {
-    const auth = await getOptionalAuth();
-    if (auth?.userId) {
-      userId = auth.userId;
-      bearer = auth.bearer;
-    } else if (process.env.NEXT_PUBLIC_E2E_BYPASS_AUTH === "true") {
-      // Synthesize a local test identity for end-to-end testing without real auth
-      userId = "e2e-local";
-      bearer = "e2e-token";
-    } else {
-      // Not in bypass mode and no auth — enforce 401
-      throw new UnauthorizedError();
-    }
-  } catch (e) {
-    if (process.env.NEXT_PUBLIC_E2E_BYPASS_AUTH === "true") {
-      userId = "e2e-local";
-      bearer = "e2e-token";
-    } else {
-      throw e;
-    }
+  
+  if (authContext?.userId) {
+    // Authenticated user with verified token
+    userId = authContext.userId;
+    bearer = authContext.bearer;
+  } else if (process.env.NEXT_PUBLIC_E2E_BYPASS_AUTH === "true") {
+    // E2E testing bypass mode only
+    userId = "e2e-local";
+    bearer = "e2e-token";
+  } else {
+    // Not authenticated and not in bypass mode
+    return new NextResponse(JSON.stringify({ error: "Unauthorized" }), {
+      status: 401,
+      headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
+    });
   }
+  
   await deriveRoles(userId); // resolves roles if needed later; not used here
     // Per-start limiter: 20/min/user
     {
