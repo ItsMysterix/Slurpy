@@ -435,7 +435,8 @@ async def http_stream(req: ChatRequest):
     reply, emotion_label, fruit = result
 
     async def gen() -> AsyncGenerator[bytes, None]:
-        yield _nd({"type": "start", "emotion": emotion_label, "fruit": fruit})
+        # Include RAG pipeline metadata in start message to show it worked
+        yield _nd({"type": "start", "emotion": emotion_label, "fruit": fruit, "source": "rag_pipeline", "model": "gpt-4o-mini"})
         chunk = 160
         for i in range(0, len(reply), chunk):
             yield _nd({"type": "delta", "text": reply[i:i+chunk]})

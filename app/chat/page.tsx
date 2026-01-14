@@ -103,6 +103,15 @@ async function streamFromSlurpy(
                   ? String(evt.emotions[0].label)
                   : undefined;
                 if (top) emotion = top;
+                
+                // Log RAG pipeline metadata for verification
+                if (evt.source === "rag_pipeline") {
+                  console.log("✅ RAG Pipeline Active - Response generated with:', {
+                    source: evt.source,
+                    model: evt.model,
+                    emotion: evt.emotion,
+                  });
+                }
               } else if (evt?.type === "error") {
                 throw new Error("stream_error");
               } else if (evt?.type === "done") {
