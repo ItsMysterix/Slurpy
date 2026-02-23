@@ -45,6 +45,7 @@ export default function ProfilePage() {
   const [isDeleting, setIsDeleting] = useState(false)
   const [notifications, setNotifications] = useState(true)
   const [dataSharing, setDataSharing] = useState(false)
+  const [surveyOptOut, setSurveyOptOut] = useState(false)
   const [showSuccess, setShowSuccess] = useState(false)
   const [showPasswordForm, setShowPasswordForm] = useState(false)
   const [passwordForm, setPasswordForm] = useState({
@@ -540,6 +541,21 @@ export default function ProfilePage() {
                 <Switch
                   checked={dataSharing}
                   onCheckedChange={setDataSharing}
+                  className="data-[state=checked]:bg-gradient-to-r data-[state=checked]:from-sage-500 data-[state=checked]:to-clay-500 dark:data-[state=checked]:from-sage-600 dark:data-[state=checked]:to-clay-600"
+                />
+              </div>
+
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <CheckCircle className="w-5 h-5 text-sage-500 dark:text-sand-400" />
+                  <div>
+                    <p className="font-sans font-medium text-clay-700 dark:text-sand-200">Wellness Surveys</p>
+                    <p className="text-sm text-clay-500 dark:text-sand-400 font-sans">Opt out of periodic mental health check-ins</p>
+                  </div>
+                </div>
+                <Switch
+                  checked={surveyOptOut}
+                  onCheckedChange={setSurveyOptOut}
                   className="data-[state=checked]:bg-gradient-to-r data-[state=checked]:from-sage-500 data-[state=checked]:to-clay-500 dark:data-[state=checked]:from-sage-600 dark:data-[state=checked]:to-clay-600"
                 />
               </div>

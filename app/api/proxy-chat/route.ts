@@ -8,12 +8,13 @@ import { withCORS } from "@/lib/cors";
 import { assertSameOrigin, assertDoubleSubmit } from "@/lib/csrf";
 import { cookies, headers } from "next/headers";
 import { askRag } from "@/lib/rag";
-import { getAuthOrThrow, UnauthorizedError } from "@/lib/auth-server";
+import { withAuth } from "@/lib/api-auth";
 import { logger } from "@/lib/logger";
 import { AppError, toErrorResponse } from "@/lib/errors";
 import { z, ensureJsonUnder, boundedString, httpError } from "@/lib/validate";
 import { guardRate } from "@/lib/guards";
 import { deriveRoles } from "@/lib/authz";
+import { isE2EBypassEnabled } from "@/lib/runtime-safety";
 
 type ProxyChatBody = {
   text?: string;
@@ -28,10 +29,10 @@ function bad(status: number, error: string) {
   return NextResponse.json({ error }, { status, headers: { "Cache-Control": "no-store" } });
 }
 
-export const POST = withCORS(async function POST(req: NextRequest) {
+export const POST = withCORS(withAuth(async function POST(req: NextRequest, auth) {
   try {
     // 1) Auth presence (user session)
-  const { userId, bearer: authBearer } = await getAuthOrThrow();
+  const { userId, bearer: authBearer } = auth;
   const roles = await deriveRoles(userId);
     // CSRF: block cross-site browser POSTs
     {
@@ -92,7 +93,7 @@ export const POST = withCORS(async function POST(req: NextRequest) {
     const sessionId = (body?.session_id || body?.sessionId || "").toString().trim() || undefined;
 
     // E2E: allow a fast no-op path to avoid backend latency for rate tests
-    if (process.env.NEXT_PUBLIC_E2E_BYPASS_AUTH === "true") {
+    if (isE2EBypassEnabled()) {
       try {
         const hdrs = await headers();
         if (hdrs.get("x-e2e-noop") === "1" || (body as any)?.e2e === "noop") {
@@ -116,7 +117,7 @@ export const POST = withCORS(async function POST(req: NextRequest) {
 
     // 4) Call backend via your helper (which should forward Authorization: Bearer <token>)
     // E2E test echo: return forwarded tenant without calling backend
-    if (process.env.NEXT_PUBLIC_E2E_BYPASS_AUTH === "true" && (body as any)?.e2e === "echo-tenant") {
+    if (isE2EBypassEnabled() && (body as any)?.e2e === "echo-tenant") {
       return NextResponse.json({ reply: "ok", meta: { forwardedTenant: userId, roles } }, { headers: { "Cache-Control": "no-store" } });
     }
 
@@ -145,8 +146,7 @@ export const POST = withCORS(async function POST(req: NextRequest) {
     return NextResponse.json(output, { headers: { "Cache-Control": "no-store" } });
   } catch (err: any) {
     if (err instanceof Response) return err; // propagated httpError/size guard
-    if (err instanceof UnauthorizedError) return toErrorResponse(new AppError("unauthorized", "Unauthorized", 401));
     logger.error("proxy-chat error:", err);
     return toErrorResponse(err);
   }
-}, { credentials: true });
+}), { credentials: true });

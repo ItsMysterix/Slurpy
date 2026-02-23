@@ -91,13 +91,6 @@ export function extractBearer(request: NextRequest): string | null {
     return sessionCookie;
   }
 
-  // E2E testing bypass (NEVER enable in production)
-  const e2eBypass = request.headers.get("x-e2e-bypass-auth");
-  if (e2eBypass === process.env.NEXT_PUBLIC_E2E_BYPASS_AUTH) {
-    // Return a fake UUID for testing
-    return "test-token-" + Math.random().toString(36).substring(7);
-  }
-
   return null;
 }
 

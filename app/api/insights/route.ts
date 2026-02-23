@@ -4,7 +4,7 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 import { NextRequest, NextResponse } from "next/server";
-import { getAuthOrThrow } from "@/lib/auth-server";
+import { withAuth } from "@/lib/api-auth";
 import { createClient } from "@supabase/supabase-js";
 import { notifyInsightsUpdate } from "@/lib/sse-bus";
 
@@ -128,7 +128,7 @@ type HeaderShape = {
 /* --------------------------------- POST ---------------------------------
    Persist ONE chat message (snake_case tables), then nudge SSE clients
 ---------------------------------------------------------------------------*/
-export async function POST(req: NextRequest) {
+export const POST = withAuth(async function POST(req: NextRequest, auth) {
   try {
     const supabase = sb();
 
@@ -137,7 +137,7 @@ export async function POST(req: NextRequest) {
     const secret = process.env.SLURPY_API_KEY;
     const bypass = Boolean(headerKey && secret && headerKey === secret);
 
-  const { userId } = await getAuthOrThrow();
+  const userId = auth.userId;
     const body = await req.json().catch(() => ({}));
 
     const sessionId: string = body?.sessionId;
@@ -190,17 +190,17 @@ export async function POST(req: NextRequest) {
     console.error("POST /api/insights error:", e?.message || e);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
-}
+});
 
 /* ---------------------------------- GET ---------------------------------- */
-export async function GET(req: NextRequest) {
+export const GET = withAuth(async function GET(req: NextRequest, auth) {
   try {
     // Optional admin/testing bypass via header
     const headerKey = req.headers.get("x-slurpy-key") || req.headers.get("x-api-key");
     const secret = process.env.SLURPY_API_KEY;
     const bypass = Boolean(headerKey && secret && headerKey === secret);
 
-  const { userId } = await getAuthOrThrow();
+  const userId = auth.userId;
     const url = new URL(req.url);
     const timeframe = url.searchParams.get("timeframe") || "week";
 
@@ -582,4 +582,4 @@ export async function GET(req: NextRequest) {
     console.error("Error in /api/insights:", e?.message || e, e?.stack);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
-}
+});

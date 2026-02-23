@@ -3,11 +3,12 @@ export const dynamic = "force-dynamic";
 
 import Stripe from "stripe";
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth } from "@/lib/api-auth";
+import { withAuth } from "@/lib/api-auth";
 import { z } from "@/lib/validate";
 import { guardRate } from "@/lib/guards";
 import { withCORS } from "@/lib/cors";
 import { assertSameOrigin, assertDoubleSubmit } from "@/lib/csrf";
+import { isE2EBypassEnabled } from "@/lib/runtime-safety";
 
 function getOrigin(req: NextRequest) {
   const url = new URL(req.url);
@@ -15,15 +16,8 @@ function getOrigin(req: NextRequest) {
   return `${url.protocol}//${url.host}`;
 }
 
-export const POST = withCORS(async function POST(req: NextRequest) {
-  // Auth - Now with verified JWT via Supabase
-  let userId: string;
-  try {
-    const auth = await requireAuth(req);
-    userId = auth.userId;
-  } catch (error) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+export const POST = withCORS(withAuth(async function POST(req: NextRequest, auth) {
+  const userId = auth.userId;
 
   // Rate limit: 10/min/user
   {
@@ -52,7 +46,7 @@ export const POST = withCORS(async function POST(req: NextRequest) {
   const { price_id } = parsed.data;
 
   // E2E stub path to avoid network in tests
-  if (process.env.NEXT_PUBLIC_E2E_BYPASS_AUTH === "true" && req.headers.get("x-e2e-stripe-stub") === "1") {
+  if (isE2EBypassEnabled() && req.headers.get("x-e2e-stripe-stub") === "1") {
     return NextResponse.json({ id: "cs_test_123", url: "https://stripe.test/session/cs_test_123" });
   }
 
@@ -74,4 +68,4 @@ export const POST = withCORS(async function POST(req: NextRequest) {
   });
 
   return NextResponse.json({ id: session.id, url: session.url });
-}, { credentials: true });
+}), { credentials: true });

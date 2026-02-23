@@ -1,7 +1,7 @@
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth } from "@/lib/api-auth";
+import { withAuth } from "@/lib/api-auth";
 import { franc } from "franc";
 
 // lazy singletons
@@ -88,9 +88,7 @@ function keywords(text: string, max = 5) {
   return scored;
 }
 
-export async function GET(req: NextRequest) {
-  // Require authentication
-  await requireAuth(req);
+export const GET = withAuth(async function GET(req: NextRequest) {
   
   const { searchParams } = new URL(req.url);
   const text = (searchParams.get("text") || "").trim();
@@ -137,4 +135,4 @@ export async function GET(req: NextRequest) {
     toxicity,
     keywords: topKeywords
   });
-}
+});

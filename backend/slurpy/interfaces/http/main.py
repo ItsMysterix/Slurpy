@@ -29,6 +29,50 @@ if not logger.handlers:
     logger.addHandler(handler)
 logger.setLevel(logging.INFO)
 
+def _env_true(value: str | None) -> bool:
+    if value is None:
+        return False
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+def _enforce_prod_security_envs() -> None:
+    import os
+    is_prod = os.getenv("ENVIRONMENT", "").strip().lower() == "production"
+    if not is_prod:
+        return
+
+    if _env_true(os.getenv("DEV_NO_AUTH")):
+        raise RuntimeError("Unsafe production configuration: DEV_NO_AUTH must be false")
+
+    if _env_true(os.getenv("NEXT_PUBLIC_E2E_BYPASS_AUTH")):
+        raise RuntimeError("Unsafe production configuration: NEXT_PUBLIC_E2E_BYPASS_AUTH must be false")
+
+    allowed_origins = (os.getenv("ALLOWED_ORIGINS") or "").strip()
+    if not allowed_origins:
+        raise RuntimeError("Unsafe production configuration: ALLOWED_ORIGINS must be set")
+
+def _build_cors_settings() -> tuple[list[str], bool]:
+    import os
+    is_prod = os.getenv("ENVIRONMENT", "").strip().lower() == "production"
+    allow_all = _env_true(os.getenv("CORS_ALLOW_ALL"))
+
+    env_origins = [o.strip() for o in (os.getenv("ALLOWED_ORIGINS") or "").split(",") if o.strip()]
+    local_defaults = [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "https://localhost:3000",
+    ]
+
+    # Never allow wildcard origins in production
+    if is_prod:
+        return (env_origins, True)
+
+    # Non-production convenience mode: wildcard allowed, but credentials must be false.
+    if allow_all:
+        return (["*"], False)
+
+    allow = list(dict.fromkeys([*env_origins, *local_defaults]))
+    return (allow, True)
+
 # Note: router imports are intentionally performed inside create_app()
 # to avoid triggering heavy application-level side-effects (database or
 # external-client initialization) at module import time. Importing
@@ -36,27 +80,15 @@ logger.setLevel(logging.INFO)
 # environment variables (e.g. QDRANT_URL) weren't set.
 
 def create_app() -> FastAPI:
+    _enforce_prod_security_envs()
     app = FastAPI(title="Slurpy API", version="0.1.0")
 
-    # CORS - PRODUCTION: Update with your actual domains!
-    # TODO: Replace ["*"] with your production domains before deploying
-    allowed_origins = [
-        "http://localhost:3000",      # Local development
-        "http://localhost:3001",      # Local development alternative
-        # "https://your-domain.com",  # Add your production frontend domain
-        # "https://www.your-domain.com",
-    ]
-    
-    # In production, read from environment variable
-    import os
-    env_origins = os.getenv("ALLOWED_ORIGINS")
-    if env_origins:
-        allowed_origins.extend(env_origins.split(","))
+    cors_origins, cors_credentials = _build_cors_settings()
     
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=allowed_origins if os.getenv("ENVIRONMENT") == "production" else ["*"],
-        allow_credentials=True,
+        allow_origins=cors_origins,
+        allow_credentials=cors_credentials,
         allow_methods=["*"],
         allow_headers=["*"],
     )

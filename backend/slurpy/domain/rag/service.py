@@ -10,15 +10,38 @@ import inspect
 from collections import deque
 from typing import Deque, Tuple, List, Optional, Dict, Any, Callable, Awaitable, TypeVar, cast
 
-from langchain_openai import ChatOpenAI
-from langchain_core.messages import SystemMessage, HumanMessage
+# Model-based response generation (NOT OpenAI wrapper)
+from slurpy.domain.responses.model_based_generator import ModelBasedResponseGenerator
+from slurpy.domain.responses.ranker import ResponseRanker
+from slurpy.domain.treatment.phase_detection import TreatmentPhaseDetector
 
 # unified NLP façade (prod-ready) — replaces old emotion.predict import
 from slurpy.domain.nlp.service import classify_emotion_bucket
 
+# ── Intent + Severity (trained models) ─────────────────────────────────
+# Graceful: if models aren't trained yet, fall back silently
+_intent_available = False
+_severity_available = False
+try:
+    from intent.predict import intent_with_confidence
+    _intent_available = True
+except Exception:
+    print("⚠️ Intent model not loaded yet (training?). Using fallback.")
+    def intent_with_confidence(text: str):  # type: ignore[misc]
+        return "exploring_feelings", 0.0
+
+try:
+    from severity.predict import severity_level
+    _severity_available = True
+except Exception:
+    print("⚠️ Severity model not loaded yet (training?). Using fallback.")
+    def severity_level(text: str):  # type: ignore[misc]
+        return "moderate", 0.5
+
 # local deps (match your tree)
 from modes import available as modes_available, config as mode_config, DEFAULT_MODE
 from slurpy.domain.analytics.collectors import init as init_db, upsert_session, add_msg, set_session_fields
+from slurpy.domain.analytics.interaction_logger import log_interaction
 from slurpy.domain.safety.service import classify as safety_classify, crisis_message
 from slurpy.ufm import update as ufm_update
 from slurpy.domain.plans.service import vote as plans_vote, roadmap as plans_roadmap
@@ -41,19 +64,28 @@ except Exception as e:
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 # ─────────────────────────────────────────────────────────────────────────────
-# LLM factory
-def _build_llm() -> ChatOpenAI:
-    return ChatOpenAI(
-        model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
-        temperature=float(os.getenv("OPENAI_TEMPERATURE", "0.7")),
-    )
+# Therapy Response Generator (using trained models)
+_response_generator: Optional[ModelBasedResponseGenerator] = None
+_phase_detector: Optional[TreatmentPhaseDetector] = None
+_response_ranker: Optional[ResponseRanker] = None
 
-_LLM: Optional[ChatOpenAI] = None
-def _get_llm() -> ChatOpenAI:
-    global _LLM
-    if _LLM is None:
-        _LLM = _build_llm()
-    return _LLM
+def _get_response_generator() -> ModelBasedResponseGenerator:
+    global _response_generator
+    if _response_generator is None:
+        _response_generator = ModelBasedResponseGenerator()
+    return _response_generator
+
+def _get_phase_detector() -> TreatmentPhaseDetector:
+    global _phase_detector
+    if _phase_detector is None:
+        _phase_detector = TreatmentPhaseDetector()
+    return _phase_detector
+
+def _get_ranker() -> ResponseRanker:
+    global _response_ranker
+    if _response_ranker is None:
+        _response_ranker = ResponseRanker()
+    return _response_ranker
 
 # ─────────────────────────────────────────────────────────────────────────────
 # lexicons & helpers
@@ -300,49 +332,79 @@ def slurpy_answer(
 
     memory_hint = _memory_hint_block(msg, mems, hist)
 
-    style_rules = (
-        "Write like a present, caring human. Use specific validations. Plain language. "
-        "Short paragraphs. Avoid generic disclaimers. Use 'we' and 'you' when helpful. "
-        "Memory policy: never assume continuity. Only *ask permission* to revisit a past topic if today’s message overlaps."
-    )
-
-    ctx_lines = []
-    if mems: ctx_lines.append("Relevant memories:\n- " + "\n- ".join(mems[:3]))
-    if th: ctx_lines.append("Themes: " + ", ".join(th))
-    if memory_hint: ctx_lines.append(memory_hint)
-    ctx_lines.append(_safe_plan_ctx(road))
-    ctx_block = "\n\n".join(ctx_lines) if ctx_lines else ""
-
-    guidance = (
-        "User is asking for guidance/meaning-making. Do NOT start with a question. "
-        "Respond with (1) brief, concrete validation; (2) 2–3 plausible explanations or frames "
-        "rooted in evidence-based therapy; (3) optionally one tiny thing we could try now; "
-        "then (4) end with a single gentle invite to expand."
-    ) if _is_guidance_seek(msg) else "Validate specifically, be concise, and ask at most one thoughtful question."
-
-    user_block = f"""\
-Style rules: {style_rules}
-
-{ctx_block}
-Conversation:
-{_history_str(hist)}
-
-Message: {msg}
-Emotion: {guess} ({prob:.2f})
-Instruction: {guidance}"""
-
-    messages = [SystemMessage(content=sys), HumanMessage(content=user_block)]
+    # ── Intent + Severity from trained models ────────────────────────
+    try:
+        user_intent, intent_conf = intent_with_confidence(msg)
+    except Exception as e:
+        print(f"⚠️ Intent prediction failed: {e}")
+        user_intent, intent_conf = "exploring_feelings", 0.0
 
     try:
-        out = str(_get_llm().invoke(messages).content).strip()
-        out = _clean(out)
-        if not out:
-            out = "Got you. Want to pick one thread to start with?"
+        sev_label, sev_score = severity_level(msg)
     except Exception as e:
-        print("⚠️ LLM.invoke failed:", e)
-        out = "Got you. Want to pick one thread to start with?"
+        print(f"⚠️ Severity prediction failed: {e}")
+        sev_label, sev_score = "moderate", 0.5
 
-    final = out
+    # Detect treatment phase
+    try:
+        phase_detector = _get_phase_detector()
+        session_count = len(hist) + 1
+        phase = phase_detector.detect_phase_from_metrics(
+            session_count=session_count,
+            days_in_treatment=session_count * 2,
+            phq9_baseline=None,
+            phq9_current=None,
+            gad7_baseline=None,
+            gad7_current=None,
+            skills_learned=[],
+            engagement_sessions_per_week=3.0,
+            homework_adherence_pct=None,
+        )
+    except Exception as e:
+        print(f"⚠️ Phase detection failed: {e}")
+        phase = "stabilization"
+
+    # ── Generate multiple candidates & rank (NOT OpenAI) ────────────
+    try:
+        gen = _get_response_generator()
+        candidates = []
+        for _ in range(3):
+            out, response_meta = gen.generate_response_sync(
+                user_message=msg,
+                user_id=user_id,
+                emotion_bucket=guess,
+                emotion_confidence=prob,
+                phase=phase,
+                conversation_history=hist,
+                themes=th,
+                intent=user_intent,
+                severity=sev_score,
+            )
+            if out:
+                candidates.append(out)
+
+        if not candidates:
+            out = "I hear you. Tell me more about what's going on?"
+        elif len(candidates) == 1:
+            out = candidates[0]
+        else:
+            ranker = _get_ranker()
+            history_responses = [resp for _, resp, _ in list(hist)[-5:]]
+            best, score = ranker.pick_best(
+                user_message=msg,
+                candidates=candidates,
+                conversation_history=history_responses,
+                emotion=guess,
+                severity=sev_score,
+            )
+            out = best if best else candidates[0]
+    except Exception as e:
+        print(f"⚠️ Model-based response generation failed: {e}")
+        import traceback
+        traceback.print_exc()
+        out = "I'm here with you. What's on your mind right now?"
+
+    final = _clean(out)
 
     hist.append((msg, final, guess))
     if len(hist) > 10:
@@ -351,6 +413,25 @@ Instruction: {guidance}"""
     _safe_call(add_msg, session_id, user_id, "user", msg, guess, prob, th)
     _safe_call(add_msg, session_id, user_id, "assistant", final, "support", 0.8, th)
     _safe_call(kv_add, user_id, msg, guess, fruit_for(guess), prob, maybe_build_context(msg))
+
+    # Log pipeline metadata for debugging/improvement
+    print(f"🧠 Pipeline: emotion={guess}({prob:.2f}) intent={user_intent}({intent_conf:.2f}) severity={sev_label}({sev_score:.2f}) phase={phase}")
+
+    # Log interaction for continuous improvement / retraining
+    log_interaction(
+        user_id=user_id,
+        session_id=session_id,
+        user_message=msg,
+        response=final,
+        emotion=guess,
+        emotion_confidence=prob,
+        intent=user_intent,
+        intent_confidence=intent_conf,
+        severity=sev_label,
+        severity_score=sev_score,
+        phase=phase,
+        themes=th,
+    )
 
     if roleplay:
         turn = len(hist)
@@ -421,51 +502,78 @@ async def async_slurpy_answer(
 
     memory_hint = _memory_hint_block(msg, mems, hist)
 
-    style_rules = (
-        "Write like a present, caring human. Use specific validations. Plain language. "
-        "Short paragraphs. Avoid generic disclaimers. Use 'we' and 'you' when helpful. "
-        "Memory policy: never assume continuity. Only *ask permission* to revisit a past topic if today’s message overlaps."
-    )
 
-    ctx_lines = []
-    if mems: ctx_lines.append("Relevant memories:\n- " + "\n- ".join(mems[:3]))
-    if th: ctx_lines.append("Themes: " + ", ".join(th))
-    if memory_hint: ctx_lines.append(memory_hint)
-    ctx_lines.append(_safe_plan_ctx(road))
-    ctx_block = "\n\n".join(ctx_lines) if ctx_lines else ""
-
-    guidance = (
-        "User is asking for guidance/meaning-making. Do NOT start with a question. "
-        "Respond with (1) brief, concrete validation; (2) 2–3 plausible explanations or frames "
-        "rooted in evidence-based therapy; (3) optionally one tiny thing we could try now; "
-        "then (4) end with a single gentle invite to expand."
-    ) if _is_guidance_seek(msg) else "Validate specifically, be concise, and ask at most one thoughtful question."
-
-    user_block = f"""\
-Style rules: {style_rules}
-
-{ctx_block}
-Conversation:
-{_history_str(hist)}
-
-Message: {msg}
-Emotion: {guess} ({prob:.2f})
-Instruction: {guidance}"""
-
-    messages = [SystemMessage(content=sys), HumanMessage(content=user_block)]
-
-    llm = _get_llm()
+    # ── Intent + Severity from trained models ────────────────────
     try:
-        if hasattr(llm, "ainvoke"):
-            out = str((await llm.ainvoke(messages)).content).strip()
+        user_intent, intent_conf = await asyncio.to_thread(intent_with_confidence, msg)
+    except Exception as e:
+        print(f"⚠️ Intent prediction failed: {e}")
+        user_intent, intent_conf = "exploring_feelings", 0.0
+
+    try:
+        sev_label, sev_score = await asyncio.to_thread(severity_level, msg)
+    except Exception as e:
+        print(f"⚠️ Severity prediction failed: {e}")
+        sev_label, sev_score = "moderate", 0.5
+
+    # Detect treatment phase
+    try:
+        phase_detector = _get_phase_detector()
+        session_count = len(hist) + 1
+        phase = phase_detector.detect_phase_from_metrics(
+            session_count=session_count,
+            days_in_treatment=session_count * 2,
+            phq9_baseline=None,
+            phq9_current=None,
+            gad7_baseline=None,
+            gad7_current=None,
+            skills_learned=[],
+            engagement_sessions_per_week=3.0,
+            homework_adherence_pct=None,
+        )
+    except Exception as e:
+        print(f"⚠️ Phase detection failed: {e}")
+        phase = "stabilization"
+
+    # ── Generate multiple candidates & rank (NOT OpenAI) ────────────
+    try:
+        gen = _get_response_generator()
+        candidates = []
+        for _ in range(3):
+            result = await asyncio.to_thread(
+                gen.generate_response_sync,
+                user_message=msg,
+                user_id=user_id,
+                emotion_bucket=guess,
+                emotion_confidence=prob,
+                phase=phase,
+                conversation_history=hist,
+                themes=th,
+                intent=user_intent,
+                severity=sev_score,
+            )
+            out_text, _ = result
+            if out_text:
+                candidates.append(out_text)
+
+        if not candidates:
+            out = "I hear you. Tell me more about what's going on?"
+        elif len(candidates) == 1:
+            out = candidates[0]
         else:
-            loop = asyncio.get_running_loop()
-            out = await loop.run_in_executor(None, lambda: str(llm.invoke(messages).content))
+            ranker = _get_ranker()
+            history_responses = [resp for _, resp, _ in list(hist)[-5:]]
+            best, score = await asyncio.to_thread(
+                ranker.pick_best,
+                msg, candidates, history_responses, guess, sev_score,
+            )
+            out = best if best else candidates[0]
+
         out = _clean(out)
         if not out:
             out = "Got you. Want to pick one thread to start with?"
     except Exception as e:
-        print("⚠️ LLM async invoke failed:", e)
+        print("⚠️ Model-based async generation failed:", e)
         out = "Got you. Want to pick one thread to start with?"
 
     final = out
@@ -477,6 +585,25 @@ Instruction: {guidance}"""
     await _safe_call_async(add_msg, session_id, user_id, "user", msg, guess, prob, th)
     await _safe_call_async(add_msg, session_id, user_id, "assistant", final, "support", 0.8, th)
     await _safe_call_async(kv_add, user_id, msg, guess, fruit_for(guess), prob, maybe_build_context(msg))
+
+    # Log pipeline metadata
+    print(f"🧠 Pipeline: emotion={guess}({prob:.2f}) intent={user_intent}({intent_conf:.2f}) severity={sev_label}({sev_score:.2f}) phase={phase}")
+
+    # Log interaction for continuous improvement / retraining
+    log_interaction(
+        user_id=user_id,
+        session_id=session_id,
+        user_message=msg,
+        response=final,
+        emotion=guess,
+        emotion_confidence=prob,
+        intent=user_intent,
+        intent_confidence=intent_conf,
+        severity=sev_label,
+        severity_score=sev_score,
+        phase=phase,
+        themes=th,
+    )
 
     if roleplay:
         turn = len(hist)

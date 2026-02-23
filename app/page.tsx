@@ -149,7 +149,7 @@ export default function LandingPage() {
     {
       icon: Brain,
       title: "Therapeutic Intelligence",
-      description: "Trained in CBT, DBT, and mindfulness techniques. Slurpy applies evidence-based therapy methods to help you process emotions effectively.",
+      description: "Guided by CBT, DBT, and mindfulness-informed techniques to help you reflect, regulate, and build healthier patterns.",
     },
     {
       icon: Heart,
@@ -159,7 +159,7 @@ export default function LandingPage() {
     {
       icon: Zap,
       title: "Instant Availability", 
-      description: "No waiting rooms, no appointments. Get mental health support the moment you need it, whether it's 3 AM or during a crisis.",
+      description: "No waiting rooms, no appointments. Get emotional support when you need it, any time of day.",
     },
     {
       icon: Activity,
@@ -169,7 +169,7 @@ export default function LandingPage() {
     {
       icon: ShieldCheck,
       title: "Complete Privacy",
-      description: "End-to-end encrypted conversations. No therapist notes, no insurance records. Your mental health journey stays completely private.",
+      description: "Strong privacy controls and secure data handling designed to protect your conversations and personal context.",
     },
     {
       icon: Users,
@@ -183,12 +183,12 @@ export default function LandingPage() {
     {
       icon: Heart,
       title: "Crisis Support",
-      description: "24/7 immediate support during mental health crises with suicide prevention protocols and emergency resources."
+      description: "Safety-first responses with crisis resources and guidance to contact local emergency services when needed."
     },
     {
       icon: Brain,
-      title: "Therapy Sessions",
-      description: "Structured therapeutic conversations using CBT, DBT, and other evidence-based approaches for lasting change."
+      title: "Guided Conversations",
+      description: "Structured conversations using CBT/DBT-inspired techniques for practical coping and reflection."
     },
     {
       icon: Activity,
@@ -204,10 +204,10 @@ export default function LandingPage() {
 
   // Stats data
   const stats: Stat[] = [
-    { number: "95%", label: "Report feeling better after sessions" },
-    { number: "<2min", label: "Average response time" },
     { number: "24/7", label: "Always available support" },
-    { number: "100%", label: "Private & confidential" }
+    { number: "<2min", label: "Average response time" },
+    { number: "AI", label: "Personalized check-ins" },
+    { number: "Secure", label: "Privacy-focused by design" }
   ]
 
   // Steps data
@@ -351,8 +351,8 @@ export default function LandingPage() {
               Why Slurpy is Different
             </h2>
             <p className="text-xl text-sage-400 font-sans leading-relaxed max-w-3xl mx-auto">
-              Unlike generic chatbots, Slurpy is built specifically for mental health support with 
-              evidence-based therapeutic approaches and deep emotional intelligence.
+              Slurpy is built for mental wellness conversations with supportive guidance,
+              emotional context, and practical tools you can use day to day.
             </p>
           </motion.div>
 
@@ -396,11 +396,11 @@ export default function LandingPage() {
             viewport={{ once: true }}
           >
             <h2 className="font-display text-4xl font-extrabold text-sage-500 mb-4">
-              Comprehensive Mental Health Support
+              Everyday Mental Wellness Support
             </h2>
             <p className="text-xl text-sage-400 font-sans leading-relaxed max-w-3xl mx-auto">
-              From crisis intervention to daily wellness checks, Slurpy provides a full spectrum 
-              of mental health services powered by advanced AI technology.
+              From daily check-ins to emotional pattern tracking, Slurpy provides supportive
+              AI-powered tools for your mental wellness routine.
             </p>
           </motion.div>
 
@@ -549,8 +549,8 @@ export default function LandingPage() {
               transition={{ duration: 0.8, delay: 0.1 }}
               viewport={{ once: true }}
             >
-              Join thousands who've found peace, clarity, and support through Slurpy's 
-              AI-powered mental health companion.
+              Build a steadier daily routine with supportive conversations,
+              reflections, and tools tailored to your pace.
             </motion.p>
             <motion.div
               initial={{ opacity: 0, y: 20 }}

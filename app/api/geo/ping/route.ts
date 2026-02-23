@@ -4,7 +4,7 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 import { NextRequest, NextResponse } from "next/server";
-import { getAuthOrThrow } from "@/lib/auth-server";
+import { withAuth } from "@/lib/api-auth";
 import { cookies, headers } from "next/headers";
 
 const BACKEND_URL = (process.env.BACKEND_URL ?? "http://localhost:8000").replace(/\/$/, "");
@@ -13,10 +13,10 @@ function bad(status: number, error: string) {
   return NextResponse.json({ error }, { status, headers: { "Cache-Control": "no-store" } });
 }
 
-export async function POST(req: NextRequest) {
+export const POST = withAuth(async function POST(req: NextRequest, auth) {
   try {
   // user must be signed in
-  const { userId, bearer: initialBearer } = await getAuthOrThrow();
+  const { userId, bearer: initialBearer } = auth;
   if (!userId) return bad(401, "Unauthorized");
 
     // grab body as raw text (pass-through JSON)
@@ -63,4 +63,4 @@ export async function POST(req: NextRequest) {
   } catch (err: any) {
     return bad(502, `geo proxy failed: ${String(err?.message || err)}`);
   }
-}
+});

@@ -1,0 +1,10 @@
+DOCUMENTATION POLICY
+====================
+
+Minimal documentation approach:
+- One summary doc per change set is OK
+- Do NOT create individual docs for each small change
+- Only create markdown if explicitly requested by user
+- Keep implementation focused, not documentation-heavy
+
+Reference: Use this when deciding whether to document changes

@@ -1,12 +1,13 @@
 // lib/authz.ts
 import { headers } from "next/headers";
 import { createServerServiceClient } from "@/lib/supabase/server";
+import { isE2EBypassEnabled } from "@/lib/runtime-safety";
 
 export type Role = "user" | "ops" | "admin";
 
 export async function deriveRoles(userId: string): Promise<Role[]> {
   // E2E: allow overriding via header when bypass is enabled
-  if (process.env.NEXT_PUBLIC_E2E_BYPASS_AUTH === "true") {
+  if (isE2EBypassEnabled()) {
     try {
       const hdrs = await headers();
       const raw = hdrs.get("x-e2e-roles");

@@ -3,7 +3,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth, UnauthorizedError } from "@/lib/api-auth";
+import { withAuth } from "@/lib/api-auth";
 import { logger } from "@/lib/logger";
 import { deriveRoles, requireSelfOrRole, ForbiddenError } from "@/lib/authz";
 import { createClient } from "@supabase/supabase-js";
@@ -83,9 +83,8 @@ async function deleteQdrantByUser(userId: string) {
 
 /* --------------------------- Handler ------------------------------ */
 
-export const POST = withCORS(async function POST(_req: NextRequest) {
+export const POST = withCORS(withAuth(async function POST(_req: NextRequest, auth) {
   try {
-    const auth = await requireAuth(_req);
     const userId = auth.userId;
     const roles = await deriveRoles(userId);
     try { requireSelfOrRole({ requesterId: userId, ownerId: userId, roles }, "admin"); } catch (e) {
@@ -142,8 +141,7 @@ for (const t of supabaseTables) {
   return NextResponse.json({ ok: true, supabase: sbResults, qdrant });
   } catch (e: any) {
     if (e instanceof ForbiddenError) return NextResponse.json({ error: "forbidden" }, { status: 403 });
-    if (e instanceof UnauthorizedError) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     logger.error("account/delete failed:", e?.message || e);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
-}, { credentials: true });
+}), { credentials: true });

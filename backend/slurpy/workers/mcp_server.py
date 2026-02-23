@@ -173,12 +173,18 @@ app = FastAPI(title="Slurpy MCP", version="1.0")
 
 _FRONTEND = os.getenv("FRONTEND_ORIGIN", "http://localhost:3000")
 _ALLOW_ALL = os.getenv("CORS_ALLOW_ALL", "false").lower() in {"1", "true", "yes"}
+_IS_PROD = os.getenv("ENVIRONMENT", "").strip().lower() == "production"
+
+if _ALLOW_ALL and _IS_PROD:
+    raise RuntimeError("Unsafe production configuration: CORS_ALLOW_ALL must be false")
+
 _ALLOWED = ["*"] if _ALLOW_ALL else [o.strip() for o in _FRONTEND.split(",") if o.strip()]
+_ALLOW_CREDENTIALS = not _ALLOW_ALL
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_ALLOWED,
-    allow_credentials=True,
+    allow_credentials=_ALLOW_CREDENTIALS,
     allow_methods=["*"],
     allow_headers=["*"],
 )

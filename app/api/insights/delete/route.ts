@@ -4,8 +4,8 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { createServerClient } from "@supabase/ssr";
-import { cookies } from "next/headers";
+import { withAuth } from "@/lib/api-auth";
+import { createServerServiceClient } from "@/lib/supabase/server";
 
 interface DeleteInsightRequest {
   insightId: string;
@@ -16,38 +16,13 @@ interface DeleteInsightResponse {
   error?: string;
 }
 
-export async function POST(
+export const POST = withAuth(async function POST(
   request: NextRequest
+  , auth
 ): Promise<NextResponse<DeleteInsightResponse>> {
   try {
-    const cookieStore = await cookies();
-    const supabase = createServerClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-      {
-        cookies: {
-          getAll() {
-            return cookieStore.getAll();
-          },
-          setAll(cookiesToSet) {
-            cookiesToSet.forEach(({ name, value, options }) => {
-              cookieStore.set(name, value, options);
-            });
-          },
-        },
-      }
-    );
-
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-
-    if (!user) {
-      return NextResponse.json(
-        { success: false, error: "Unauthorized" },
-        { status: 401 }
-      );
-    }
+    const supabase = createServerServiceClient();
+    const userId = auth.userId;
 
     const body = (await request.json()) as DeleteInsightRequest;
 
@@ -65,7 +40,7 @@ export async function POST(
       .eq("id", body.insightId)
       .single();
 
-    if (!insight || insight.user_id !== user.id) {
+    if (!insight || insight.user_id !== userId) {
       return NextResponse.json(
         { success: false, error: "Not found or unauthorized" },
         { status: 404 }
@@ -94,4 +69,4 @@ export async function POST(
       { status: 500 }
     );
   }
-}
+});

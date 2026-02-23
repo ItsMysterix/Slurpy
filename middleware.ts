@@ -1,6 +1,7 @@
 // middleware.ts
 import { NextRequest, NextResponse } from "next/server";
 import { makeNonce, cspHeader } from "@/lib/csp";
+import { hasInsecureProdBypass, isE2EBypassEnabled } from "@/lib/runtime-safety";
 
 const PUBLIC_ROUTES = [
   "/",
@@ -49,6 +50,10 @@ function withSecurityHeaders(req: NextRequest, res: NextResponse) {
 }
 
 export default async function middleware(req: NextRequest) {
+  if (hasInsecureProdBypass()) {
+    return NextResponse.json({ error: "server_misconfigured" }, { status: 503 });
+  }
+
   // Fast-path CORS preflight for API routes
   if (req.method === "OPTIONS" && req.nextUrl.pathname.startsWith("/api/")) {
     const origin = (() => {
@@ -75,17 +80,18 @@ export default async function middleware(req: NextRequest) {
     res.headers.set("Access-Control-Allow-Credentials", "true");
     res.headers.set("Vary", "Origin");
     res.headers.set("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS");
-    res.headers.set(
-      "Access-Control-Allow-Headers",
-      [
+      const e2eBypass = isE2EBypassEnabled();
+      const allowHeaders = [
         "content-type",
         "authorization",
-        "x-e2e-user",
-        "x-e2e-stream",
-        "x-e2e-rl-limit",
-        "x-e2e-stub-journal",
         "x-csrf",
-      ].join(",")
+        ...(e2eBypass
+          ? ["x-e2e-user", "x-e2e-stream", "x-e2e-rl-limit", "x-e2e-stub-journal"]
+          : []),
+      ];
+    res.headers.set(
+        "Access-Control-Allow-Headers",
+        allowHeaders.join(",")
     );
     return res;
   }
@@ -111,7 +117,7 @@ export default async function middleware(req: NextRequest) {
                   req.headers.get("authorization")?.replace("Bearer ", "");
     
     // E2E bypass
-    const e2eBypass = process.env.NEXT_PUBLIC_E2E_BYPASS_AUTH === "true";
+    const e2eBypass = isE2EBypassEnabled();
     const e2eUser = e2eBypass && req.headers.get("x-e2e-user");
     
     if (!token && !e2eUser) {

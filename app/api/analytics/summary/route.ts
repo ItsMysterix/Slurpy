@@ -4,7 +4,7 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 import { NextRequest, NextResponse } from "next/server";
-import { getAuthOrThrow, UnauthorizedError } from "@/lib/auth-server";
+import { withAuth } from "@/lib/api-auth";
 import { createClient } from "@supabase/supabase-js";
 import { createServerServiceClient } from "@/lib/supabase/server";
 import { logger } from "@/lib/logger";
@@ -186,9 +186,9 @@ function generateHeuristicInsights(messages: ChatMessageRow[], sessions: ChatSes
 }
 
 /* ---------------------------------- GET --------------------------------- */
-export async function GET(req: NextRequest) {
+export const GET = withAuth(async function GET(req: NextRequest, auth) {
   try {
-    const { userId } = await getAuthOrThrow();
+    const userId = auth.userId;
     // Rate limit analytics queries 30/min/user
     {
       const limited = await guardRate(req, { key: "analytics-summary", limit: 30, windowMs: 60_000 });
@@ -436,8 +436,7 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json(safe);
   } catch (e) {
-    if (e instanceof UnauthorizedError) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     logger.error("GET /api/analytics/summary error:", e);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
-}
+});

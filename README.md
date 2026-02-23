@@ -2,7 +2,7 @@
 
 **Slurpy** is an AI-powered mental health companion designed to support, not judge. Built with Next.js, Python, and advanced NLP models, Slurpy provides personalized emotional support through intelligent conversations, mood tracking, and behavioral insights.
 
-> **Production Ready**: This project includes comprehensive guides for deploying and operating a SaaS platform. See [SaaS Operations Guide](SAAS_OPERATIONS.md) for everything you need to know as a first-time SaaS owner.
+> **Production Ready**: Use the active implementation plans in [Master Audit Sprint Plan](docs/MASTER_AUDIT_SPRINT_PLAN.md) and [CTO Execution Board](docs/EXECUTION_BOARD.md).
 
 ---
 
@@ -10,10 +10,8 @@
 
 | Guide | Description |
 |-------|-------------|
-| **[SaaS Operations Guide](SAAS_OPERATIONS.md)** | **START HERE** - Essential guide for running Slurpy in production |
-| [Deployment Checklist](docs/DEPLOYMENT_CHECKLIST.md) | Step-by-step checklist before going live |
-| [Monitoring Setup](docs/MONITORING.md) | How to set up monitoring, alerts, and dashboards |
-| [Incident Response](docs/INCIDENT_RESPONSE.md) | What to do when things go wrong |
+| **[CTO Execution Board](docs/EXECUTION_BOARD.md)** | **START HERE** - Active priorities, owners, and status |
+| [Master Audit Sprint Plan](docs/MASTER_AUDIT_SPRINT_PLAN.md) | Consolidated architecture/security/ops audit plan |
 | [Security Best Practices](#security) | Security hardening and compliance |
 
 ---
@@ -126,12 +124,12 @@ curl http://localhost:9001/healthz
 
 ### Production Deployment
 
-**⚠️ Before deploying to production, complete the [Deployment Checklist](docs/DEPLOYMENT_CHECKLIST.md)**
+**⚠️ Before deploying to production, complete the active items in [CTO Execution Board](docs/EXECUTION_BOARD.md)**
 
 Key production steps:
-1. Set up monitoring (Sentry, UptimeRobot) - See [Monitoring Guide](docs/MONITORING.md)
-2. Configure security (CORS, rate limiting, SSL) - See [SaaS Operations](SAAS_OPERATIONS.md#-security-hardening-)
-3. Set up backups (database, logs) - See [SaaS Operations](SAAS_OPERATIONS.md#-backup--disaster-recovery-)
+1. Set up monitoring and error tracking (Sentry, uptime checks)
+2. Configure security (CORS allowlist, auth enforcement, rate limiting)
+3. Set up backups (database, logs)
 4. Deploy to Fly.io (see below)
 
 ### Individual Service Commands
@@ -291,7 +289,7 @@ fly secrets set SUPABASE_SERVICE_ROLE_KEY=eyJ... -a slurpy-backend
 fly secrets set OPENAI_API_KEY=sk-... -a slurpy-mcp
 ```
 
-**For complete production deployment guide, see [Deployment Checklist](docs/DEPLOYMENT_CHECKLIST.md)**
+**For implementation priorities and rollout order, see [CTO Execution Board](docs/EXECUTION_BOARD.md)**
 
 ---
 
@@ -302,13 +300,14 @@ fly secrets set OPENAI_API_KEY=sk-... -a slurpy-mcp
 **Critical items to configure before going live:**
 
 - [ ] **Update CORS policy** - Change from `allow_origins=["*"]` to your specific domains in `backend/slurpy/interfaces/http/main.py`
-- [ ] **Add rate limiting** - Install and configure `slowapi` for API protection (see [SaaS Operations](SAAS_OPERATIONS.md#fix-2-add-rate-limiting))
+- [ ] **Validate CORS allowlist** - Set `ALLOWED_ORIGINS` and keep `CORS_ALLOW_ALL=false` in production
+- [ ] **Validate rate limiting** - Ensure API routes stay protected and fallback modes are monitored
 - [ ] **Security headers** - Already configured in `next.config.mjs` ✅
 - [ ] **Environment secrets** - All API keys in Fly.io secrets, not in code
 - [ ] **Supabase RLS** - Row Level Security enabled on all tables
 - [ ] **Regular updates** - Weekly `npm audit` and `pip-audit` scans
 
-**See full security guide in [SaaS Operations](SAAS_OPERATIONS.md#-security-hardening-)**
+**See active security remediation status in [CTO Execution Board](docs/EXECUTION_BOARD.md)**
 
 ### Vulnerability Scanning
 
@@ -339,19 +338,19 @@ All services expose health endpoints for monitoring:
 1. **Error Tracking** (Sentry - Already integrated!)
    - Sign up at [sentry.io](https://sentry.io)
    - Set `SENTRY_DSN` environment variable
-   - See [Monitoring Guide](docs/MONITORING.md) for setup
+   - Add alert routing for production incidents
 
 2. **Uptime Monitoring** (UptimeRobot - Free)
    - Monitor all 3 health endpoints
    - Alert via email + SMS
-   - See [SaaS Operations](SAAS_OPERATIONS.md#set-up-uptime-monitoring-5-minutes) for details
+   - Track SLOs from [CTO Execution Board](docs/EXECUTION_BOARD.md)
 
 3. **Log Aggregation** (Optional but recommended)
    - Papertrail (free tier)
    - Fly.io built-in logs
-   - See [Monitoring Guide](docs/MONITORING.md#set-up-log-aggregation)
+   - Keep retention and access policy documented
 
-**Full monitoring setup guide: [docs/MONITORING.md](docs/MONITORING.md)**
+**Current operations priorities: [docs/EXECUTION_BOARD.md](docs/EXECUTION_BOARD.md)**
 
 ---
 
@@ -359,7 +358,7 @@ All services expose health endpoints for monitoring:
 
 **If something goes wrong in production:**
 
-1. Check [Incident Response Playbook](docs/INCIDENT_RESPONSE.md)
+1. Check active response priorities in [CTO Execution Board](docs/EXECUTION_BOARD.md)
 2. Follow severity levels (P0-P3)
 3. Use emergency rollback commands
 4. Update status page
@@ -384,7 +383,7 @@ fly releases rollback --app slurpy-mcp
 
 **Total**: $10-50/month to start
 
-See [Cost Management](SAAS_OPERATIONS.md#-cost-management) for optimization tips.
+Track cost and reliability guardrails through [CTO Execution Board](docs/EXECUTION_BOARD.md).
 
 ---
 

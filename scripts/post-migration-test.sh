@@ -227,18 +227,19 @@ echo "========================================="
 echo ""
 
 # Test 7.1: Migration files exist
-log_test "Migration file add_user_memory_table.sql exists"
-if [ -f "migrations/add_user_memory_table.sql" ]; then
-  log_pass "Migration file found"
+log_test "Canonical migration directory exists"
+if [ -d "supabase/migrations" ]; then
+  log_pass "supabase/migrations directory found"
 else
-  log_fail "Migration file missing"
+  log_fail "supabase/migrations directory missing"
 fi
 
-log_test "Migration file 20250115_create_insight_run_table.sql exists"
-if [ -f "migrations/20250115_create_insight_run_table.sql" ]; then
-  log_pass "Migration file found"
+log_test "At least one Supabase migration exists"
+MIGRATION_COUNT=$(find supabase/migrations -name '*.sql' 2>/dev/null | wc -l | tr -d ' ')
+if [ "${MIGRATION_COUNT:-0}" -ge 1 ]; then
+  log_pass "Found $MIGRATION_COUNT migration file(s)"
 else
-  log_fail "Migration file missing"
+  log_fail "No SQL migrations found in supabase/migrations"
 fi
 
 echo ""

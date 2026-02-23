@@ -9,7 +9,9 @@
     "start": "next start",
     "test": "playwright test",
     "test:ui": "playwright test --ui",
-    "test:signup": "playwright test tests/auth.signup.spec.ts"
+    "test:signup": "playwright test tests/auth.signup.spec.ts",
+    "check:migration-policy": "bash scripts/check-migration-policy.sh",
+    "check:secrets": "bash scripts/check-no-hardcoded-secrets.sh"
   },
   "dependencies": {
     "@emotion/is-prop-valid": "latest",

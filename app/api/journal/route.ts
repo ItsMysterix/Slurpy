@@ -3,7 +3,7 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 import { NextRequest, NextResponse } from "next/server";
-import { getAuthOrThrow, UnauthorizedError } from "@/lib/auth-server";
+import { withAuth } from "@/lib/api-auth";
 import { createClient } from "@supabase/supabase-js";
 import { createServerServiceClient } from "@/lib/supabase/server";
 import { randomUUID } from "crypto";
@@ -14,6 +14,7 @@ import { guardRate } from "@/lib/guards";
 import { deriveRoles, requireSelfOrRole, ForbiddenError } from "@/lib/authz";
 import { withCORS } from "@/lib/cors";
 import { assertSameOrigin, assertDoubleSubmit } from "@/lib/csrf";
+import { isE2EBypassEnabled } from "@/lib/runtime-safety";
 
 /* -------------------------- Supabase (server) -------------------------- */
 function sb() {
@@ -108,9 +109,9 @@ async function findEntryByIdForUser(client: ReturnType<typeof sb>, table: TableI
 
 /* --------------------------------- GET -------------------------------- */
 // GET /api/journal?id=<id>
-export async function GET(req: NextRequest) {
+export const GET = withAuth(async function GET(req: NextRequest, auth) {
   try {
-    const { userId } = await getAuthOrThrow();
+    const userId = auth.userId;
 
     const client = sb();
     const table = await detectTable(client);
@@ -168,24 +169,23 @@ export async function GET(req: NextRequest) {
   } catch (e) {
     if (e instanceof ForbiddenError) return NextResponse.json({ error: "forbidden" }, { status: 403 });
     if (e instanceof Response) return e; // propagate httpError from size guard/validation
-    if (e instanceof UnauthorizedError) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     logger.error("GET /api/journal error:", e);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
-}
+});
 
 /* --------------------------------- POST ------------------------------- */
 // POST /api/journal { title, content, mood?, fruit?, tags?, date? }
-export const POST = withCORS(async function POST(req: NextRequest) {
+export const POST = withCORS(withAuth(async function POST(req: NextRequest, auth) {
   try {
-    const { userId } = await getAuthOrThrow();
+    const userId = auth.userId;
     // Rate limit write ops 20/min/user
     {
       const limited = await guardRate(req, { key: "journal-write", limit: 20, windowMs: 60_000 });
       if (limited) return limited;
     }
     // E2E stub path for tests to avoid DB dependency
-    const e2eStub = process.env.NEXT_PUBLIC_E2E_BYPASS_AUTH === "true" && req.headers.get("x-e2e-stub-journal") === "1";
+    const e2eStub = isE2EBypassEnabled() && req.headers.get("x-e2e-stub-journal") === "1";
     // CSRF
     {
       const r = await assertSameOrigin(req);
@@ -313,17 +313,16 @@ export const POST = withCORS(async function POST(req: NextRequest) {
   } catch (e) {
     if (e instanceof ForbiddenError) return NextResponse.json({ error: "forbidden" }, { status: 403 });
     if (e instanceof Response) return e;
-    if (e instanceof UnauthorizedError) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     logger.error("POST /api/journal error:", e);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
-}, { credentials: true });
+}), { credentials: true });
 
 /* --------------------------------- PUT -------------------------------- */
 // PUT /api/journal { id, title?, content?, mood?, fruit?, tags?, date? }
-export const PUT = withCORS(async function PUT(req: NextRequest) {
+export const PUT = withCORS(withAuth(async function PUT(req: NextRequest, auth) {
   try {
-    const { userId } = await getAuthOrThrow();
+    const userId = auth.userId;
     const client = sb();
     const table = await detectTable(client);
     // Rate limit write ops 20/min/user
@@ -442,17 +441,16 @@ export const PUT = withCORS(async function PUT(req: NextRequest) {
   } catch (e) {
     if (e instanceof ForbiddenError) return NextResponse.json({ error: "forbidden" }, { status: 403 });
     if (e instanceof Response) return e;
-    if (e instanceof UnauthorizedError) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     logger.error("PUT /api/journal error:", e);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
-}, { credentials: true });
+}), { credentials: true });
 
 /* -------------------------------- DELETE ------------------------------ */
 // DELETE /api/journal?id=<id>
-export const DELETE = withCORS(async function DELETE(req: NextRequest) {
+export const DELETE = withCORS(withAuth(async function DELETE(req: NextRequest, auth) {
   try {
-    const { userId } = await getAuthOrThrow();
+    const userId = auth.userId;
     // Rate limit write ops 20/min/user
     {
       const limited = await guardRate(req, { key: "journal-write", limit: 20, windowMs: 60_000 });
@@ -488,8 +486,7 @@ export const DELETE = withCORS(async function DELETE(req: NextRequest) {
   } catch (e) {
     if (e instanceof ForbiddenError) return NextResponse.json({ error: "forbidden" }, { status: 403 });
     if (e instanceof Response) return e;
-    if (e instanceof UnauthorizedError) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     logger.error("DELETE /api/journal error:", e);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
-}, { credentials: true });
+}), { credentials: true });

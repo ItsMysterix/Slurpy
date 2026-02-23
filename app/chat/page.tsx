@@ -18,16 +18,22 @@ import { supabase } from "@/lib/supabaseClient";
 import { useChatStore, type Message as ChatMessage } from "@/lib/chat-store";
 import type { ModeId } from "@/lib/persona";
 import type { DropIn as OriginalDropIn, DropInKind } from "@/lib/dropins";
+import type { SafetyResources } from "@/lib/safety-resources";
 
 // Extend with local optional fields
 type DropIn = OriginalDropIn & { ttlMs?: number; priority?: number; cooldownKey?: string };
 
 // ---- tiny helpers ----
 const CLEAN_OPENERS = [/^\s*got it[.!—-]*\s*/i, /^\s*sure[.!—-]*\s*/i];
+const CRISIS_SIGNAL_RX = /(kill myself|suicid(?:e|al)|end my life|self[-\s]?harm|call or text 988|crisis lifeline|text home to 741741|local emergency services|emergency services now)/i;
 function cleanLLMText(t: string) {
   let out = t?.trim() ?? "";
   for (const rx of CLEAN_OPENERS) out = out.replace(rx, "");
   return out;
+}
+
+function isCrisisSignal(text: string) {
+  return CRISIS_SIGNAL_RX.test(text || "");
 }
 
 // Streaming chat to reduce latency: uses NDJSON frames from /api/proxy-chat-stream
@@ -254,6 +260,8 @@ export default function ChatPage() {
   // drop-ins
   const [dropIns, setDropIns] = React.useState<DropIn[]>([]);
   const [cooldowns, setCooldowns] = React.useState<Cooldowns>({});
+  const [showCrisisCta, setShowCrisisCta] = React.useState(false);
+  const [safetyResources, setSafetyResources] = React.useState<SafetyResources | null>(null);
 
   // store
   const messages = useChatStore((s: any) => s.messages);
@@ -270,6 +278,27 @@ export default function ChatPage() {
   React.useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages.length, isTyping, liveText, dropIns.length]);
+
+  React.useEffect(() => {
+    if (!showCrisisCta || safetyResources) return;
+    const locale = typeof navigator !== "undefined" ? navigator.language : "";
+    const region = locale.match(/-([A-Za-z]{2})$/)?.[1]?.toUpperCase() || "";
+    const query = new URLSearchParams();
+    if (region) query.set("region", region);
+    if (locale) query.set("locale", locale);
+    void fetch(`/api/safety/resources?${query.toString()}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (!data) return;
+        setSafetyResources({
+          region: data.region,
+          lead: data.lead,
+          detail: data.detail,
+          actions: Array.isArray(data.actions) ? data.actions : [],
+        });
+      })
+      .catch(() => {});
+  }, [showCrisisCta, safetyResources]);
 
   // reset thread on user switch
   React.useEffect(() => {
@@ -302,6 +331,45 @@ export default function ChatPage() {
       modes: meta.modes,
     });
     setLiveText(null);
+  }
+
+  async function logSafetyEvent(opts: {
+    sessionId?: string | null;
+    source: "user_input" | "assistant_output" | "cta_click" | "cta_dismiss";
+    level: "elevated" | "immediate";
+    trigger?: string;
+    metadata?: Record<string, unknown>;
+  }) {
+    try {
+      let bearer = "";
+      try {
+        const { data } = await supabase.auth.getSession();
+        bearer = data.session?.access_token || "";
+      } catch {}
+
+      const csrfHeader = (() => {
+        if (typeof document === "undefined") return {} as Record<string, string>;
+        const m = /(?:^|;\s*)slurpy\.csrf=([^;]+)/i.exec(document.cookie || "");
+        const t = m ? decodeURIComponent(m[1]) : "";
+        return t ? ({ "x-csrf": t } as Record<string, string>) : {};
+      })();
+
+      await fetch("/api/safety/events", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(bearer ? { Authorization: `Bearer ${bearer}` } : {}),
+          ...csrfHeader,
+        },
+        body: JSON.stringify({
+          sessionId: opts.sessionId ?? sessionId ?? null,
+          source: opts.source,
+          level: opts.level,
+          trigger: opts.trigger,
+          metadata: opts.metadata ?? {},
+        }),
+      });
+    } catch {}
   }
 
   async function persistMessage(opts: {
@@ -351,6 +419,15 @@ export default function ChatPage() {
       );
       commitStreamedText(data.message, { emotion: data.emotion, modes: data.modes as ModeId[] });
       void persistMessage({ sessionId: sid, message: data.message, role: "assistant", emotion: data.emotion ?? null });
+      if (isCrisisSignal(data.message)) {
+        setShowCrisisCta(true);
+        void logSafetyEvent({
+          sessionId: sid,
+          source: "assistant_output",
+          level: "immediate",
+          trigger: "assistant_crisis_text",
+        });
+      }
     } catch {
       addMessage({
         id: `${Date.now()}-${Math.random()}`,
@@ -414,6 +491,16 @@ export default function ChatPage() {
     // detect + enqueue (non-blocking)
     const suggestions = detectDropIns(textToSend, cooldowns);
     enqueueDropIns(suggestions);
+
+    if (isCrisisSignal(textToSend)) {
+      setShowCrisisCta(true);
+      void logSafetyEvent({
+        sessionId,
+        source: "user_input",
+        level: "immediate",
+        trigger: "user_crisis_signal",
+      });
+    }
 
     await proceedSend(textToSend);
   };
@@ -482,6 +569,51 @@ export default function ChatPage() {
                 </div>
               ) : (
                 <div className="max-w-4xl mx-auto py-6">
+                  {showCrisisCta && (
+                    <div className="mb-4 rounded-2xl border border-red-200/70 dark:border-red-800/60 bg-red-50/80 dark:bg-red-950/30 p-4">
+                      <p className="text-sm text-red-800 dark:text-red-200 font-medium">
+                        {safetyResources?.lead || "If you might be in immediate danger, contact local emergency services now."}
+                      </p>
+                      <p className="text-xs text-red-700/90 dark:text-red-300/90 mt-1">
+                        {safetyResources?.detail || "In the US/Canada, call or text 988. In the US, you can also text HOME to 741741."}
+                      </p>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {(safetyResources?.actions?.length
+                          ? safetyResources.actions
+                          : [
+                              { id: "call", label: "Call 988", href: "tel:988" },
+                              { id: "text", label: "Text 741741", href: "sms:741741?body=HOME" },
+                            ]
+                        ).map((action: any) => (
+                          <a
+                            key={`${action.id}-${action.href}`}
+                            href={action.href}
+                            onClick={() => {
+                              void logSafetyEvent({ source: "cta_click", level: "immediate", trigger: String(action.id || "action") });
+                            }}
+                            className={
+                              action.id === "call"
+                                ? "inline-flex items-center rounded-lg px-3 py-1.5 text-xs font-medium bg-red-700 text-white hover:bg-red-800"
+                                : "inline-flex items-center rounded-lg px-3 py-1.5 text-xs font-medium bg-red-100 text-red-800 hover:bg-red-200 dark:bg-red-900/60 dark:text-red-100 dark:hover:bg-red-900"
+                            }
+                          >
+                            {action.label}
+                          </a>
+                        ))}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowCrisisCta(false);
+                            void logSafetyEvent({ source: "cta_dismiss", level: "elevated", trigger: "dismiss_banner" });
+                          }}
+                          className="inline-flex items-center rounded-lg px-3 py-1.5 text-xs font-medium border border-red-200 text-red-800 hover:bg-red-100 dark:border-red-800 dark:text-red-200 dark:hover:bg-red-900/40"
+                        >
+                          Dismiss
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
                   {messages.map((m: ChatMessage) => (
                     <MessageBubble key={m.id} message={m} />
                   ))}

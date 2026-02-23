@@ -1,5 +1,6 @@
 // lib/cors.ts
 import type { NextRequest } from "next/server";
+import { isE2EBypassEnabled } from "@/lib/runtime-safety";
 
 export type CORSOptions = {
   origins?: string[];
@@ -46,18 +47,23 @@ function buildHeaders(origin: string, opts: Required<CORSOptions>) {
 }
 
 export function withCORS<T extends (req: NextRequest) => Promise<Response>>(handler: T, options?: CORSOptions) {
+  const baseHeaders = [
+    "content-type",
+    "authorization",
+    "x-csrf",
+  ];
+  const e2eHeaders = [
+    "x-e2e-user",
+    "x-e2e-stream",
+    "x-e2e-rl-limit",
+    "x-e2e-stub-journal",
+  ];
   const opts: Required<CORSOptions> = {
     origins: options?.origins && options.origins.length ? options.origins : parseOrigins(),
     methods: options?.methods && options.methods.length ? options.methods : ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    headers: options?.headers && options.headers.length ? options.headers : [
-      "content-type",
-      "authorization",
-      "x-e2e-user",
-      "x-e2e-stream",
-      "x-e2e-rl-limit",
-      "x-e2e-stub-journal",
-      "x-csrf",
-    ],
+    headers: options?.headers && options.headers.length
+      ? options.headers
+      : (isE2EBypassEnabled() ? [...baseHeaders, ...e2eHeaders] : baseHeaders),
     credentials: options?.credentials ?? true,
   };
 

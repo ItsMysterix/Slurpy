@@ -3,7 +3,7 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 import { NextRequest, NextResponse } from "next/server";
-import { getAuthOrThrow } from "@/lib/auth-server";
+import { withAuth } from "@/lib/api-auth";
 import { createServerServiceClient } from "@/lib/supabase/server";
 import { randomUUID } from "crypto";
 import { guardRate } from "@/lib/guards";
@@ -84,8 +84,8 @@ function fruitIdForEmotion(emotion?: string | null): string {
 }
 
 /* ------------------------------ GET --------------------------- */
-export const GET = withErrorHandling(async function GET(req: NextRequest) {
-  const { userId } = await getAuthOrThrow();
+export const GET = withErrorHandling(withAuth(async function GET(req: NextRequest, auth) {
+  const userId = auth.userId;
 
     const supabase = sb();
     const url = new URL(req.url);
@@ -292,13 +292,12 @@ export const GET = withErrorHandling(async function GET(req: NextRequest) {
         emotionDistribution,
       },
     });
-});
+}));
 
 /* ------------------------------ POST -------------------------- */
 // Upsert Daily Mood for a given day
-export const POST = withCORS(withErrorHandling(async function POST(req: NextRequest) {
-  const { userId } = await getAuthOrThrow();
-    if (!userId) throw new AppError("unauthorized", "Unauthorized", 401);
+export const POST = withCORS(withErrorHandling(withAuth(async function POST(req: NextRequest, auth) {
+  const userId = auth.userId;
     // Limit calendar write ops to 30/min/user
     {
       const limited = await guardRate(req, { key: "calendar-write", limit: 30, windowMs: 60_000 });
@@ -360,13 +359,12 @@ export const POST = withCORS(withErrorHandling(async function POST(req: NextRequ
         notes: data.notes,
       },
     });
-}), { credentials: true });
+})), { credentials: true });
 
 /* ----------------------------- DELETE ------------------------- */
 // Delete Daily Mood for a given day (UTC day window)
-export const DELETE = withCORS(withErrorHandling(async function DELETE(req: NextRequest) {
-  const { userId } = await getAuthOrThrow();
-    if (!userId) throw new AppError("unauthorized", "Unauthorized", 401);
+export const DELETE = withCORS(withErrorHandling(withAuth(async function DELETE(req: NextRequest, auth) {
+  const userId = auth.userId;
     // Limit calendar write ops to 30/min/user
     {
       const limited = await guardRate(req, { key: "calendar-write", limit: 30, windowMs: 60_000 });
@@ -400,4 +398,4 @@ export const DELETE = withCORS(withErrorHandling(async function DELETE(req: Next
     if (error) throw error;
 
     return NextResponse.json({ success: true });
-}), { credentials: true });
+  })), { credentials: true });

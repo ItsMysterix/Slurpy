@@ -2,11 +2,12 @@
 // Central guard helpers (rate limiting, etc.)
 
 import { NextRequest } from "next/server";
-import { getOptionalAuth } from "@/lib/auth-server";
+import { optionalAuth } from "@/lib/api-auth";
 import { createLimiter } from "@/lib/rate-limit";
 import { httpError } from "@/lib/validate";
 import { logger } from "@/lib/logger";
 import { hashId } from "@/lib/rate-limit";
+import { isE2EBypassEnabled } from "@/lib/runtime-safety";
 
 export type GuardRateOptions = {
   key: string; // route key
@@ -26,11 +27,11 @@ function ipFrom(req: NextRequest): string {
 }
 
 export async function guardRate(req: NextRequest, opts: GuardRateOptions): Promise<Response | undefined> {
-  const auth = await getOptionalAuth();
+  const auth = await optionalAuth(req);
   const id = auth?.userId || ipFrom(req);
   // E2E override for faster tests
   let effLimit = opts.limit;
-  if (process.env.NEXT_PUBLIC_E2E_BYPASS_AUTH === "true") {
+  if (isE2EBypassEnabled()) {
     const hdr = req.headers.get("x-e2e-rl-limit");
     const n = hdr ? Number(hdr) : NaN;
     if (!Number.isNaN(n) && n > 0) effLimit = n;

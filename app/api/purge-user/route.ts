@@ -3,7 +3,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
-import { getAuthOrThrow, UnauthorizedError } from "@/lib/auth-server";
+import { withAuth } from "@/lib/api-auth";
 import { createClient } from "@supabase/supabase-js";
 import { createServerServiceClient } from "@/lib/supabase/server";
 import { logger } from "@/lib/logger";
@@ -72,9 +72,9 @@ async function qdrantDeleteByUser(userId: string) {
   return { ok: true, results };
 }
 
-export const POST = withCORS(async function POST(req: NextRequest) {
+export const POST = withCORS(withAuth(async function POST(req: NextRequest, auth) {
   try {
-    const { userId } = await getAuthOrThrow();
+    const userId = auth.userId;
     const roles = await deriveRoles(userId);
     try { requireSelfOrRole({ requesterId: userId, ownerId: userId, roles }, "admin"); } catch (e) {
       return NextResponse.json({ error: "forbidden" }, { status: 403 });
@@ -142,8 +142,7 @@ export const POST = withCORS(async function POST(req: NextRequest) {
   } catch (e: any) {
     if (e instanceof ForbiddenError) return NextResponse.json({ error: "forbidden" }, { status: 403 });
     if (e instanceof Response) return e;
-    if (e instanceof UnauthorizedError) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     logger.error("purge-user failed:", e?.message || e);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
-}, { credentials: true });
+}), { credentials: true });

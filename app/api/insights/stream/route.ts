@@ -1,11 +1,12 @@
 // app/api/insights/stream/route.ts
 import { NextRequest } from "next/server";
-import { getAuthOrThrow } from "@/lib/auth-server";
+import { withAuth } from "@/lib/api-auth";
 import { guardRate } from "@/lib/guards";
 import { createLimiter } from "@/lib/rate-limit";
 import { sseBus, InsightsUpdate } from "@/lib/sse-bus";
 import { z } from "@/lib/validate";
 import { withCORS } from "@/lib/cors";
+import { isE2EBypassEnabled } from "@/lib/runtime-safety";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -18,9 +19,8 @@ function toSSE(event: string, data: unknown) {
   return encoder.encode(`event: ${event}\ndata: ${payload}\n\n`);
 }
 
-export const GET = withCORS(async function GET(req: NextRequest) {
-  const { userId } = await getAuthOrThrow();
-  if (!userId) return new Response("Unauthorized", { status: 401 });
+export const GET = withCORS(withAuth(async function GET(req: NextRequest, auth) {
+  const userId = auth.userId;
 
   // Connection starts limited to 20/min/user
   {
@@ -42,7 +42,7 @@ export const GET = withCORS(async function GET(req: NextRequest) {
 
   // Mid-stream per-event limiter; allow test override for low limit via header x-e2e-stream-limit
   const hdrLimit = Number(req.headers.get("x-e2e-stream-limit") || "");
-  const eventLimit = !Number.isNaN(hdrLimit) && hdrLimit > 0 && process.env.NEXT_PUBLIC_E2E_BYPASS_AUTH === "true" ? hdrLimit : 100000;
+  const eventLimit = !Number.isNaN(hdrLimit) && hdrLimit > 0 && isE2EBypassEnabled() ? hdrLimit : 100000;
   const eventLimiter = createLimiter({ keyPrefix: "rl:insights-stream:emit", windowMs: 60_000, limit: eventLimit });
 
   const stream = new ReadableStream<Uint8Array>({
@@ -132,4 +132,4 @@ export const GET = withCORS(async function GET(req: NextRequest) {
       // "Access-Control-Allow-Origin": "https://slurpy.life",
     },
   });
-}, { credentials: true });
+}), { credentials: true });

@@ -1,14 +1,13 @@
 // app/api/memory/create/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth } from "@/lib/api-auth";
+import { withAuth } from "@/lib/api-auth";
 import { MemoryServiceError, memoryService } from "@/lib/memory-service";
 import { CreateMemoryRequest } from "@/lib/memory-types";
 import { createServerServiceClient } from "@/lib/supabase/server";
 import { canUseMemory, getPlan } from "@/lib/plan-policy";
 
-export async function POST(request: NextRequest) {
+export const POST = withAuth(async function POST(request: NextRequest, auth) {
   try {
-    const auth = await requireAuth(request);
     const userId = auth.userId;
 
     const supabase = createServerServiceClient();
@@ -74,4 +73,4 @@ export async function POST(request: NextRequest) {
     console.error("Memory create error:", error);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
-}
+});

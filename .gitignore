@@ -38,6 +38,18 @@ emotion/**/training_args.bin
 *.safetensors
 *.ckpt
 
+# trained model weights & checkpoints (large binaries)
+*.bin
+!requirements/*.bin
+emotion/model/
+intent/model/
+severity/model/
+intent/training.log
+severity/training.log
+
+# data files
+backend/data/*.db
+
 # temporary files
 *.tmp
 *.swp

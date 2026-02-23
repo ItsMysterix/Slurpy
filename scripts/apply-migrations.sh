@@ -19,23 +19,19 @@ echo "========================================="
 echo "Applying migrations to Supabase"
 echo "========================================="
 
-# Ensure psql is available
-if ! command -v psql >/dev/null 2>&1; then
-  echo "ERROR: psql is not installed or not in PATH. Install PostgreSQL client first."
+# Ensure npx is available (for Supabase CLI)
+if ! command -v npx >/dev/null 2>&1; then
+  echo "ERROR: npx is not installed or not in PATH. Install Node.js first."
   exit 1
 fi
 
-# Apply Sprint 1: UserMemory (PascalCase table)
-echo "Applying: migrations/add_user_memory_table.sql"
-psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f migrations/add_user_memory_table.sql
+if [ ! -d "supabase/migrations" ]; then
+  echo "ERROR: supabase/migrations directory not found."
+  exit 1
+fi
 
-# Apply Sprint 2: insight_run (snake_case table)
-echo "Applying: migrations/20250115_create_insight_run_table.sql"
-psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f migrations/20250115_create_insight_run_table.sql
-
-# Create snake_case views bridging PascalCase tables used elsewhere
-echo "Applying: migrations/20260114_create_snake_case_views.sql"
-psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f migrations/20260114_create_snake_case_views.sql
+echo "Running: npx supabase db push --db-url \"<redacted>\""
+npx supabase db push --db-url "$DATABASE_URL"
 
 # Run post-migration smoke tests
 if [ -f scripts/post-migration-test.sh ]; then

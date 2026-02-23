@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth } from "@/lib/api-auth";
+import { withAuth } from "@/lib/api-auth";
 import { createClient } from "@supabase/supabase-js";
 import { generateSessionSummary } from "@/lib/session-summary";
 
@@ -12,9 +12,8 @@ const supabase = createClient(
  * POST /api/chat/session/summarize
  * Generate AI summary for a completed chat session
  */
-export async function POST(request: NextRequest) {
+export const POST = withAuth(async function POST(request: NextRequest, auth) {
   try {
-    const auth = await requireAuth(request);
     const userId = auth.userId;
 
     const body = await request.json();
@@ -109,4 +108,4 @@ export async function POST(request: NextRequest) {
       { status: 500 }
     );
   }
-}
+});

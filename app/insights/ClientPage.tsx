@@ -10,6 +10,7 @@ import WeeklyTrends from "@/components/insights/WeeklyTrends";
 import EmotionBreakdown from "@/components/insights/EmotionBreakdown";
 import KeyInsights from "@/components/insights/KeyInsights";
 import Topics from "@/components/insights/Topics";
+import SafetyEventsCard from "@/components/insights/SafetyEventsCard";
 
 import { useAuth, useUser } from "@/lib/auth-hooks";
 import { Loader2 } from "lucide-react";
@@ -100,6 +101,7 @@ export default function ClientPage() {
   const [refreshing, setRefreshing] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [insights, setInsights] = React.useState<InsightsResponse | null>(null);
+  const [safetyDashboard, setSafetyDashboard] = React.useState<any | null>(null);
 
   const lastRefreshAtRef = React.useRef(0);
   const abortRef = React.useRef<AbortController | null>(null);
@@ -139,14 +141,41 @@ export default function ClientPage() {
     [userId]
   );
 
+  const fetchSafetyDashboard = React.useCallback(
+    async (tf: "day" | "week" | "month" | "year") => {
+      if (!userId) return;
+      try {
+        let bearer = "";
+        try {
+          const { data } = await supabase.auth.getSession();
+          bearer = data.session?.access_token || "";
+        } catch {}
+        const res = await fetch(`/api/safety/dashboard?timeframe=${tf}`, {
+          cache: "no-store",
+          headers: { ...(bearer ? { Authorization: `Bearer ${bearer}` } : {}) },
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        setSafetyDashboard(data);
+      } catch {
+        // non-blocking for insights page
+      }
+    },
+    [userId]
+  );
+
   React.useEffect(() => {
-    if (userId) fetchInsights(selectedTimeframe);
-  }, [userId, selectedTimeframe, fetchInsights]);
+    if (userId) {
+      void fetchInsights(selectedTimeframe);
+      void fetchSafetyDashboard(selectedTimeframe);
+    }
+  }, [userId, selectedTimeframe, fetchInsights, fetchSafetyDashboard]);
 
   useInsightsStream(selectedTimeframe, () => {
     const now = Date.now();
     if (now - lastRefreshAtRef.current < MIN_REFRESH_MS) return;
-    fetchInsights(selectedTimeframe, { background: true });
+    void fetchInsights(selectedTimeframe, { background: true });
+    void fetchSafetyDashboard(selectedTimeframe);
   });
 
   React.useEffect(() => {
@@ -229,6 +258,7 @@ export default function ClientPage() {
           <div className="flex-1 overflow-y-auto p-6">
             <div className="max-w-6xl mx-auto space-y-6">
               <SummaryCard header={header} timeframe={selectedTimeframe} />
+              <SafetyEventsCard data={safetyDashboard} />
               <WeeklyTrends data={trends.last7Days || []} />
               <div className="grid md:grid-cols-2 gap-6">
                 <EmotionBreakdown breakdown={breakdown} />

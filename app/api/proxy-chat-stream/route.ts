@@ -32,7 +32,7 @@ function normalizeChatBody(raw: any) {
   };
 }
 import { cookies, headers } from "next/headers";
-import { optionalAuth, UnauthorizedError } from "@/lib/api-auth";
+import { withOptionalAuth } from "@/lib/api-auth";
 import { logger } from "@/lib/logger";
 import { z, ensureJsonUnder, boundedString, httpError } from "@/lib/validate";
 import { guardRate } from "@/lib/guards";
@@ -42,6 +42,7 @@ import { assertSameOrigin, assertDoubleSubmit } from "@/lib/csrf";
 import { deriveRoles } from "@/lib/authz";
 import { AppError, toErrorResponse } from "@/lib/errors";
 import { safeFetch } from "@/lib/safe-fetch";
+import { isE2EBypassEnabled } from "@/lib/runtime-safety";
 
 const RAW_BACKEND_URL = process.env.BACKEND_URL;
 const BACKEND_URL = RAW_BACKEND_URL ? RAW_BACKEND_URL.replace(/\/$/, "") : "";
@@ -50,10 +51,9 @@ function bad(status: number, error: string) {
   return NextResponse.json({ error }, { status, headers: { "Cache-Control": "no-store" } });
 }
 
-export const POST = withCORS(async function POST(req: NextRequest) {
+export const POST = withCORS(withOptionalAuth(async function POST(req: NextRequest, authContext) {
   try {
-  // Resolve auth - now with verified JWT via Supabase
-  const authContext = await optionalAuth(req);
+  const e2eBypass = isE2EBypassEnabled();
   let userId: string;
   let bearer: string | undefined;
   
@@ -61,7 +61,7 @@ export const POST = withCORS(async function POST(req: NextRequest) {
     // Authenticated user with verified token
     userId = authContext.userId;
     bearer = authContext.bearer;
-  } else if (process.env.NEXT_PUBLIC_E2E_BYPASS_AUTH === "true") {
+  } else if (e2eBypass) {
     // E2E testing bypass mode only
     userId = "e2e-local";
     bearer = "e2e-token";
@@ -80,7 +80,7 @@ export const POST = withCORS(async function POST(req: NextRequest) {
       if (limited) return limited;
     }
     // CSRF: enforce in normal mode; skip in local E2E bypass to simplify curl-based testing
-    if (process.env.NEXT_PUBLIC_E2E_BYPASS_AUTH !== "true") {
+    if (!e2eBypass) {
       const r = await assertSameOrigin(req);
       if (r) return r;
       const r2 = assertDoubleSubmit(req);
@@ -170,7 +170,7 @@ export const POST = withCORS(async function POST(req: NextRequest) {
     (hdrsForUpstream as any)["X-Tenant-Id"] = userId;
     const hdrs = await headers();
     if (
-      process.env.NEXT_PUBLIC_E2E_BYPASS_AUTH === "true" &&
+      e2eBypass &&
       (hdrs.get("x-e2e-stream") === "big" || (body as any)?.e2e === "big" || text === "__e2e__")
     ) {
       const encoder = new TextEncoder();
@@ -279,11 +279,10 @@ export const POST = withCORS(async function POST(req: NextRequest) {
     // Flags for optional compact kickoff bundle (do NOT block initial tokens)
     const hdrsNow = await headers();
     const flagsOnCEL = (process.env.EMOTION_V2 === "true" && process.env.CEL_V2_CAUSAL === "true") ||
-      (process.env.NEXT_PUBLIC_E2E_BYPASS_AUTH === "true" && hdrsNow.get("x-e2e-cel") === "true");
+      (e2eBypass && hdrsNow.get("x-e2e-cel") === "true");
     const flagsOnPersonal = (process.env.EMOTION_PERSONALIZE === "true") ||
-      (process.env.NEXT_PUBLIC_E2E_BYPASS_AUTH === "true" && hdrsNow.get("x-e2e-personalize") === "true");
+      (e2eBypass && hdrsNow.get("x-e2e-personalize") === "true");
     // E2E-only overrides for AB and dev
-    const e2eBypass = process.env.NEXT_PUBLIC_E2E_BYPASS_AUTH === "true";
     const abOverride = e2eBypass ? (hdrsNow.get("x-e2e-ab") === "1") : undefined;
     const devOverrideRaw = e2eBypass ? Number(hdrsNow.get("x-e2e-dev") || "") : NaN;
     const devOverride = e2eBypass && !Number.isNaN(devOverrideRaw) ? Math.max(0, Math.min(4, devOverrideRaw)) : undefined;
@@ -293,7 +292,7 @@ export const POST = withCORS(async function POST(req: NextRequest) {
     // Mid-stream event limiter: default high, but supports test override via header x-e2e-stream-limit
     const hdrsForReq = await headers();
     let perMinuteEvents = 100000; // effectively off by default
-    if (process.env.NEXT_PUBLIC_E2E_BYPASS_AUTH === "true") {
+    if (e2eBypass) {
       const override = Number(hdrsForReq.get("x-e2e-stream-limit") || "");
       if (!Number.isNaN(override) && override > 0) perMinuteEvents = override;
     }
@@ -513,7 +512,6 @@ export const POST = withCORS(async function POST(req: NextRequest) {
     });
   } catch (err: any) {
     if (err instanceof Response) return err; // propagate size guard httpError
-    if (err instanceof UnauthorizedError) return toErrorResponse(new AppError("unauthorized", "Unauthorized", 401));
     // Log full error object and stack for debugging (temporary)
     try {
       const dump = (() => {
@@ -530,4 +528,4 @@ export const POST = withCORS(async function POST(req: NextRequest) {
     }
     return toErrorResponse(err);
   }
-}, { credentials: true });
+}), { credentials: true });

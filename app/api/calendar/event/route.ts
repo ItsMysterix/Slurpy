@@ -4,7 +4,7 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 import { NextRequest, NextResponse } from "next/server";
-import { getAuthOrThrow } from "@/lib/auth-server";
+import { withAuth } from "@/lib/api-auth";
 import { createServerServiceClient } from "@/lib/supabase/server";
 import { guardRate } from "@/lib/guards";
 import { withCORS } from "@/lib/cors";
@@ -19,9 +19,9 @@ const toYMD = (isoOrDate: string | Date) => {
   return d.toISOString().slice(0, 10); // "YYYY-MM-DD"
 }
 
-export const POST = withCORS(async function POST(req: NextRequest) {
+export const POST = withCORS(withAuth(async function POST(req: NextRequest, auth) {
   try {
-    const { userId } = await getAuthOrThrow();
+    const userId = auth.userId;
     if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     // Limit calendar write ops to 30/min/user
@@ -69,4 +69,4 @@ export const POST = withCORS(async function POST(req: NextRequest) {
     console.error("Error creating event:", e);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
-}, { credentials: true });
+}), { credentials: true });

@@ -4,8 +4,8 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { createServerClient } from "@supabase/ssr";
-import { cookies } from "next/headers";
+import { withAuth } from "@/lib/api-auth";
+import { createServerServiceClient } from "@/lib/supabase/server";
 import {
   aggregateInsightData,
   get7DayWindowDates,
@@ -18,45 +18,19 @@ import {
 } from "@/lib/insight-narrative";
 import { InsightRun, GenerateInsightResponse } from "@/types";
 
-export async function POST(
-  request: NextRequest
+export const POST = withAuth(async function POST(
+  request: NextRequest,
+  auth
 ): Promise<NextResponse<GenerateInsightResponse>> {
   try {
-    // Authenticate user
-    const cookieStore = await cookies();
-    const supabase = createServerClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-      {
-        cookies: {
-          getAll() {
-            return cookieStore.getAll();
-          },
-          setAll(cookiesToSet) {
-            cookiesToSet.forEach(({ name, value, options }) => {
-              cookieStore.set(name, value, options);
-            });
-          },
-        },
-      }
-    );
-
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-
-    if (!user) {
-      return NextResponse.json(
-        { success: false, error: "Unauthorized" },
-        { status: 401 }
-      );
-    }
+    const supabase = createServerServiceClient();
+    const userId = auth.userId;
 
     // Check user's plan (for memory access)
     const { data: profile } = await supabase
       .from("profiles")
       .select("plan_id")
-      .eq("id", user.id)
+      .eq("id", userId)
       .single();
 
     const planId = profile?.plan_id || "free";
@@ -68,7 +42,7 @@ export async function POST(
     const { data: existingInsight } = await supabase
       .from("insight_run")
       .select("id")
-      .eq("user_id", user.id)
+      .eq("user_id", userId)
       .gte("time_range_start", window.start.toISOString())
       .lte("time_range_end", window.end.toISOString())
       .single();
@@ -84,13 +58,13 @@ export async function POST(
     }
 
     // Aggregate data
-    const aggregatedData = await aggregateInsightData(user.id, planId, window);
+    const aggregatedData = await aggregateInsightData(userId, planId, window);
 
     // Fetch session summaries for progress tracking
     const { data: sessionSummaries } = await supabase
       .from("chat_sessions")
       .select("started_at, session_summary, progress_indicators")
-      .eq("user_id", user.id)
+      .eq("user_id", userId)
       .not("session_summary", "is", null)
       .gte("started_at", window.start.toISOString())
       .lte("started_at", window.end.toISOString())
@@ -150,7 +124,7 @@ export async function POST(
 
     // Create InsightRun record
     const insightData: any = {
-      user_id: user.id,
+      user_id: userId,
       time_range_start: window.start.toISOString(),
       time_range_end: window.end.toISOString(),
       dominant_emotions: dominantEmotions,
@@ -217,4 +191,4 @@ export async function POST(
       { status: 500 }
     );
   }
-}
+});

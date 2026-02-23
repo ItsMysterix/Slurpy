@@ -1,0 +1,71 @@
+# .pre-commit-config.yaml
+# Pre-commit hooks for local secret scanning before pushing to CI
+# Install: pre-commit install
+# Run manually: pre-commit run --all-files
+# Bypass (not recommended): git commit --no-verify
+
+repos:
+  # Detect hardcoded secrets and private keys
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.4.0
+    hooks:
+      - id: detect-secrets
+        args: ['--baseline', '.secrets.baseline']
+        exclude: |
+          (?x)^(
+            pnpm-lock.yaml |
+            requirements/.* |
+            package.json |
+            playwright.config.ts |
+            docs/.*\.md
+          )$
+
+  # Prevent large files from being committed
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      - id: check-added-large-files
+        args: ['--maxkb=500']
+      - id: check-merge-conflict
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+        args: [--markdown-template]
+      - id: check-yaml
+        args: ['--unsafe']
+
+  # Custom secret patterns specific to Slurpy
+  - repo: local
+    hooks:
+      - id: no-hardcoded-api-keys
+        name: Check for hardcoded API keys
+        entry: bash -c 'grep -r "OPENAI_API_KEY\|STRIPE_SECRET_KEY\|QDRANT_API_KEY\|SUPABASE_KEY" --include="*.ts" --include="*.tsx" --include="*.js" --include="*.py" . && exit 1 || exit 0'
+        language: system
+        stages: [commit]
+        exclude: node_modules|\.git|dist|build
+      - id: no-hardcoded-db-urls
+        name: Check for hardcoded DB connection strings
+        entry: bash -c 'grep -r "postgres://.*:.*@\|mongodb://.*:.*@\|mysql://.*:.*@" --include="*.ts" --include="*.tsx" --include="*.js" --include="*.py" . && exit 1 || exit 0'
+        language: system
+        stages: [commit]
+        exclude: node_modules|\.git|docs
+
+  # Linting and basic sanity checks
+  - repo: https://github.com/pre-commit/mirrors-prettier
+    rev: v3.1.1
+    hooks:
+      - id: prettier
+        types_or: [typescript, tsx, javascript, json, markdown]
+        exclude: node_modules|pnpm-lock.yaml
+
+# Exclude large files and dependencies
+exclude: |
+  (?x)^(
+    node_modules/ |
+    \.venv/ |
+    dist/ |
+    build/ |
+    __pycache__/ |
+    \.git/ |
+    pnpm-lock.yaml |
+    package.json
+  )

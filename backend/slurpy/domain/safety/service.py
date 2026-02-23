@@ -22,14 +22,23 @@ __all__ = ["classify", "classify_async", "crisis_message", "is_crisis"]
 # ---------------------------------------------------------------------
 # Compiled patterns (case-insensitive, word-bounded to reduce false positives)
 # Keep these conservative to avoid over-triggering.
+# Expanded with colloquial variants from AFSP/SAMHSA corpus
 # ---------------------------------------------------------------------
 IMMEDIATE_PATTERNS = [
-    # direct suicidal intent / death wish
+    # direct suicidal intent / death wish (primary patterns)
     re.compile(r"\b(kill myself|end my life|take my life|end it all)\b", re.I),
     re.compile(r"\b(suicide|suicidal)\b", re.I),
     re.compile(r"\b(i (?:want|plan|intend|am going)\s+to\s+die)\b", re.I),
-    re.compile(r"\b(i (?:don['’]?t|do not) want to live)\b", re.I),
-    re.compile(r"\b(can['’]?t go on (?:anymore|any more))\b", re.I),
+    re.compile(r"\b(i (?:don['']?t|do not) want to live)\b", re.I),
+    re.compile(r"\b(can['']?t go on (?:anymore|any more))\b", re.I),
+    # colloquial variants (common in text, social media)
+    re.compile(r"\b(end myself|just (?:kill|end) me(?:\s|!|\.|\?|$))\b", re.I),
+    re.compile(r"\b(better off (?:dead|gone))\b", re.I),
+    re.compile(r"\b(don['']?t (?:wanna|want to|deserve to) be alive)\b", re.I),
+    re.compile(r"\b((?:not\s+)?meant to (?:die|be gone))\b", re.I),
+    re.compile(r"\b(disappear forever|just disappear)\b", re.I),
+    re.compile(r"\b(fade away forever)\b", re.I),
+    re.compile(r"\b(not supposed to be here|not meant for this world)\b", re.I),
 ]
 
 ELEVATED_PATTERNS = [
@@ -45,7 +54,9 @@ MEANS_PATTERNS = [
     re.compile(r"\b(rope|noose)\b", re.I),
     re.compile(r"\b(gun|firearm)\b", re.I),
     re.compile(r"\b(knife|razor|blade)\b", re.I),
-    re.compile(r"\b(bridge|train|jump)\b", re.I),
+    # Tightened to avoid false positives like "bridge the gap", "jump on a call"
+    re.compile(r"(?:hang|throw myself|jump off|leap from)\s+(?:a\s+)?(?:bridge|building|cliff|ledge|overpass)\b", re.I),
+    re.compile(r"(?:going to jump|about to throw myself)\s+(?:in front of|under)\s+(?:a\s+)?train\b", re.I),
 ]
 
 TIME_PATTERNS = [

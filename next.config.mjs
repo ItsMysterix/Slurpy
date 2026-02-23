@@ -19,9 +19,9 @@ const nextConfig = {
     cpus: 1,
   },
 
-  // Ignore lint/type errors during build
-  eslint: { ignoreDuringBuilds: true },
-  typescript: { ignoreBuildErrors: true },
+  // Enforce lint/type checks during build
+  eslint: { ignoreDuringBuilds: false },
+  typescript: { ignoreBuildErrors: false },
 
   // Disable Next.js image optimization (keeps things simple in Docker)
   images: { unoptimized: true },
